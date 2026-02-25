@@ -69,6 +69,20 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **One-off**: `self.schedule(timestamp, "payload")`.
     *   **Callback**: Implement `on_timer(self, payload: str)`.
 
+7.  **Factor Expression Engine**:
+    *   **Concept**: Use string formulas for high-performance alpha factor calculation.
+    *   **Engine**: `akquant.factor.FactorEngine`.
+    *   **Operators**: `Ts_Mean`, `Rank`, `Delay`, `Delta`, `If`, etc.
+    *   **Example**:
+        ```python
+        from akquant.factor import FactorEngine
+        from akquant.data import ParquetDataCatalog
+
+        engine = FactorEngine(ParquetDataCatalog())
+        # Calculate factor
+        df = engine.run("Rank(Ts_Mean(Close, 10))")
+        ```
+
 ### Example Strategy (Reference)
 
 ```python
