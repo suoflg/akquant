@@ -74,6 +74,7 @@ plugins:
             Python Basics: Python 金融入门
             Quant Basics: 量化新手指南
             Data Guide: 数据指南
+            Factor Analysis: 因子分析
             Visualization: 可视化与报告
             Result Analysis: 回测结果详解
             Optimization Guide: 参数优化
@@ -155,6 +156,7 @@ plugins:
             11_Optimization: Chap 11 - Optimization
             12_Machine Learning: Chap 12 - Machine Learning
             13_Visualization: Chap 13 - Visualization
+            15_Factor Expression: Chap 15 - Factor Expression
             14_Live Trading: Chap 14 - Live Trading
 
 nav:
@@ -178,6 +180,7 @@ nav:
           - 11_Optimization: textbook/11_optimization.md
           - 12_Machine Learning: textbook/12_ml.md
           - 13_Visualization: textbook/13_visualization.md
+          - 15_Factor Expression: textbook/15_factor.md
       - Live Trading:
           - 14_Live Trading: textbook/14_live_trading.md
   - Getting Started:
@@ -186,19 +189,20 @@ nav:
       - Quick Start: start/quickstart.md
       - First Strategy: start/first_strategy.md
   - User Guide:
-      - Strategy Manual: guide/strategy.md
       - Python Basics: guide/python_basics.md
       - Quant Basics: guide/quant_basics.md
       - Data Guide: guide/data.md
-      - Visualization: guide/visualization.md
+      - Factor Analysis: guide/factor.md
+      - Strategy Manual: guide/strategy.md
       - Result Analysis: guide/analysis.md
+      - Visualization: guide/visualization.md
       - Optimization Guide: guide/optimization.md
+      - Testing Guide: guide/testing.md
       - Examples: guide/examples.md
   - Advanced Topics:
       - ML Guide: advanced/ml.md
       - LLM Guide: advanced/llm.md
       - Timezone Handling: advanced/timezone.md
-      - Testing Guide: guide/testing.md
   - API Reference: reference/api.md
   - Architecture & Internals:
       - Architecture: meta/architecture.md

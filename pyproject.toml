@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "akquant"
-version = "0.1.48"
+version = "0.1.49"
 description = "High-performance quantitative trading framework based on Rust and Python"
 readme = "README.md"
 license = {text = "MIT License"}
@@ -30,6 +30,7 @@ dependencies = [
     "pyarrow>=14.0.0",
     "tqdm>=4.0.0",
     "plotly>=5.0.0",
+    "polars>=0.20.0",
 ]
 
 [project.urls]
@@ -53,6 +54,7 @@ docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
     "mkdocs-static-i18n>=1.2.0",
+    "akshare>=1.0.0",
 ]
 full = [
     "matplotlib>=3.0.0",

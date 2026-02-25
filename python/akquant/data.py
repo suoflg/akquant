@@ -56,6 +56,11 @@ class ParquetDataCatalog:
                 df = df.set_index("date")
                 df.index = pd.to_datetime(df.index)
 
+        # Ensure symbol column exists for Polars compatibility
+        if "symbol" not in df.columns:
+            df = df.copy()
+            df["symbol"] = symbol
+
         df.to_parquet(file_path, compression="snappy")
         return file_path
 

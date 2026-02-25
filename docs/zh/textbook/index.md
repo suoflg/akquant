@@ -71,6 +71,10 @@
 *   **[第 13 章：策略可视化与报表分析](13_visualization.md)**
     *   权益曲线与回撤图绘制
     *   案例：生成回测图表 ([examples/textbook/ch13_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch13_visualization.py))
+*   **[第 15 章：高性能因子挖掘与表达式引擎](15_factor.md)**
+    *   因子表达式的原理与优势
+    *   Polars 高性能计算架构
+    *   案例：Alpha101 因子实战 ([examples/19_factor_expression.py](https://github.com/akfamily/akquant/blob/main/examples/19_factor_expression.py))
 
 ### 第五部分：从回测到实盘 (Live Trading)
 
