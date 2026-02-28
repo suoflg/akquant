@@ -4,8 +4,9 @@ use crate::history::SymbolHistory;
 use rust_decimal::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeEntry {
     pub quantity: Decimal,
     pub price: Decimal,
@@ -16,7 +17,7 @@ pub struct TradeEntry {
     pub entry_portfolio_value: Decimal,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeTracker {
     // (qty, price, commission, bar_idx, timestamp, tag, entry_portfolio_value)
     pub long_inventory: HashMap<String, VecDeque<TradeEntry>>,

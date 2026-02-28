@@ -1,6 +1,7 @@
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 
 use crate::data::DataFeed;
 use crate::order_manager::OrderManager;
@@ -25,4 +26,11 @@ impl SharedState {
             feed: DataFeed::new(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EngineSnapshot {
+    pub current_time: i64,
+    pub portfolio: Portfolio,
+    pub order_manager: OrderManager,
 }

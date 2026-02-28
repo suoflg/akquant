@@ -197,6 +197,24 @@ config = BacktestConfig(
     instruments=["AAPL"],
     instruments_config={"RB2305": rb_conf}
 )
+
+## 4.4 高级特性：状态快照与热启动 (State Snapshot & Warm Start)
+
+作为事件驱动架构的一大优势，AKQuant 能够随时暂停并保存整个引擎的状态（Memory Dump），并在之后完全恢复。这种能力被称为**热启动 (Warm Start)**。
+
+### 4.4.1 原理
+
+由于 AKQuant 的核心状态（持仓、订单、资金）都由 Rust 的 `Engine` 结构体集中管理，我们可以利用 Python 的 `pickle` 协议将这个结构体序列化到磁盘。
+
+当恢复时，我们反序列化 `Engine`，并重新连接数据源（DataFeed），使其无缝继续运行。
+
+### 4.4.2 应用场景
+
+1.  **超长周期回测**：可以将 10 年的回测拆分为 10 个 1 年的片段，并行运行或顺序运行。
+2.  **滚动训练 (Rolling Walk-Forward)**：训练模型 -> 运行回测 -> 保存状态 -> 使用新数据微调模型 -> 恢复回测。
+3.  **模拟实盘**：每天收盘后保存状态，第二天开盘前加载状态并接入实时行情。
+
+详细使用方法请参考 [高级指南：热启动](../advanced/warm_start.md)。
 ```
 
 

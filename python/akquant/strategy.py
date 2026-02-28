@@ -99,6 +99,8 @@ class Strategy:
     def __new__(cls, *args: Any, **kwargs: Any) -> "Strategy":
         """Create a new Strategy instance."""
         instance = super().__new__(cls)
+        # 初始化默认属性，确保 pickle 恢复前也有这些字段
+        instance._is_restored = False
         instance.ctx = None
         instance.execution_mode = None
         instance.sizer = FixedSize(100)
@@ -142,18 +144,61 @@ class Strategy:
         """初始化."""
         pass
 
+    def __getstate__(self) -> Dict[str, Any]:
+        """
+        Pickle 序列化支持.
+
+        排除运行时上下文 (ctx) 和临时对象 (current_bar, current_tick).
+        """
+        state = self.__dict__.copy()
+        if "ctx" in state:
+            del state["ctx"]
+        if "current_bar" in state:
+            del state["current_bar"]
+        if "current_tick" in state:
+            del state["current_tick"]
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Pickle 反序列化支持."""
+        self.__dict__.update(state)
+        self.ctx = None
+        self.current_bar = None
+        self.current_tick = None
+        self._is_restored = True  # 标记为已恢复状态
+
+    @property
+    def is_restored(self) -> bool:
+        """检查策略是否是从快照恢复的."""
+        return getattr(self, "_is_restored", False)
+
     def on_start(self) -> None:
         """
         策略启动时调用.
 
-        在此处订阅数据 (self.subscribe) 或注册指标.
+        Warm Start 注意：如果策略是从快照恢复的，此方法仍会被调用。
+        如果在此处初始化指标，请务必检查属性是否存在 (hasattr)，
+        或者使用 self.is_restored 属性判断，避免覆盖已恢复的状态。
+        """
+        pass
+
+    def on_resume(self) -> None:
+        """
+        策略从快照恢复时调用 (Warm Start).
+
+        仅在 Warm Start 模式下调用，且在 on_start 之前调用。
+        用于重新建立非持久化连接、加载外部资源等。
         """
         pass
 
     def _on_start_internal(self) -> None:
         """内部启动回调，用于自动发现指标等."""
-        self._discover_indicators()
+        # 如果是恢复模式，先调用 on_resume
+        if self.is_restored:
+            self.on_resume()
+
         self.on_start()
+        self._discover_indicators()
 
     def _discover_indicators(self) -> None:
         """自动发现并注册 self 属性中的指标."""

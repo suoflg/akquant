@@ -92,6 +92,37 @@ OMS 是实盘交易的核心，负责维护订单的全生命周期状态。
 --8<-- "examples/textbook/ch14_live.py"
 ```
 
+### 14.5.4 热启动与状态持久化 (Warm Start)
+
+在实盘交易中，系统可能会因为网络波动、服务器维护或意外崩溃而重启。为了保证策略状态（如均线计算、持仓记录）不丢失，akquant 提供了**热启动**机制。
+
+**1. 保存状态 (Checkpoint)**
+
+在每日收盘后或定期调用 `save_snapshot`：
+
+```python
+import akquant as aq
+# 保存当前引擎状态和策略变量
+aq.save_snapshot(engine, strategy, "strategy_checkpoint.pkl")
+```
+
+**2. 恢复运行 (Restore)**
+
+系统重启时，使用 `run_warm_start` 加载快照并注入新的数据源：
+
+```python
+# 加载最新的数据源 (包含历史数据 + 今日新数据)
+data_feed = aq.DataFeed.from_csv("latest_data.csv")
+
+# 从快照恢复，自动跳过已处理的历史数据
+# 注意：不需要传入 strategy 类，因为策略实例已从快照恢复
+engine_result = aq.run_warm_start("strategy_checkpoint.pkl", data_feed)
+
+# 获取恢复后的引擎和策略
+engine = engine_result.engine
+strategy = engine_result.strategy
+```
+
 ## 14.6 高可用架构 (High Availability)
 
 实盘系统最怕的不是亏损，而是**宕机**。一旦系统崩溃，持仓状态丢失，正在进行的订单无法撤销，后果不堪设想。

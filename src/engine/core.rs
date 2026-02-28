@@ -64,6 +64,7 @@ pub struct Engine {
     pub(crate) bar_count: usize,
     pub(crate) progress_bar: Option<ProgressBar>,
     pub(crate) strategy_context: Option<Py<StrategyContext>>,
+    pub(crate) snapshot_time: i64,
 }
 
 // Internal implementation of Engine (not exposed to Python)

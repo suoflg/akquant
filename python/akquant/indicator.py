@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Any, Callable, Dict
 
 import pandas as pd
@@ -12,6 +13,13 @@ class Indicator:
         self.fn = fn
         self.kwargs = kwargs
         self._data: Dict[str, pd.Series] = {}  # symbol -> series
+        self._current_value: float = float("nan")
+
+    def update(self, value: float) -> float:
+        """Update indicator value (incremental)."""
+        raise NotImplementedError(
+            "Incremental update not implemented for this indicator."
+        )
 
     def __call__(self, df: pd.DataFrame, symbol: str) -> pd.Series:
         """Calculate indicator on a DataFrame."""
@@ -89,3 +97,66 @@ class IndicatorSet:
         for name, ind in self._indicators.items():
             results[name] = ind(df, symbol)
         return results
+
+
+class SMA(Indicator):
+    """Simple Moving Average."""
+
+    def __init__(self, window: int) -> None:
+        """Initialize SMA."""
+        super().__init__("sma", self._calc_sma)
+        self.window = window
+        self._cache: Dict[str, pd.Series] = {}  # symbol -> series
+        self._current_value = float("nan")
+        self._buffer: deque = deque()
+        self._sum = 0.0
+
+    def _calc_sma(self, df: pd.DataFrame) -> pd.Series:
+        return df["close"].rolling(self.window).mean()
+
+    def update(self, value: float) -> float:
+        """Update with new value (incremental)."""
+        if pd.isna(value):
+            return self._current_value
+
+        if len(self._buffer) == self.window:
+            removed = self._buffer.popleft()
+            self._sum -= removed
+
+        self._buffer.append(value)
+        self._sum += value
+
+        if len(self._buffer) == self.window:
+            self._current_value = self._sum / self.window
+        else:
+            self._current_value = float("nan")
+
+        return self._current_value
+
+    def __call__(self, df: pd.DataFrame, symbol: str) -> pd.Series:
+        """Calculate SMA."""
+        result = df["close"].rolling(self.window).mean()
+        self._cache[symbol] = result
+        return result
+
+    @property
+    def value(self) -> float:
+        """Get current value (requires strategy context injection)."""
+        # This relies on Strategy injecting itself or data
+        # For now, we use a simple mechanism:
+        # Strategy calls update() or sets current_bar
+        return self._current_value
+
+    def __getstate__(self) -> Dict[str, Any]:
+        """Pickle support."""
+        state = self.__dict__.copy()
+        # Don't save cache to save space, or save it if we want full state
+        # For warm start, we might want to clear cache and re-calculate on new data
+        # BUT, if we want to support 'streaming' updates later, we need state.
+        # For current DataFrame-based indicator, re-calculation is fast.
+        state["_cache"] = {}
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:
+        """Unpickle support."""
+        self.__dict__.update(state)

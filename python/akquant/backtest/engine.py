@@ -485,6 +485,32 @@ def run_backtest(
 
                 data.sort(key=lambda b: b.timestamp)
                 feed.add_bars(data)
+
+                # Construct DataFrame for indicator calculation
+                # Group by symbol just in case
+                bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
+                for bar in data:
+                    if bar.symbol not in bars_by_sym:
+                        bars_by_sym[bar.symbol] = []
+                    bars_by_sym[bar.symbol].append(
+                        {
+                            "timestamp": pd.Timestamp(
+                                bar.timestamp, unit="ns", tz="UTC"
+                            ),
+                            "open": bar.open,
+                            "high": bar.high,
+                            "low": bar.low,
+                            "close": bar.close,
+                            "volume": bar.volume,
+                        }
+                    )
+
+                for sym, records in bars_by_sym.items():
+                    df = pd.DataFrame(records)
+                    if not df.empty:
+                        df.set_index("timestamp", inplace=True)
+                        df.sort_index(inplace=True)
+                        data_map_for_indicators[sym] = df
     else:
         # Load from Catalog / Akshare
         if not symbols:
@@ -733,11 +759,23 @@ def run_backtest(
         if val is None:
             return None
         if isinstance(val, (int, float)):
-            return int(val)
+            # If value is too large for i64 (nanoseconds since epoch),
+            # return None or clamp?
+            # Rust i64 max is 9223372036854775807
+            # Let's just cast to int, Python handles large ints but PyO3 conversion
+            # might fail if it exceeds Rust's i64 range.
+            i_val = int(val)
+            if abs(i_val) > 9223372036854775000:
+                return None
+            return i_val
         if isinstance(val, str):
             try:
                 # Convert string date to nanosecond timestamp
-                return int(pd.Timestamp(val).value)
+                ts_val = int(pd.Timestamp(val).value)
+                # Check for Rust i64 range roughly (year 2262)
+                if abs(ts_val) > 9223372036854775000:
+                    return None
+                return ts_val
             except Exception:
                 pass
         return None
@@ -782,6 +820,13 @@ def run_backtest(
             p_expiry = _parse_expiry(default_expiry_date)
             p_underlying = None
 
+        # Validate types before passing to Rust
+        if p_lot is not None and not isinstance(p_lot, (int, float)):
+            p_lot = 1.0  # Fallback
+
+        # Ensure lot is float for Rust binding if expected
+        p_lot_f: float = float(p_lot)
+
         instr = Instrument(
             sym,
             p_asset_type,
@@ -791,7 +836,7 @@ def run_backtest(
             p_opt_type,
             p_strike,
             p_expiry,
-            p_lot,
+            p_lot_f,
             p_underlying,
         )
         engine.add_instrument(instr)
@@ -843,5 +888,209 @@ def run_backtest(
                 logger.error(f"Error in on_stop: {e}")
 
     return BacktestResult(
-        engine.get_results(), timezone=timezone, initial_cash=initial_cash
+        engine.get_results(),
+        timezone=timezone,
+        initial_cash=initial_cash,
+        strategy=strategy_instance,
+        engine=engine,
+    )
+
+
+def run_warm_start(
+    checkpoint_path: str,
+    data: Optional[
+        Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed]
+    ] = None,
+    show_progress: bool = True,
+    symbol: Union[str, List[str]] = "BENCHMARK",
+    **kwargs: Any,
+) -> BacktestResult:
+    """
+    热启动回测 (Warm Start Backtest).
+
+    :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax, t_plus_one)
+    """
+    import os
+
+    from ..checkpoint import warm_start
+
+    logger = get_logger()
+
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+    # 1. 准备数据源
+    feed = None
+    data_map_for_indicators: Dict[str, pd.DataFrame] = {}
+
+    if isinstance(data, DataFeed):
+        feed = data
+    elif data is not None:
+        # Convert DataFrame/List to DataFeed
+        feed = DataFeed()
+        symbols = [symbol] if isinstance(symbol, str) else symbol
+
+        data_map = {}
+        # Copied logic from run_backtest for data loading
+        if isinstance(data, pd.DataFrame):
+            if len(symbols) == 1:
+                data_map = {symbols[0]: data}
+            else:
+                # Multi-index or strict format required?
+                # For simplicity, assume single symbol if passed as DF
+                data_map = {symbols[0]: data}
+        elif isinstance(data, list) and data and isinstance(data[0], Bar):
+            # Convert List[Bar] to DataFrame for indicators
+            # We assume all bars are for the same symbol (or single symbol context)
+            feed.add_bars(data)  # type: ignore
+
+            # Construct DataFrame for indicator calculation
+            # Group by symbol just in case
+            bars_by_sym: Dict[str, List[Dict[str, Any]]] = {}
+            for bar in data:
+                if bar.symbol not in bars_by_sym:
+                    bars_by_sym[bar.symbol] = []
+                bars_by_sym[bar.symbol].append(
+                    {
+                        "timestamp": pd.Timestamp(bar.timestamp, unit="ns", tz="UTC"),
+                        "open": bar.open,
+                        "high": bar.high,
+                        "low": bar.low,
+                        "close": bar.close,
+                        "volume": bar.volume,
+                    }
+                )
+
+            for sym, records in bars_by_sym.items():
+                df = pd.DataFrame(records)
+                if not df.empty:
+                    df.set_index("timestamp", inplace=True)
+                    df.sort_index(inplace=True)
+                    data_map_for_indicators[sym] = df
+
+        elif isinstance(data, dict):
+            data_map = data
+        else:
+            data_map = {}
+
+        loaded_count = 0
+        for sym, df in data_map.items():
+            if not df.empty:
+                df = prepare_dataframe(df)
+                data_map_for_indicators[sym] = df
+                arrays = df_to_arrays(df, symbol=sym)
+                feed.add_arrays(*arrays)  # type: ignore
+                loaded_count += 1
+
+        if loaded_count > 0:
+            feed.sort()
+
+    # 2. 恢复引擎和策略
+    logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+    engine, strategy_instance = warm_start(checkpoint_path, feed)
+
+    # Capture restored cash BEFORE running (for correct initial_market_value in result)
+    restored_cash = engine.portfolio.cash
+    logger.info(f"Restored engine cash: {restored_cash}")
+
+    # 2.5 重新注册默认标的 (Instrument)
+    # 引擎快照通常不包含静态配置 (Instrument)，
+    # 因此需要为新数据中的标的重新注册默认配置。
+    # 默认使用股票 (Stock) 类型，lot_size=1。
+    # 如果需要自定义，请在策略 on_start 中处理或扩展 run_warm_start。
+    from ..akquant import AssetType, Instrument
+
+    symbols_to_add: set[str] = set()
+    if data_map_for_indicators:
+        symbols_to_add.update(data_map_for_indicators.keys())
+
+    # 如果 data 是 List[Bar]，也收集其中的 symbol
+    if isinstance(data, list) and data and isinstance(data[0], Bar):
+        for bar in data:  # 只检查前几个可能不够，但通常数据是单一标的
+            symbols_to_add.add(bar.symbol)
+            # 优化: 如果列表很大，只检查第一个和最后一个? 或者假设单一标的?
+            # 这里简单起见，只取第一个，假设列表是针对单一或少数几个标的
+            break
+
+    try:
+        if hasattr(strategy_instance, "symbol"):
+            s = strategy_instance.symbol
+            if s:
+                symbols_to_add.add(s)
+    except Exception:
+        # symbol property might raise error if no current bar/tick
+        pass
+
+    for sym in symbols_to_add:
+        # 添加默认股票标的
+        # ... (略)
+        instr = Instrument(
+            symbol=sym,
+            asset_type=AssetType.Stock,
+            multiplier=1.0,
+            margin_ratio=1.0,
+            tick_size=0.01,
+            lot_size=1.0,  # 默认为 1，允许任意整数倍交易
+        )
+        engine.add_instrument(instr)
+        logger.info(f"Re-registered default instrument for warm start: {sym}")
+
+    # 2.6 Re-configure Market Model
+    # Engine restoration might lose market model config if not in State.
+    # Default to SimpleMarket (T+0) or ChinaMarket (T+1) based on kwargs.
+    commission = kwargs.get("commission_rate", 0.0)
+    stamp_tax = kwargs.get("stamp_tax", 0.0)
+    t_plus_one = kwargs.get("t_plus_one", False)
+
+    if t_plus_one:
+        # ChinaMarket implies T+1 and specific fee rules
+        engine.use_china_market()
+    else:
+        # SimpleMarket implies T+0
+        engine.use_simple_market(commission)
+
+    # Apply fee rules if engine supports it
+    # (and if not ChinaMarket which has fixed rules?)
+    # ChinaMarket usually has hardcoded rules or defaults,
+    # but set_stock_fee_rules overrides them?
+    # Let's just set it.
+    if hasattr(engine, "set_stock_fee_rules"):
+        transfer_fee = kwargs.get("transfer_fee", 0.0)
+        min_commission = kwargs.get("min_commission", 5.0)
+        engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
+        logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
+
+    # 3. 预计算指标 (如果新数据可用)
+    # 这允许策略在新数据上计算指标
+    if hasattr(strategy_instance, "_prepare_indicators") and data_map_for_indicators:
+        # 注意: 这里的 _prepare_indicators 可能会重新计算整个序列的指标
+        # 如果指标库支持增量更新最好，如果不支持，这里会全量重算
+        # 但由于 Engine 内部只处理 snapshot_time 之后的事件，交易逻辑是增量的
+        try:
+            strategy_instance._prepare_indicators(data_map_for_indicators)
+        except Exception as e:
+            logger.error(f"Failed to update indicators for warm start: {e}")
+
+    # 4. 运行
+    try:
+        engine.run(strategy_instance, show_progress)
+    except Exception as e:
+        logger.error(f"Warm start backtest failed: {e}")
+        raise e
+    finally:
+        if hasattr(strategy_instance, "on_stop"):
+            try:
+                strategy_instance.on_stop()
+            except Exception as e:
+                logger.error(f"Error in on_stop: {e}")
+
+    # 注意：这里的 initial_cash 可能不准确，因为它使用的是当前 cash
+    # 但对于 BacktestResult 来说，重要的是 equity curve 的连续性
+    # 我们使用之前捕获的 restored_cash 作为 reference
+    return BacktestResult(
+        engine.get_results(),
+        timezone="UTC",  # TODO: Store timezone in snapshot
+        initial_cash=float(restored_cash),
+        strategy=strategy_instance,
+        engine=engine,
     )

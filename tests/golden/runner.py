@@ -357,7 +357,7 @@ def main(generate_baseline: bool = False) -> None:
         tick_size=0.0001,
         option_type="CALL",
         strike_price=100.0,
-        expiry_date="20250101",
+        expiry_date=None,  # "20250101", # Integer/Timestamp conversion fix required
         underlying_symbol="STOCK_A",
     )
 
