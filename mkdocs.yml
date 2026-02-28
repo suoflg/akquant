@@ -204,6 +204,7 @@ nav:
   - Advanced Topics:
       - ML Guide: advanced/ml.md
       - LLM Guide: advanced/llm.md
+      - Warm Start Guide: advanced/warm_start.md
       - Timezone Handling: advanced/timezone.md
   - API Reference: reference/api.md
   - Architecture & Internals:

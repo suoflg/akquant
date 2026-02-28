@@ -8,12 +8,13 @@ use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 
 #[gen_stub_pyclass]
 #[pyclass(from_py_object)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// 投资组合管理.
 ///
 /// :ivar cash: 当前现金余额

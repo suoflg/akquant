@@ -86,6 +86,12 @@ Your task is to write trading strategies or backtest scripts based on user requi
         df = engine.run("Rank(Ts_Mean(Close, 10))")
         ```
 
+8.  **Warm Start & Checkpoint**:
+    *   **Purpose**: Resume backtest/live trading from a saved state without replaying history.
+    *   **Save**: `akquant.save_snapshot(engine, strategy, "checkpoint.pkl")`.
+    *   **Load**: Use `akquant.run_warm_start("checkpoint.pkl", data=new_data)` for easiest resumption.
+    *   **Note**: Strategy class must support pickling (avoid open files/sockets in `__init__`). Use `akquant.indicator` classes instead of raw pandas for proper state saving.
+
 ### Example Strategy (Reference)
 
 ```python

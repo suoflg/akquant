@@ -81,6 +81,17 @@ def test_stop_orders_and_target() -> None:
         0.0001
     )  # Use SimpleMarket to allow 24/7 trading (avoids session checks)
 
+    # 注册默认标的，否则订单会被拒单
+    instr = akquant.Instrument(
+        symbol="TEST",
+        asset_type=akquant.AssetType.Stock,
+        multiplier=1.0,
+        margin_ratio=1.0,
+        tick_size=0.01,
+        lot_size=1.0,
+    )
+    engine.add_instrument(instr)
+
     engine.set_cash(100000.0)
 
     # Convert DataFrame to Bars

@@ -22,7 +22,8 @@
 一个策略从开始到结束，会经历以下几个阶段：
 
 * `__init__`: Python 对象初始化，适合定义参数。
-* `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据，也可在此注册指标。
+* `on_start`: 策略启动时调用，**必须**在此处使用 `self.subscribe()` 订阅数据，也可在此注册指标。如果是热启动，需注意不要覆盖已恢复的状态。
+* `on_resume`: **仅在热启动时调用**（在 `on_start` 之前）。用于处理从快照恢复后的特殊逻辑。
 * `on_bar`: 每一根 K 线闭合时触发 (核心交易逻辑)。
 * `on_tick`: 每一个 Tick 到达时触发 (高频/盘口策略)。
 * `on_order`: 订单状态变化时触发 (如提交、成交、取消)。
@@ -324,4 +325,39 @@ class IndicatorStrategy(Strategy):
 
         # 或者通过 get_value 获取历史值
         # val = self.sma20.get_value(bar.symbol, bar.timestamp)
+
+## 8. 高级特性：热启动 (Warm Start)
+
+AKQuant 支持**热启动 (Warm Start)** 功能，允许你保存回测状态并在未来恢复。这对于长周期分段回测、滚动训练或模拟实盘环境非常有用。
+
+### 8.1 核心机制
+
+*   **保存快照**: 使用 `save_snapshot` 将引擎状态保存到文件。
+*   **恢复运行**: 使用 `run_warm_start` 从快照恢复并继续运行。
+
+### 8.2 策略适配
+
+为了支持热启动，策略类提供了 `on_resume` 生命周期钩子和 `is_restored` 属性。
+
+*   **`on_resume()`**: 仅在从快照恢复时调用（在 `on_start` 之前）。
+*   **`self.is_restored`**: 布尔值，指示当前策略实例是否是从快照恢复的。
+
+**示例代码**：
+
+```python
+def on_start(self):
+    # 1. 初始化指标 (仅在冷启动时)
+    if not self.is_restored:
+        self.sma = SMA(30)
+    else:
+        self.log("Resumed from snapshot. Indicators retained.")
+
+    # 2. 注册指标 (必须执行)
+    self.register_indicator("sma", self.sma)
+
+    # 3. 订阅行情 (必须执行)
+    self.subscribe(self.symbol)
+```
+
+更多详细信息，请参阅 [热启动指南](../advanced/warm_start.md)。
 ```

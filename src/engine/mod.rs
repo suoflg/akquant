@@ -67,4 +67,41 @@ mod tests {
         engine.set_timezone(3600); // UTC+1
         assert_eq!(engine.timezone_offset, 3600);
     }
+
+    #[test]
+    fn test_engine_snapshot_serialization() {
+        use crate::engine::state::EngineSnapshot;
+        use crate::order_manager::OrderManager;
+        use crate::portfolio::Portfolio;
+        use std::sync::Arc;
+        use std::collections::HashMap;
+
+        let portfolio = Portfolio {
+            cash: Decimal::from(50000),
+            positions: Arc::new(HashMap::new()),
+            available_positions: Arc::new(HashMap::new()),
+        };
+
+        // Test Portfolio
+        let encoded_p: Vec<u8> = rmp_serde::to_vec(&portfolio).unwrap();
+        let decoded_p: Portfolio = rmp_serde::from_slice(&encoded_p).expect("Portfolio deserialize failed");
+        assert_eq!(decoded_p.cash, Decimal::from(50000));
+
+        let order_manager = OrderManager::new();
+        // Test OrderManager
+        let encoded_o: Vec<u8> = rmp_serde::to_vec(&order_manager).unwrap();
+        let decoded_o: OrderManager = rmp_serde::from_slice(&encoded_o).expect("OrderManager deserialize failed");
+
+        let snapshot = EngineSnapshot {
+            current_time: 123456789,
+            portfolio,
+            order_manager,
+        };
+
+        let encoded: Vec<u8> = rmp_serde::to_vec(&snapshot).unwrap();
+        let decoded: EngineSnapshot = rmp_serde::from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded.current_time, 123456789);
+        assert_eq!(decoded.portfolio.cash, Decimal::from(50000));
+    }
 }

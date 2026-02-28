@@ -152,6 +152,10 @@ impl Processor for DataProcessor {
                     _ => 0,
                 };
 
+                if timestamp <= engine.snapshot_time {
+                     return Ok(ProcessorResult::Loop);
+                }
+
                 if self.last_timestamp != 0 && timestamp > self.last_timestamp {
                     self.fill_missing_bars(engine);
                     self.seen_symbols.clear();

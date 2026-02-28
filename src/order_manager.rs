@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 
 use crate::analysis::TradeTracker;
 use crate::history::HistoryBuffer;
@@ -11,6 +12,7 @@ use crate::portfolio::Portfolio;
 
 /// 订单管理器
 /// 负责管理订单列表、成交记录及状态流转
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OrderManager {
     /// 历史订单 (已完成)
     pub orders: Vec<Order>,

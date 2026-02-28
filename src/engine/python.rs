@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use indicatif::{ProgressBar, ProgressStyle};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
@@ -99,7 +100,32 @@ impl Engine {
             bar_count: 0,
             progress_bar: None,
             strategy_context: None,
+            snapshot_time: 0,
         }
+    }
+
+    /// 导出当前状态为二进制数据
+    fn get_state_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let snapshot = crate::engine::state::EngineSnapshot {
+            current_time: self.clock.timestamp().unwrap_or(0),
+            portfolio: self.state.portfolio.clone(),
+            order_manager: self.state.order_manager.clone(),
+        };
+        let bytes = rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// 从二进制数据加载状态
+    fn load_state_bytes(&mut self, data: &Bound<'_, PyBytes>) -> PyResult<()> {
+        let bytes = data.as_bytes();
+        let snapshot: crate::engine::state::EngineSnapshot = rmp_serde::from_slice(bytes)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        self.state.portfolio = snapshot.portfolio;
+        self.state.order_manager = snapshot.order_manager;
+        self.snapshot_time = snapshot.current_time;
+
+        Ok(())
     }
 
     /// 设置历史数据长度

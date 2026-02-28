@@ -31,6 +31,8 @@ class BacktestResult:
         raw_result: RustBacktestResult,
         timezone: str = "Asia/Shanghai",
         initial_cash: float = 0.0,
+        strategy: Optional[Any] = None,
+        engine: Optional[Any] = None,
     ):
         """
         Initialize the BacktestResult wrapper.
@@ -38,10 +40,14 @@ class BacktestResult:
         :param raw_result: The raw Rust BacktestResult object.
         :param timezone: The timezone string for datetime conversion.
         :param initial_cash: Initial capital used in backtest.
+        :param strategy: The strategy instance used in backtest.
+        :param engine: The engine instance used in backtest.
         """
         self._raw = raw_result
         self._timezone = timezone
         self.initial_cash = initial_cash
+        self.strategy = strategy
+        self.engine = engine
 
     @property
     def equity_curve(self) -> pd.Series:
@@ -164,11 +170,23 @@ class BacktestResult:
         metrics = self._raw.metrics
 
         class MetricsWrapper:
-            def __init__(self, raw_metrics: Any, timezone: str) -> None:
+            def __init__(
+                self, raw_metrics: Any, timezone: str, initial_cash: float
+            ) -> None:
                 self._raw = raw_metrics
                 self._timezone = timezone
+                self._initial_cash = initial_cash
 
             def __getattr__(self, name: str) -> Any:
+                # Override initial_market_value if we have a valid initial_cash
+                if name == "initial_market_value" and self._initial_cash > 0:
+                    return self._initial_cash
+
+                # Recalculate total_return based on corrected initial_market_value
+                if name == "total_return" and self._initial_cash > 0:
+                    end_val = getattr(self._raw, "end_market_value")
+                    return (end_val - self._initial_cash) / self._initial_cash
+
                 val = getattr(self._raw, name)
                 if name in ["start_time", "end_time"]:
                     # Convert ns timestamp to datetime
@@ -179,7 +197,7 @@ class BacktestResult:
                         return dt
                 return val
 
-        return MetricsWrapper(metrics, self._timezone)
+        return MetricsWrapper(metrics, self._timezone, self.initial_cash)
 
     @property
     def positions(self) -> pd.DataFrame:
