@@ -90,7 +90,7 @@ mod tests {
         let order_manager = OrderManager::new();
         // Test OrderManager
         let encoded_o: Vec<u8> = rmp_serde::to_vec(&order_manager).unwrap();
-        let decoded_o: OrderManager = rmp_serde::from_slice(&encoded_o).expect("OrderManager deserialize failed");
+        let _decoded_o: OrderManager = rmp_serde::from_slice(&encoded_o).expect("OrderManager deserialize failed");
 
         let snapshot = EngineSnapshot {
             current_time: 123456789,
