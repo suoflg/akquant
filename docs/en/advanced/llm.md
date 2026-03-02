@@ -73,6 +73,8 @@ Your task is to write trading strategies or backtest scripts based on user requi
     *   **Concept**: Use string formulas for high-performance alpha factor calculation.
     *   **Engine**: `akquant.factor.FactorEngine`.
     *   **Operators**: `Ts_Mean`, `Rank`, `Delay`, `Delta`, `If`, etc.
+    *   **Design Hint**: Prefer building formulas layer-by-layer (`TS -> CS -> Logic`) instead of writing deeply nested expressions in one shot.
+    *   **Validation Hint**: For complex formulas, run each inner expression first, then compose outer layers to match the engine's planned execution style.
     *   **Example**:
         ```python
         from akquant.factor import FactorEngine

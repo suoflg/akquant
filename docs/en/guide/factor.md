@@ -168,7 +168,29 @@ This means you can directly use Parquet files exported via Pandas `to_parquet` (
 2.  Polars constructs a query plan and only reads the columns required for calculation (Projection Pushdown).
 3.  For example, when calculating `Ts_Mean(Close, 5)`, the engine only reads `symbol`, `date`, and `close` columns, ignoring `open`, `high`, etc., saving significant memory.
 
-### 3. Composite Factor Examples
+### 4. Execution Plan & Materialization
+
+For nested window formulas such as `Rank(Ts_Mean(Close, 5))`, the engine does not force everything into one pass. It first creates an execution plan, then runs step by step:
+
+1. Parse the expression AST and classify operators as TS / CS / EL.
+2. If it detects `CS(TS(...))` or `TS(CS(...))`, extract the inner part into an intermediate step (e.g. `_auto_var_0`).
+3. Compute that intermediate column with `with_columns`, materialize it, and then run the outer step.
+
+This keeps semantics correct across different partition dimensions and avoids ambiguous nested `over()` behavior.
+
+### 5. Partition Semantics
+
+Understanding partitions helps you design predictable factors:
+
+*   **TS (Time-Series)**: grouped by `symbol`, e.g. `Ts_Mean`, `Ts_Std`, `Delay`, `Ts_Rank`.
+*   **CS (Cross-Sectional)**: grouped by `date`, e.g. `Rank`, `Scale`, `Standardize`.
+*   **EL (Element-wise)**: row-wise transform with no window partition, e.g. `Log`, `Abs`, `Sign`, `If`.
+
+Recommended workflow:
+*   Validate a single-layer expression first (for example `Ts_Mean` alone).
+*   Then wrap with CS or logic operators to build composite formulas incrementally.
+
+### 6. Composite Factor Examples
 
 You can nest multiple operators to build complex Alpha factors:
 
@@ -177,6 +199,12 @@ You can nest multiple operators to build complex Alpha factors:
 *   **Volatility Adjusted Momentum**: `Ts_Mean(Close, 20) / Ts_Std(Close, 20)`
 
 ## FAQ
+
+**Q: Why can `Rank(Ts_Mean(...))` be slower than a single-layer expression?**
+A: This is a cross-partition nested expression (CS over TS). The engine may split execution into multiple planned steps and materialize intermediate columns to preserve correct semantics.
+
+**Q: How can I debug a complex formula reliably?**
+A: Break it into stages and validate each stage separately (inner TS, then outer CS, then logic layer). This mirrors the engine execution plan and makes mismatched assumptions easy to locate.
 
 **Q: Is intraday data (minute bars) supported?**
 A: Yes. As long as the `date` column contains timestamps. Time-series operators (e.g., `Ts_Mean`) are based on window length (number of rows). For minute bars, `d=60` represents the past 60 minute bars.
