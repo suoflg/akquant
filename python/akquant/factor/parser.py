@@ -149,13 +149,8 @@ class ExpressionParser:
             return pl.col(node.id.lower())
 
         # Handle Constants
-        elif isinstance(node, ast.Constant):  # Python 3.8+
+        elif isinstance(node, ast.Constant):
             return node.value
-        # Python < 3.8 compat (Num, Str, etc.) - probably not needed for modern envs
-        elif isinstance(node, ast.Num):
-            return node.n
-        elif isinstance(node, ast.Str):
-            return node.s
 
         # Handle Binary Operators (+, -, *, /)
         elif isinstance(node, ast.BinOp):

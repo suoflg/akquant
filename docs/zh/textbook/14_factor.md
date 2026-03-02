@@ -224,7 +224,62 @@ expr = "-1 * Ts_Corr(Open, Volume, 10)"
 df = engine.run(expr)
 ```
 
-## 7. 课后练习
+## 7. 工程实现：表达式如何被执行
+
+这一节不讲“算子是什么”，而讲“表达式如何落地执行”。
+
+### 7.1 Parser：从字符串到计算树
+
+当你调用：
+
+```python
+engine.run("Rank(Ts_Mean(Close, 5))")
+```
+
+内部先走 AST 解析流程：
+
+1. 将字符串转为 AST。
+2. 识别函数调用节点（如 `Rank`, `Ts_Mean`）。
+3. 将变量名映射为列（`Close -> close`）。
+4. 将常量映射为字面量表达式。
+
+这一步的目标是把“人类可读公式”转换为“Polars 可执行表达式”。
+
+### 7.2 Planner：为什么要拆步骤
+
+因子引擎会给算子打类别标签：
+
+*   **TS**（Time-Series）：按 `symbol` 分组滚动，如 `Ts_Mean`。
+*   **CS**（Cross-Sectional）：按 `date` 分组横截面，如 `Rank`。
+*   **EL**（Element-wise）：逐元素，如 `Log`、`If`。
+
+当检测到 `CS(TS(...))` 或 `TS(CS(...))` 这种跨分区嵌套时，Planner 会自动拆步：
+
+*   Step1: 先算内层（例如 `_auto_var_0 = Ts_Mean(Close, 5)`）
+*   Step2: 再算外层（`result = Rank(_auto_var_0)`）
+
+这种拆步不是“多此一举”，而是保证跨分区语义正确。
+
+### 7.3 Executor：为什么中间结果要物化
+
+执行器会按步骤顺序执行。对中间步骤，它会先 `with_columns`，然后立即物化为 DataFrame，再继续下一步。
+
+这么做有两个好处：
+
+1. 避免嵌套窗口在同一 Lazy 图中产生分区歧义。
+2. 调试更直观：每一步都对应可验证的中间列。
+
+### 7.4 Batch 模式的设计取舍
+
+`run_batch([...])` 的实现思路是：
+
+1. 先构造 `date + symbol` 的基准键表。
+2. 每个表达式独立执行，产出一列 `factor_i`。
+3. 按键回连到基准表，最终形成宽表。
+
+优点是表达式之间解耦、可单独复现；代价是表达式数量很多时，连接成本会增加。
+
+## 8. 课后练习
 
 1.  尝试使用 AKShare 下载更多股票的数据（如沪深300成分股）。
 2.  实现并计算一个动量反转因子：`Rank(Ts_Mean(Close, 5)) - Rank(Ts_Mean(Close, 20))`。
