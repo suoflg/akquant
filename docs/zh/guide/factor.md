@@ -1,215 +1,149 @@
-# 因子表达式引擎 (Factor Expression Engine)
+# 因子表达式引擎速查
 
-AKQuant 内置了高性能的因子表达式引擎 (`akquant.factor`)，允许用户通过简洁的字符串公式定义复杂的 Alpha 因子。底层基于 Rust 实现的 **Polars** 库，提供极高的计算性能和并行处理能力。
+本页定位为“查表 + 排障”，用于快速回答三个问题：
 
-## 核心特性
+1. 表达式怎么写才符合语义？
+2. 算子有哪些、参数怎么填？
+3. 报错或结果异常时先查什么？
 
-*   **极速计算**: 基于 Polars Lazy API，自动优化查询计划，利用 Rust 多线程并行计算。
-*   **简洁语法**: 使用类 WorldQuant Alpha101 的公式语法，如 `Rank(Ts_Mean(Close, 5))`。
-*   **防止未来函数**: 封装好的时序算子（如 `Ts_Mean`）自动处理窗口和偏移，减少手写代码引入未来数据的风险。
-*   **自动对齐**: 引擎自动处理面板数据（Panel Data）的对齐和分组（Group By Symbol/Date）。
+如果你想系统学习从想法到落地的完整路径，请先看 [第 14 章：高性能因子挖掘与表达式引擎](../textbook/14_factor.md)。
 
-## 设计原理与行业参考 (Design Philosophy)
-
-AKQuant 的因子引擎采用了经典的 **DSL (Domain Specific Language)** 设计模式，通过字符串解析（AST Parsing）和算子映射（Operator Mapping）将用户的业务逻辑转换为底层的计算图。这种设计在量化金融领域被广泛采用：
-
-1.  **WorldQuant BRAIN**: 作为公式化 Alpha 的鼻祖，其 Alpha Compiler 定义了行业标准的算子命名（如 `Ts_Mean`, `Rank`）。AKQuant 遵循这一命名规范，降低用户的学习迁移成本。
-2.  **DolphinDB**: 高性能时序数据库，采用 `streamEngineParser` 解析类似的因子表达式，构建流批一体的计算流水线。
-3.  **Microsoft Qlib**: AI 量化平台，其 Expression Engine 同样支持如 `Ref($close, 1)` 的字符串语法，通过缓存和向量化计算提升效率。
-4.  **Zipline**: 虽然主要使用 Python 对象，但其 Pipeline API 构建依赖图（Graph）的思想与 AKQuant 利用 Polars Lazy Execution 构建计算图的核心理念是一致的。
-
-AKQuant 站在巨人的肩膀上，结合了 **Polars (Rust)** 的现代化高性能计算引擎，使得在 Python 中也能获得接近 C++ 的因子计算效率，同时保持了 Python 代码的简洁与灵活性。
-
-## 快速开始
-
-### 1. 准备数据
-
-因子引擎默认使用 `ParquetDataCatalog` 读取数据。为了确保因子引擎能正确工作，您需要将数据整理为面板（Panel）格式，并确保包含以下关键列：
-
-*   **`symbol`** (String): 标的代码，用于区分不同的资产（分组计算）。
-*   **`date`** (Datetime): 日期或时间戳，用于时间序列排序和对齐。
-*   **OHLCV 字段**: 如 `open`, `high`, `low`, `close`, `volume` 等，用于因子计算。
-
-**示例：使用 AKShare 获取 A 股数据并写入**
-
-AKQuant 与 [AKShare](https://akshare.akfamily.xyz/) 完美兼容。你可以使用 AKShare 获取真实的历史行情数据，并将其整理为 AKQuant 所需的格式。
-
-```python
-import akshare as ak
-import pandas as pd
-from akquant.data import ParquetDataCatalog
-
-# 1. 初始化数据目录
-catalog = ParquetDataCatalog("./data_catalog")
-
-# 2. 准备股票列表 (例如: 贵州茅台, 宁德时代, 招商银行)
-symbols = ["sh600519", "sz300750", "sh600036"]
-
-print("开始下载数据...")
-for symbol in symbols:
-    print(f"Downloading {symbol}...")
-
-    # 使用 AKShare 获取日线数据 (需安装: pip install akshare)
-    # adjust="hfq" 表示后复权，适合回测
-    df = ak.stock_zh_a_daily(symbol=symbol, start_date="20230101", end_date="20231231", adjust="hfq")
-
-    if df.empty:
-        print(f"Warning: No data for {symbol}")
-        continue
-
-    # 添加 symbol 列 (akquant 需要此列进行分组计算)
-    df["symbol"] = symbol
-
-    # 确保 date 列是 datetime 类型并设为索引
-    # AKShare 返回的数据包含 open, high, low, close, volume 等标准字段
-    df["date"] = pd.to_datetime(df["date"])
-    df.set_index("date", inplace=True)
-
-    # 写入 Parquet 目录
-    catalog.write(symbol, df)
-
-print("数据准备完成！目录: ./data_catalog")
-```
-
-### 2. 计算因子
+## 1. 最小使用模板
 
 ```python
 from akquant.factor import FactorEngine
 
-# 初始化引擎
 engine = FactorEngine(catalog)
-
-# 计算单个因子
-# 返回包含 [date, symbol, factor_value] 的 DataFrame
 df = engine.run("Rank(Ts_Mean(Close, 10))")
-print(df.head())
-
-# 批量计算因子
-df_batch = engine.run_batch([
-    "Ts_Mean(Close, 5)",
-    "Rank(Volume)",
-    "If(Close > Open, 1, 0)"
-])
+df_batch = engine.run_batch(
+    [
+        "Ts_Mean(Close, 5)",
+        "Rank(Volume)",
+        "If(Close > Open, 1, 0)",
+    ]
+)
 ```
 
-## 算子参考 (Operators)
+输入数据建议至少包含：
 
-表达式支持变量（列名，不区分大小写，如 `Close`, `open`）和常数。
+- `symbol`
+- `date`
+- `open`, `high`, `low`, `close`, `volume`（按策略实际需求）
 
-### 时序算子 (Time Series)
+## 2. 语法规则速览
 
-在时间维度上对每个标的（Symbol）独立计算。
+### 2.1 变量与常量
 
-| 算子 | 说明 | 示例 |
-| :--- | :--- | :--- |
-| `Ts_Mean(X, d)` | 过去 `d` 天的移动平均 | `Ts_Mean(Close, 5)` |
-| `Ts_Std(X, d)` | 过去 `d` 天的移动标准差 | `Ts_Std(Close, 20)` |
-| `Ts_Max(X, d)` | 过去 `d` 天的最大值 | `Ts_Max(High, 10)` |
-| `Ts_Min(X, d)` | 过去 `d` 天的最小值 | `Ts_Min(Low, 10)` |
-| `Ts_Sum(X, d)` | 过去 `d` 天的求和 | `Ts_Sum(Volume, 5)` |
-| `Ts_ArgMax(X, d)` | 过去 `d` 天最大值距离当前的天数 (0=当前) | `Ts_ArgMax(Close, 5)` |
-| `Ts_ArgMin(X, d)` | 过去 `d` 天最小值距离当前的天数 (0=当前) | `Ts_ArgMin(Close, 5)` |
-| `Ts_Rank(X, d)` | 当前值在过去 `d` 天窗口内的百分比排名 (0~1) | `Ts_Rank(Close, 5)` |
-| `Ts_Corr(X, Y, d)` | 过去 `d` 天 X 和 Y 的相关系数 | `Ts_Corr(Close, Volume, 20)` |
-| `Ts_Cov(X, Y, d)` | 过去 `d` 天 X 和 Y 的协方差 | `Ts_Cov(Close, Open, 20)` |
-| `Delay(X, d)` | 滞后 `d` 天的值 (Ref) | `Delay(Close, 1)` |
-| `Delta(X, d)` | 差分: `X(t) - X(t-d)` | `Delta(Close, 1)` |
+- 列名不区分大小写：`Close` 与 `close` 等价。
+- 数值常量可直接写：`1`、`0.5`。
+- 变量名必须能映射到真实列；如数据是 `ClosePrice`，写 `Close` 会失败。
 
-### 截面算子 (Cross Sectional)
+### 2.2 运算符
 
-在同一时间截面上对所有标的进行计算。
-
-| 算子 | 说明 | 示例 |
-| :--- | :--- | :--- |
-| `Rank(X)` | 百分比排名 (0 到 1) | `Rank(Ts_Mean(Close, 5))` |
-| `Scale(X)` | 归一化，使 `sum(abs(X)) = 1` | `Scale(Close)` |
-
-### 逻辑与数学算子 (Math & Logic)
-
-| 算子 | 说明 | 示例 |
-| :--- | :--- | :--- |
-| `Log(X)` | 自然对数 | `Log(Volume)` |
-| `Abs(X)` | 绝对值 | `Abs(Return)` |
-| `Sign(X)` | 符号函数 (1, 0, -1) | `Sign(Close - Open)` |
-| `SignedPower(X, e)` | 保持符号的幂运算 | `SignedPower(Close, 2)` |
-| `If(Cond, A, B)` | 条件判断 (If-Else) | `If(Close > Open, 1, -1)` |
-
-### 基础运算
-
-支持加减乘除 `+`, `-`, `*`, `/` 以及比较运算符 `>`, `<`, `>=`, `<=`, `==`, `!=`。
+- 算术运算：`+`, `-`, `*`, `/`
+- 比较运算：`>`, `<`, `>=`, `<=`, `==`, `!=`
+- 逻辑组合：可在条件中使用 `&`, `|`
 
 示例：
+
+```python
+If((Close > Open) & (Volume > Ts_Mean(Volume, 20)), 1, 0)
 ```
-(Close - Open) / Open
-```
 
-## 进阶技巧 (Advanced Tips)
+### 2.3 三类分区语义
 
-### 1. 数据对齐与填充 (Alignment & Padding)
+- **TS（时序）**：按 `symbol` 分组滚动。
+- **CS（截面）**：按 `date` 分组横截面。
+- **EL（元素级）**：逐元素变换，不引入窗口。
 
-因子引擎底层使用 Polars 的 `LazyFrame` 进行计算。在进行时序计算（如 `Ts_Mean`）时，Polars 会对每个 `symbol` 分组内的数据进行操作。
-**注意**: 如果某些日期的交易数据缺失（例如停牌），`rolling` 窗口计算可能会基于物理行数（Row-based）而非时间（Time-based）。为了确保精确性，建议在写入数据前对数据进行日历填充（Reindex）。
+跨分区嵌套（如 `Rank(Ts_Mean(...))`）会被拆步执行并物化中间结果。
 
-### 2. 智能日期列识别 (Smart Date Column Detection)
+## 3. 算子速查
 
-`FactorEngine` 在加载数据时会自动识别时间列。如果数据中包含以下列名之一，引擎会自动将其重命名为 `date` 并进行对齐：
-*   `date`
-*   `index`
-*   `datetime`
-*   `__index_level_0__` (Pandas 默认索引名)
+### 3.1 时序算子 (TS)
 
-这意味着您可以直接使用 Pandas `to_parquet` 导出的包含索引的文件，而无需手动重置索引列名。
+| 算子 | 别名 | 说明 | 示例 |
+| :--- | :--- | :--- | :--- |
+| `Ts_Mean(X, d)` | `Mean` | 过去 `d` 期移动平均 | `Ts_Mean(Close, 5)` |
+| `Ts_Std(X, d)` | `Std` | 过去 `d` 期移动标准差 | `Ts_Std(Close, 20)` |
+| `Ts_Max(X, d)` | `Max` | 过去 `d` 期最大值 | `Ts_Max(High, 10)` |
+| `Ts_Min(X, d)` | `Min` | 过去 `d` 期最小值 | `Ts_Min(Low, 10)` |
+| `Ts_Sum(X, d)` | `Sum` | 过去 `d` 期求和 | `Ts_Sum(Volume, 5)` |
+| `Ts_ArgMax(X, d)` | `ArgMax` | 过去 `d` 期最大值距今天数 | `Ts_ArgMax(Close, 5)` |
+| `Ts_ArgMin(X, d)` | `ArgMin` | 过去 `d` 期最小值距今天数 | `Ts_ArgMin(Close, 5)` |
+| `Ts_Rank(X, d)` | - | 当前值在过去 `d` 期分位排名 | `Ts_Rank(Close, 5)` |
+| `Delta(X, d)` | - | `X(t) - X(t-d)` | `Delta(Close, 1)` |
+| `Delay(X, d)` | `Ref` | 滞后 `d` 期数值 | `Delay(Close, 1)` |
+| `Ts_Corr(X, Y, d)` | `Corr` | 过去 `d` 期相关系数 | `Ts_Corr(Close, Volume, 20)` |
+| `Ts_Cov(X, Y, d)` | `Cov` | 过去 `d` 期协方差 | `Ts_Cov(Close, Open, 20)` |
 
-### 3. 内存优化 (Memory Optimization)
+### 3.2 截面算子 (CS)
 
-`FactorEngine` 采用 Lazy Evaluation（惰性求值）模式：
-1.  `engine.run()` 时并不会立即加载所有数据到内存。
-2.  Polars 会构建查询计划，只读取计算所需的列（Projection Pushdown）。
-3.  例如计算 `Ts_Mean(Close, 5)` 时，引擎只会读取 `symbol`, `date`, `close` 列，忽略 `open`, `high` 等其他列，极大节省内存。
+| 算子 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `Rank(X)` | 同日横截面百分比排名（0~1） | `Rank(Close)` |
+| `Scale(X)` | 同日归一化，`sum(abs(X)) = 1` | `Scale(Close)` |
 
-### 4. 执行计划与中间变量物化 (Execution Plan)
+### 3.3 逻辑与数学算子 (EL)
 
-当表达式出现嵌套窗口时（如 `Rank(Ts_Mean(Close, 5))`），引擎不会盲目一次性执行，而是先生成执行计划，再分步计算：
+| 算子 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `If(Cond, A, B)` | 条件判断 | `If(Close > Open, 1, -1)` |
+| `Sign(X)` | 符号函数（1, 0, -1） | `Sign(Close - Open)` |
+| `Abs(X)` | 绝对值 | `Abs(Close - Open)` |
+| `Log(X)` | 自然对数 | `Log(Volume)` |
+| `SignedPower(X, e)` | 保持符号的幂运算 | `SignedPower(Close, 2)` |
 
-1. 解析表达式 AST，识别算子类别（时序 TS / 截面 CS / 元素级 EL）。
-2. 遇到 `CS(TS(...))` 或 `TS(CS(...))` 时，先提取内层为中间步骤（如 `_auto_var_0`）。
-3. 用 `with_columns` 计算中间列并物化，再执行外层窗口算子。
+## 4. 排障手册（按优先级）
 
-这样做的核心目的是保证 TS 与 CS 在不同分区语义下计算正确，避免嵌套 `over()` 带来的歧义。
+### 4.1 结果全是 NaN
 
-### 5. 算子分区语义 (Partition Semantics)
+优先检查：
 
-理解分区语义有助于你写出“结果可预期”的表达式：
+1. `d` 是否大于可用历史长度（Warmup 不足）。
+2. 原始列是否有大量 NaN。
+3. 列名是否真实可映射。
 
-*   **TS（时序）**：按 `symbol` 分组滚动计算，如 `Ts_Mean`, `Ts_Std`, `Delay`, `Ts_Rank`。
-*   **CS（截面）**：按 `date` 分组横截面计算，如 `Rank`, `Scale`, `Standardize`。
-*   **EL（元素级）**：逐元素变换，不引入窗口分组，如 `Log`, `Abs`, `Sign`, `If`。
+### 4.2 嵌套表达式明显变慢
 
-建议实践：
-*   先写单层表达式验证方向（例如先验 `Ts_Mean`，再包一层 `Rank`）。
-*   再组合为复杂表达式，避免一次性写过深嵌套导致调试困难。
+常见原因是跨分区嵌套触发拆步物化。处理方式：
 
-### 6. 复合因子示例
+1. 先单独运行内层表达式。
+2. 确认内层结果合理后再加外层。
+3. 批量场景再考虑 `run_batch`。
 
-你可以将多个算子嵌套使用，构建复杂的 Alpha 因子：
+### 4.3 窗口语义与预期不一致
 
-*   **量价背离**: `Ts_Corr(Close, Volume, 20)` (价格与成交量的相关性)
-*   **动量反转**: `Rank(Ts_Mean(Close, 5)) - Rank(Ts_Mean(Close, 20))` (短期动量减去长期动量)
-*   **波动率调整后的动量**: `Ts_Mean(Close, 20) / Ts_Std(Close, 20)`
+若数据有停牌/缺失日期，滚动窗口按行推进，可能偏离“自然日”理解。建议先做交易日对齐。
 
-## 常见问题 (FAQ)
+### 4.4 列名看着对却报错
 
-**Q: 为什么 `Rank(Ts_Mean(...))` 这类表达式有时比单层表达式慢？**
-A: 因为这是跨分区嵌套（CS 包 TS）。引擎会先拆成多步执行并物化中间列，以保证语义正确。你可以将复杂表达式拆解后逐步验证，通常更易调优和排错。
+引擎会做大小写归一，但不会猜测别名。`ClosePrice` 与 `Close` 不是同一列。
 
-**Q: 支持日内数据（分钟线）吗？**
-A: 支持。只要 `date` 列包含时间戳即可。时序算子（如 `Ts_Mean`）是基于窗口长度（行数）计算的，对于分钟线，`d=60` 代表过去 60 个分钟 bar。
+### 4.5 同策略跨市场结果漂移
 
-**Q: 如何处理停牌数据？**
-A: 建议在数据入库前填充停牌日的记录（使用前值填充或 NaN）。如果数据中直接缺失该日期，`rolling` 函数会跳过该日期，直接取上一行数据作为 `t-1`，这在逻辑上可能不符合预期。
+先检查时区与本地化：
 
-**Q: 为什么我的结果全是 NaN？**
-A:
-1.  检查窗口大小 `d` 是否大于数据长度（Warmup 期）。
-2.  检查数据中是否包含大量 NaN。
-3.  检查列名是否拼写正确（如 `Close` vs `close`，引擎会自动转小写，但如果数据列名是 `ClosePrice` 则无法匹配）。
+1. 默认时区为 `Asia/Shanghai`。
+2. 非 A 股必须显式设置 `timezone`。
+3. 时间列需要显式 `tz_localize`。
+
+更多时区细节见 [时区处理指南](../advanced/timezone.md)。
+
+## 5. 性能建议
+
+1. 先 `run` 调通，再 `run_batch` 扩展。
+2. 减少不必要的深层嵌套，优先可解释的组合结构。
+3. 使用最小必要列，降低 IO 与内存占用。
+4. 对停牌和缺失日期提前清洗，减少窗口偏差导致的反复调试。
+
+## 6. FAQ
+
+**Q: 支持分钟线吗？**
+A: 支持。`date` 包含时间戳即可；`d=60` 表示过去 60 根 bar。
+
+**Q: 为什么同一表达式在不同数据源结果不同？**
+A: 通常不是算子问题，而是数据对齐、复权、缺失值处理与时区设置差异。
+
+**Q: 什么时候优先用 `run_batch`？**
+A: 同样本池、同时间段、多因子并行评估时优先；单表达式调试时优先 `run`。
