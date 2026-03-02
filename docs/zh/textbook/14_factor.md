@@ -1,234 +1,218 @@
 # 第 14 章：高性能因子挖掘与表达式引擎
 
-## 1. 为什么需要因子表达式？
+## 1. 本章你会得到什么
 
-在量化投研（尤其是 Alpha 因子研究）中，研究员的核心痛点往往不是“如何写代码”，而是“如何快速验证想法”。
+这一章聚焦一件事：让你能稳定写出**可解释、可调试、可批量运行**的因子表达式。
 
-*   **传统方式**：手写 20 行 Python/Pandas 代码来实现一个动量因子，处理繁琐的数据对齐、缺失值填充和窗口计算。
-*   **现代方式**：使用一行公式 `Rank(Ts_Mean(Close, 5))` 即可完成计算。
+学完后你应该能做到：
 
-因子表达式引擎（Expression Engine）的出现，将研究员从底层的工程细节中解放出来，专注于因子的**数学逻辑**本身。
+1. 用 1 行表达式快速验证一个 Alpha 想法。
+2. 区分 TS / CS / EL 三类算子并避免语义误用。
+3. 对复杂表达式进行拆步调试，而不是“盲猜哪里错了”。
+4. 用 `run_batch` 批量计算并理解它的性能取舍。
 
-## 2. AKQuant 因子引擎架构
+> 本章讲“怎么思考与实战”，算子清单与排障速查请看 [因子表达式引擎指南](../guide/factor.md)。
 
-AKQuant 内置的 `akquant.factor` 模块基于 Rust 实现的 **Polars** 库，提供了远超 Pandas 的计算性能。
+## 2. 为什么表达式模式更适合因子研究
 
-### 2.1 设计哲学与行业标准 (Design Philosophy)
+在 Alpha 研究中，研究员真正需要的是“低成本试错”。
 
-AKQuant 采用了 **DSL (领域特定语言)** 的设计模式，这在顶级量化机构和开源框架中是非常主流的实现方式：
+- 传统方式：每个因子都写一段 DataFrame 逻辑，重复处理分组、对齐、窗口和缺失值。
+- 表达式方式：先写出数学结构，再交给引擎执行，例如 `Rank(Ts_Mean(Close, 5))`。
 
-1.  **WorldQuant BRAIN**: 定义了行业标准的算子命名（如 `Ts_Mean`, `Rank`）。AKQuant 沿用了这一规范，让熟悉 WQ 的用户可以零成本迁移。
-2.  **DolphinDB**: 高频时序数据库，通过 `streamEngineParser` 解析类似的字符串表达式，构建高性能计算流水线。
-3.  **Microsoft Qlib**: 微软推出的 AI 量化平台，同样内置了表达式引擎（Expression Engine），支持如 `Ref($close, 1)` 的语法。
+核心收益是解耦：
 
-这种设计的核心优势在于**解耦**：用户只需通过字符串描述“算什么”（What），而无需关心底层的“怎么算”（How）。底层的计算引擎可以从 Pandas 升级为 Polars，甚至将来升级为 GPU 计算，而用户的因子代码完全不需要修改。
+- 你只描述“算什么”。
+- 引擎负责“怎么算”（解析、执行计划、并行优化）。
 
-### 2.2 核心特性
+## 3. 十分钟上手：从 0 到可运行
 
-*   **极速计算**：利用 Polars 的 Lazy API 和多线程并行计算能力。
-*   **防止未来函数**：封装好的时序算子（如 `Ts_Mean`）强制执行窗口逻辑，避免用到未来数据。
-*   **Alpha101 风格**：支持 WorldQuant 风格的经典因子语法。
-
-## 3. 快速上手
-
-### 3.1 准备数据
-
-因子引擎需要标准化的面板数据（Panel Data）。
+### 3.1 准备最小数据
 
 ```python
 import akshare as ak
 import pandas as pd
 from akquant.data import ParquetDataCatalog
 
-# 初始化数据目录
 catalog = ParquetDataCatalog("./data_catalog")
 
-# 下载数据 (以平安银行和宁德时代为例)
-symbols = ["sh600001", "sz300750"]
+symbols = ["sh600000", "sz300750"]
 for symbol in symbols:
-    df = ak.stock_zh_a_daily(symbol=symbol, start_date="20230101", end_date="20230601", adjust="hfq")
+    df = ak.stock_zh_a_daily(
+        symbol=symbol,
+        start_date="20230101",
+        end_date="20230601",
+        adjust="hfq",
+    )
     df["symbol"] = symbol
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
     catalog.write(symbol, df)
 ```
 
-### 3.2 计算因子
+### 3.2 跑通三个层次
 
 ```python
 from akquant.factor import FactorEngine
 
-# 初始化引擎
 engine = FactorEngine(catalog)
 
-# 1. 计算单个动量因子
-# 逻辑：过去 5 天收盘价均值的横截面排名
-df = engine.run("Rank(Ts_Mean(Close, 5))")
-print(df.head())
+# 单层表达式：先确认基础计算正确
+df_ts = engine.run("Ts_Mean(Close, 5)")
 
-# 2. 批量计算多个因子
-expressions = [
-    "Ts_Mean(Close, 5)",             # 时序均值
-    "Rank(Volume)",                  # 截面成交量排名
-    "Rank(Ts_Corr(Close, Volume, 10))" # 量价相关性排名
-]
-df_batch = engine.run_batch(expressions)
+# 嵌套表达式：再确认跨分区语义
+df_nested = engine.run("Rank(Ts_Mean(Close, 5))")
+
+# 批量表达式：最后再进行规模化
+df_batch = engine.run_batch(
+    [
+        "Ts_Mean(Close, 5)",
+        "Rank(Volume)",
+        "Rank(Ts_Corr(Close, Volume, 10))",
+    ]
+)
 ```
 
-## 4. 算子详解
+### 3.3 结果先看三列
 
-### 4.1 时序算子 (Time-Series)
+先只看这三件事，再看绩效：
 
-在时间维度上对每只股票独立计算。支持别名（如 `Mean` 等同于 `Ts_Mean`）。
+1. `date` 是否连续且顺序正确。
+2. `symbol` 是否完整覆盖样本池。
+3. `factor_value` 是否存在异常常数、全 NaN 或极端离群。
 
-| 算子 | 别名 | 说明 | 示例 |
-| :--- | :--- | :--- | :--- |
-| `Ts_Mean(X, d)` | `Mean` | 移动平均 | `Ts_Mean(Close, 5)` |
-| `Ts_Std(X, d)` | `Std` | 移动标准差 | `Ts_Std(Close, 20)` |
-| `Ts_Max(X, d)` | `Max` | 移动最大值 | `Ts_Max(High, 10)` |
-| `Ts_Min(X, d)` | `Min` | 移动最小值 | `Ts_Min(Low, 10)` |
-| `Ts_Sum(X, d)` | `Sum` | 移动求和 | `Ts_Sum(Volume, 5)` |
-| `Ts_ArgMax(X, d)` | `ArgMax` | 过去 d 天最大值距离当前的天数 (0=当前) | `Ts_ArgMax(Close, 5)` |
-| `Ts_ArgMin(X, d)` | `ArgMin` | 过去 d 天最小值距离当前的天数 (0=当前) | `Ts_ArgMin(Close, 5)` |
-| `Ts_Rank(X, d)` | - | 当前值在过去 d 天窗口内的百分比排名 (0~1) | `Ts_Rank(Close, 5)` |
-| `Delta(X, d)` | - | 差分 (今日 - d日前) | `Delta(Close, 1)` |
-| `Delay(X, d)` | `Ref` | 滞后 (d日前的数值) | `Delay(Close, 1)` |
-| `Ts_Corr(X, Y, d)` | `Corr` | 滚动相关系数 | `Ts_Corr(Close, Volume, 20)` |
-| `Ts_Cov(X, Y, d)` | `Cov` | 滚动协方差 | `Ts_Cov(Close, Open, 20)` |
+## 4. 表达式写作三板斧
 
-### 4.2 截面算子 (Cross-Sectional)
+### 4.1 第一板斧：先单层，后嵌套
 
-在同一时间点上对所有股票进行计算。
+不要一开始就写五层嵌套，建议按顺序：
 
-| 算子 | 说明 | 示例 |
-| :--- | :--- | :--- |
-| `Rank(X)` | 百分比排名 (0~1) | `Rank(Close)` |
-| `Scale(X)` | 归一化 (Sum abs = 1) | `Scale(Close)` |
+1. 先验证内层（例如 `Ts_Mean(Close, 5)`）。
+2. 再包外层（例如 `Rank(...)`）。
+3. 最后再加条件或组合项（例如 `If(...)`）。
 
-### 4.3 逻辑与数学算子
+### 4.2 第二板斧：按分区语义写
 
-| 算子 | 说明 | 示例 |
-| :--- | :--- | :--- |
-| `If(Cond, A, B)` | 条件判断 | `If(Close > Open, 1, -1)` |
-| `Sign(X)` | 符号函数 (1, 0, -1) | `Sign(Return)` |
-| `Abs(X)` | 绝对值 | `Abs(Close - Open)` |
-| `Log(X)` | 自然对数 | `Log(Volume)` |
-| `SignedPower(X, e)` | 保持符号的幂运算 | `SignedPower(Return, 2)` |
+- **TS（时序）**：按 `symbol` 分组滚动。
+- **CS（截面）**：按 `date` 分组横截面。
+- **EL（元素级）**：逐元素变换，不引入分组窗口。
 
-### 4.4 基础运算
+经验规则：
 
-因子表达式支持标准的数学运算符：
+- 你在问“过去 d 根 K 线”时，优先 TS。
+- 你在问“同一天谁强谁弱”时，优先 CS。
+- 你在问“单点映射关系”时，优先 EL。
 
-*   **算术运算**：`+`, `-`, `*`, `/`
-*   **比较运算**：`>`, `<`, `>=`, `<=`, `==`, `!=`
+### 4.3 第三板斧：复杂式子拆成步骤
 
-示例：
-```python
-# 收盘价相对于开盘价的涨幅
-(Close - Open) / Open
-
-# 如果收盘价大于 5 日均线，返回 1，否则返回 0
-If(Close > Ts_Mean(Close, 5), 1, 0)
-```
-
-## 5. 实战：常用因子编写范例
-
-为了帮助大家更好地理解如何编写因子，这里列举了几种常见的因子逻辑及其对应的表达式。
-
-### 5.1 趋势类因子 (Trend)
-
-**逻辑**：如果是上涨趋势，则做多；下跌趋势，则做空。
-
-*   **均线突破**：收盘价在 20 日均线之上。
-    ```python
-    If(Close > Ts_Mean(Close, 20), 1, -1)
-    ```
-*   **MACD 简化版**：短期均线减去长期均线。
-    ```python
-    Ts_Mean(Close, 5) - Ts_Mean(Close, 20)
-    ```
-*   **新高因子**：当前价格接近过去 60 天的最高价。
-    ```python
-    Close / Ts_Max(Close, 60)
-    ```
-
-### 5.2 反转类因子 (Reversion)
-
-**逻辑**：涨多了会跌，跌多了会涨。
-
-*   **RSI 简化版**：过去 6 天的涨幅（Rank化）。
-    ```python
-    -1 * Rank(Delta(Close, 6))
-    ```
-*   **乖离率 (Bias)**：收盘价偏离均线的程度（越偏离越容易回归）。
-    ```python
-    -1 * (Close - Ts_Mean(Close, 20)) / Ts_Mean(Close, 20)
-    ```
-
-### 5.3 波动率类因子 (Volatility)
-
-**逻辑**：捕捉价格的剧烈波动或平静期。
-
-*   **波动率**：过去 20 天的标准差。
-    ```python
-    -1 * Ts_Std(Close, 20)  # 低波因子通常表现更好，所以乘以 -1
-    ```
-*   **量价相关性**：价格和成交量的相关性。
-    ```python
-    # 典型的 Alpha#6 逻辑：放量下跌或缩量上涨
-    -1 * Ts_Corr(Close, Volume, 10)
-    ```
-
-### 5.4 复杂逻辑组合
-
-*   **量价背离**：价格创新高但成交量没有创新高。
-    ```python
-    # 价格在近 20 天高位，但成交量不在高位
-    If((Close == Ts_Max(Close, 20)) & (Volume < Ts_Mean(Volume, 20)), 1, 0)
-    ```
-
-### 5.5 高级时序特征 (Advanced Time-Series)
-
-利用 `Ts_ArgMax`, `Ts_ArgMin`, `Ts_Rank` 可以构建更精细的时序特征。
-
-*   **高点距离 (Days Since Max)**：距离过去 20 天最高价的天数。如果今天是最高价，则为 0。
-    ```python
-    Ts_ArgMax(High, 20)
-    ```
-*   **低点距离 (Days Since Min)**：距离过去 20 天最低价的天数。如果今天是最低价，则为 0。
-    ```python
-    Ts_ArgMin(Low, 20)
-    ```
-*   **价格分位数 (Price Rank)**：当前价格在过去 20 天内的百分比排名（0~1）。这类似于 **Stochastic Oscillator (KDJ 中的 K 值)** 的变体。
-    ```python
-    Ts_Rank(Close, 20)
-    ```
-*   **Alpha #13 (WorldQuant 简化版)**：成交量加权的收盘价排名的协方差。
-    ```python
-    # 原始逻辑较为复杂，这里展示利用 Ts_Rank 的组合
-    -1 * Rank(Ts_Cov(Rank(Close), Rank(Volume), 5))
-    ```
-
-## 6. 进阶：挖掘 Alpha 因子
-
-通过组合上述算子，我们可以复现经典的 Alpha 因子。例如 **Alpha #6** (参考 WorldQuant)：
-
-$$
--1 \times \text{Corr}(\text{Open}, \text{Volume}, 10)
-$$
-
-在 AKQuant 中对应的表达式为：
+例如表达式：
 
 ```python
-expr = "-1 * Ts_Corr(Open, Volume, 10)"
-df = engine.run(expr)
+Rank(Ts_Corr(Close, Volume, 10))
 ```
 
-## 7. 工程实现：表达式如何被执行
+建议先验证：
 
-这一节不讲“算子是什么”，而讲“表达式如何落地执行”。
+```python
+Ts_Corr(Close, Volume, 10)
+```
 
-### 7.1 Parser：从字符串到计算树
+再验证外层 `Rank(...)`。拆步后，定位错误和性能问题都更快。
+
+## 5. 常用因子模板（可直接改参数）
+
+### 5.1 趋势类
+
+- 均线突破：
+
+```python
+If(Close > Ts_Mean(Close, 20), 1, -1)
+```
+
+- 新高强度：
+
+```python
+Close / Ts_Max(Close, 60)
+```
+
+### 5.2 反转类
+
+- 短期反转：
+
+```python
+-1 * Rank(Delta(Close, 6))
+```
+
+- 乖离回归：
+
+```python
+-1 * (Close - Ts_Mean(Close, 20)) / Ts_Mean(Close, 20)
+```
+
+### 5.3 波动率与量价类
+
+- 低波偏好：
+
+```python
+-1 * Ts_Std(Close, 20)
+```
+
+- 量价相关：
+
+```python
+-1 * Ts_Corr(Close, Volume, 10)
+```
+
+### 5.4 组合类
+
+- 动量反转：
+
+```python
+Rank(Ts_Mean(Close, 5)) - Rank(Ts_Mean(Close, 20))
+```
+
+- 量价背离：
+
+```python
+If((Close == Ts_Max(Close, 20)) & (Volume < Ts_Mean(Volume, 20)), 1, 0)
+```
+
+## 6. 调试与性能：最实用的工作流
+
+### 6.1 排错顺序（建议固定）
+
+1. 列名是否可映射（`Close`/`close` 可以，`ClosePrice` 需要真实存在）。
+2. 窗口 `d` 是否大于可用历史长度。
+3. 数据是否有大量 NaN 或停牌空洞。
+4. 是否一次写了过深嵌套导致难以定位。
+
+### 6.2 为什么嵌套表达式会慢
+
+当出现 `CS(TS(...))` 或 `TS(CS(...))`，引擎会拆成多步并物化中间结果，换来正确语义与可调试性。
+
+这不是额外负担，而是对“结果可解释”的必要成本。遇到慢查询时，先拆步验证再考虑并行/批量策略。
+
+### 6.3 `run_batch` 的正确使用场景
+
+`run_batch` 适合：
+
+- 多个候选因子同批计算。
+- 统一样本池、统一时间段对比。
+
+`run_batch` 不适合：
+
+- 单个复杂表达式的微观调试（先用 `run` 更清晰）。
+
+## 7. 数据质量与时区注意事项
+
+1. 默认时区为 `Asia/Shanghai`。
+2. 非 A 股场景需要显式设置 `timezone`。
+3. 时间列必须显式 `tz_localize`，避免隐式时区偏移。
+4. 停牌或缺失日期建议先做交易日对齐，再做滚动窗口计算。
+
+> 时区细节请参考 [时区处理指南](../advanced/timezone.md)。
+
+## 8. 从原理到实践：引擎到底做了什么
 
 当你调用：
 
@@ -236,51 +220,20 @@ df = engine.run(expr)
 engine.run("Rank(Ts_Mean(Close, 5))")
 ```
 
-内部先走 AST 解析流程：
+内部过程可以理解为三步：
 
-1. 将字符串转为 AST。
-2. 识别函数调用节点（如 `Rank`, `Ts_Mean`）。
-3. 将变量名映射为列（`Close -> close`）。
-4. 将常量映射为字面量表达式。
+1. **Parser**：把字符串转为抽象语法结构。
+2. **Planner**：识别 TS/CS/EL，必要时自动拆步。
+3. **Executor**：按步骤执行并在关键节点物化中间结果。
 
-这一步的目标是把“人类可读公式”转换为“Polars 可执行表达式”。
+这一机制直接决定了两个实践建议：
 
-### 7.2 Planner：为什么要拆步骤
+- 调试优先拆步。
+- 优化优先减少不必要的跨分区嵌套。
 
-因子引擎会给算子打类别标签：
+## 9. 课后练习
 
-*   **TS**（Time-Series）：按 `symbol` 分组滚动，如 `Ts_Mean`。
-*   **CS**（Cross-Sectional）：按 `date` 分组横截面，如 `Rank`。
-*   **EL**（Element-wise）：逐元素，如 `Log`、`If`。
-
-当检测到 `CS(TS(...))` 或 `TS(CS(...))` 这种跨分区嵌套时，Planner 会自动拆步：
-
-*   Step1: 先算内层（例如 `_auto_var_0 = Ts_Mean(Close, 5)`）
-*   Step2: 再算外层（`result = Rank(_auto_var_0)`）
-
-这种拆步不是“多此一举”，而是保证跨分区语义正确。
-
-### 7.3 Executor：为什么中间结果要物化
-
-执行器会按步骤顺序执行。对中间步骤，它会先 `with_columns`，然后立即物化为 DataFrame，再继续下一步。
-
-这么做有两个好处：
-
-1. 避免嵌套窗口在同一 Lazy 图中产生分区歧义。
-2. 调试更直观：每一步都对应可验证的中间列。
-
-### 7.4 Batch 模式的设计取舍
-
-`run_batch([...])` 的实现思路是：
-
-1. 先构造 `date + symbol` 的基准键表。
-2. 每个表达式独立执行，产出一列 `factor_i`。
-3. 按键回连到基准表，最终形成宽表。
-
-优点是表达式之间解耦、可单独复现；代价是表达式数量很多时，连接成本会增加。
-
-## 8. 课后练习
-
-1.  尝试使用 AKShare 下载更多股票的数据（如沪深300成分股）。
-2.  实现并计算一个动量反转因子：`Rank(Ts_Mean(Close, 5)) - Rank(Ts_Mean(Close, 20))`。
-3.  思考：如果不进行数据对齐（停牌处理），直接计算时序因子会有什么风险？
+1. 计算并比较三个因子：`Ts_Mean(Close, 5)`、`Ts_Std(Close, 20)`、`Rank(Volume)`。
+2. 复现动量反转：`Rank(Ts_Mean(Close, 5)) - Rank(Ts_Mean(Close, 20))`，观察不同窗口参数下的分布变化。
+3. 构造一个“先 TS 再 CS”的复合因子，并写出对应的拆步验证流程。
+4. 思考：如果不做停牌对齐，`Ts_Rank` 与 `Ts_Mean` 的语义会如何偏离你的预期。
