@@ -127,10 +127,28 @@ AKQuant provides two styles of strategy development interfaces:
 
 | Feature | Class-based Style (Recommended) | Function-based Style |
 | :--- | :--- | :--- |
-| **Definition** | Inherit from `akquant.Strategy` | Define `initialize` and `on_bar` functions |
+| **Definition** | Inherit from `akquant.Strategy` | Define `initialize` + `on_bar` (required), optional `on_tick` / `on_order` / `on_trade` / `on_timer` |
 | **Scenarios** | Complex strategies, need to maintain internal state, production | Rapid prototyping, migrating Zipline/Backtrader strategies |
 | **Structure** | Object-oriented, good logic encapsulation | Script-like, simple and intuitive |
 | **API Call** | `self.buy()`, `self.ctx` | `ctx.buy()`, pass `ctx` as parameter |
+
+### 4.1 Function-style Callback Trigger Conditions
+
+| Callback | Trigger Condition | Notes |
+| :--- | :--- | :--- |
+| `on_bar(ctx, bar)` | Backtest feed emits Bar events | Required entry callback for function-style strategies |
+| `on_tick(ctx, tick)` | Backtest feed emits Tick events | Tick callbacks are not triggered in bar-only datasets |
+| `on_order(ctx, order)` | Order state changes are observed in strategy context | Triggered before event callback in each event loop |
+| `on_trade(ctx, trade)` | Trade reports appear in `recent_trades` | Trade dedupe applies to avoid repeated callbacks |
+| `on_timer(ctx, payload)` | A timer is scheduled and fired | Includes both one-shot and daily timer payloads |
+
+### 4.2 Related Examples
+
+*   Function-style callback baseline: `examples/23_functional_callbacks_demo.py`
+*   Function-style tick callback simulation: `examples/24_functional_tick_simulation_demo.py`
+*   Output markers:
+    *   `done_functional_callbacks_demo`
+    *   `done_functional_tick_simulation_demo`
 
 ## 4. Writing Class-based Strategies {: #class-based }
 

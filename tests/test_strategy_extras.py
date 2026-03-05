@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from akquant import run_backtest, run_warm_start, save_snapshot
 from akquant.akquant import Bar, OrderStatus, StrategyContext, Tick
+from akquant.backtest import FunctionalStrategy
 from akquant.strategy import Strategy, StrategyRuntimeConfig
 
 
@@ -323,6 +324,128 @@ def _build_ctx_with_order_and_trade(order_id: str = "o1") -> MagicMock:
     return ctx
 
 
+def test_functional_strategy_supports_extended_callbacks() -> None:
+    """FunctionalStrategy should delegate tick/order/trade/timer callbacks."""
+    events: list[str] = []
+
+    def initialize(ctx: Any) -> None:
+        events.append("initialize")
+
+    def on_bar(ctx: Any, bar: Bar) -> None:
+        events.append("bar")
+
+    def on_tick(ctx: Any, tick: Tick) -> None:
+        events.append("tick")
+
+    def on_order(ctx: Any, order: Any) -> None:
+        events.append(f"order:{order.id}")
+
+    def on_trade(ctx: Any, trade: Any) -> None:
+        events.append(f"trade:{trade.order_id}")
+
+    def on_timer(ctx: Any, payload: str) -> None:
+        events.append(f"timer:{payload}")
+
+    strategy = FunctionalStrategy(
+        initialize=initialize,
+        on_bar=on_bar,
+        on_tick=on_tick,
+        on_order=on_order,
+        on_trade=on_trade,
+        on_timer=on_timer,
+    )
+
+    ts_bar = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
+    bar = Bar(
+        timestamp=ts_bar,
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000.0,
+        symbol="AAPL",
+    )
+    strategy._on_bar_event(bar, _build_ctx_with_order_and_trade("bar_order"))
+
+    ts_tick = pd.Timestamp("2023-01-01 09:30:01", tz="Asia/Shanghai").value
+    tick = Tick(timestamp=ts_tick, price=103.0, volume=500.0, symbol="AAPL")
+    strategy._on_tick_event(tick, _build_ctx_with_order_and_trade("tick_order"))
+    strategy._on_timer_event(
+        "rebalance", _build_ctx_with_order_and_trade("timer_order")
+    )
+
+    assert events[0] == "initialize"
+    assert "order:bar_order" in events
+    assert "trade:bar_order" in events
+    assert "bar" in events
+    assert "order:tick_order" in events
+    assert "trade:tick_order" in events
+    assert "tick" in events
+    assert "order:timer_order" in events
+    assert "trade:timer_order" in events
+    assert "timer:rebalance" in events
+
+
+def test_functional_strategy_callback_sequence_contract() -> None:
+    """Function-style callbacks should follow framework callback ordering."""
+    events: list[str] = []
+
+    def on_bar(ctx: Any, bar: Bar) -> None:
+        events.append("bar")
+
+    def on_tick(ctx: Any, tick: Tick) -> None:
+        events.append("tick")
+
+    def on_order(ctx: Any, order: Any) -> None:
+        events.append(f"order:{order.id}")
+
+    def on_trade(ctx: Any, trade: Any) -> None:
+        events.append(f"trade:{trade.order_id}")
+
+    def on_timer(ctx: Any, payload: str) -> None:
+        events.append(f"timer:{payload}")
+
+    strategy = FunctionalStrategy(
+        initialize=None,
+        on_bar=on_bar,
+        on_tick=on_tick,
+        on_order=on_order,
+        on_trade=on_trade,
+        on_timer=on_timer,
+    )
+
+    ts_bar = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
+    bar = Bar(
+        timestamp=ts_bar,
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000.0,
+        symbol="AAPL",
+    )
+    strategy._on_bar_event(bar, _build_ctx_with_order_and_trade("bar_order"))
+
+    ts_tick = pd.Timestamp("2023-01-01 09:30:01", tz="Asia/Shanghai").value
+    tick = Tick(timestamp=ts_tick, price=103.0, volume=500.0, symbol="AAPL")
+    strategy._on_tick_event(tick, _build_ctx_with_order_and_trade("tick_order"))
+    strategy._on_timer_event(
+        "rebalance", _build_ctx_with_order_and_trade("timer_order")
+    )
+
+    assert events == [
+        "order:bar_order",
+        "trade:bar_order",
+        "bar",
+        "order:tick_order",
+        "trade:tick_order",
+        "tick",
+        "order:timer_order",
+        "trade:timer_order",
+        "timer:rebalance",
+    ]
+
+
 def test_callback_sequence_on_bar() -> None:
     """Order/trade callbacks should run before bar callback."""
     strategy = SequenceStrategy()
@@ -572,6 +695,143 @@ def test_run_warm_start_runtime_config_override_false_keeps_strategy_config(
 
     assert "runtime_config_override=False" in caplog.text
     assert "error_mode: raise -> continue" in caplog.text
+
+
+def test_run_warm_start_rejects_invalid_strategy_runtime_config_type(
+    tmp_path: Path,
+) -> None:
+    """Invalid warm-start runtime config type should fail fast."""
+    checkpoint = tmp_path / "snapshot_runtime_invalid_type.pkl"
+    phase1 = _make_bars("2023-01-01", 2)
+    phase2 = _make_bars("2023-01-03", 1, start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=RuntimeConfigWarmStartStrategy,
+        symbol="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="strategy_runtime_config"):
+        run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbol="TEST",
+            show_progress=False,
+            strategy_runtime_config=cast(Any, "invalid"),
+        )
+
+
+def test_run_warm_start_rejects_invalid_runtime_config_from_forwarded_kwargs(
+    tmp_path: Path,
+) -> None:
+    """Forwarded keyword map should keep strict runtime config validation."""
+    checkpoint = tmp_path / "snapshot_runtime_forwarded_kwargs.pkl"
+    phase1 = _make_bars("2023-01-01", 2)
+    phase2 = _make_bars("2023-01-03", 1, start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=RuntimeConfigWarmStartStrategy,
+        symbol="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    forwarded_kwargs = cast(Any, {"strategy_runtime_config": "invalid"})
+    with pytest.raises(TypeError, match="strategy_runtime_config"):
+        run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbol="TEST",
+            show_progress=False,
+            **forwarded_kwargs,
+        )
+
+
+def test_run_warm_start_accepts_runtime_config_from_forwarded_kwargs(
+    tmp_path: Path,
+) -> None:
+    """Forwarded keyword map should support valid runtime config injection."""
+    checkpoint = tmp_path / "snapshot_runtime_forwarded_valid.pkl"
+    phase1 = _make_bars("2023-01-01", 2)
+    phase2 = _make_bars("2023-01-03", 2, start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=RuntimeConfigWarmStartStrategy,
+        symbol="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    forwarded_kwargs = cast(
+        Any, {"strategy_runtime_config": {"error_mode": "continue"}}
+    )
+    result2 = run_warm_start(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbol="TEST",
+        show_progress=False,
+        **forwarded_kwargs,
+    )
+
+    strategy = result2.strategy
+    assert strategy is not None
+    assert strategy.errors == ["on_bar", "on_bar"]
+
+
+def test_run_warm_start_rejects_unknown_strategy_runtime_config_fields(
+    tmp_path: Path,
+) -> None:
+    """Unknown warm-start runtime config fields should fail with field-level error."""
+    checkpoint = tmp_path / "snapshot_runtime_unknown_field.pkl"
+    phase1 = _make_bars("2023-01-01", 2)
+    phase2 = _make_bars("2023-01-03", 1, start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=RuntimeConfigWarmStartStrategy,
+        symbol="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="unknown fields: unknown_flag"):
+        run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbol="TEST",
+            show_progress=False,
+            strategy_runtime_config=cast(Any, {"unknown_flag": True}),
+        )
+
+
+def test_run_warm_start_rejects_invalid_strategy_runtime_config_values(
+    tmp_path: Path,
+) -> None:
+    """Invalid warm-start runtime config values should fail with wrapped error."""
+    checkpoint = tmp_path / "snapshot_runtime_invalid_value.pkl"
+    phase1 = _make_bars("2023-01-01", 2)
+    phase2 = _make_bars("2023-01-03", 1, start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=RuntimeConfigWarmStartStrategy,
+        symbol="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="invalid strategy_runtime_config"):
+        run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbol="TEST",
+            show_progress=False,
+            strategy_runtime_config={"portfolio_update_eps": -1},
+        )
 
 
 class WarmStartMultiSymbolStrategy(Strategy):
@@ -1419,6 +1679,36 @@ def test_run_backtest_rejects_invalid_strategy_runtime_config_type() -> None:
             show_progress=False,
             strategy_runtime_config=cast(Any, "invalid"),
         )
+
+
+def test_run_backtest_rejects_invalid_runtime_config_from_strategy_params() -> None:
+    """strategy_params path should validate runtime config strictly."""
+    bars = _make_bars("2023-01-01", 1, symbol="TEST")
+    with pytest.raises(TypeError, match="strategy_runtime_config"):
+        run_backtest(
+            data=bars,
+            strategy=RuntimeConfigBarErrorStrategy,
+            symbol="TEST",
+            show_progress=False,
+            strategy_params={"strategy_runtime_config": "invalid"},
+        )
+
+
+def test_run_backtest_explicit_runtime_config_has_higher_priority_than_kwargs() -> None:
+    """Explicit backtest runtime config should override forwarded values."""
+    bars = _make_bars("2023-01-01", 2, symbol="TEST")
+    result = run_backtest(
+        data=bars,
+        strategy=RuntimeConfigBarErrorStrategy,
+        symbol="TEST",
+        show_progress=False,
+        strategy_runtime_config={"error_mode": "continue"},
+        strategy_params={"strategy_runtime_config": {"error_mode": "raise"}},
+    )
+
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.errors == ["on_bar", "on_bar"]
 
 
 def test_run_backtest_rejects_unknown_strategy_runtime_config_fields() -> None:

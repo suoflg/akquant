@@ -194,6 +194,7 @@ BacktestConfig (回测场景)
 *   冲突处理：`runtime_config_override=True` 时应用外部配置；`False` 时保留策略侧配置。
 *   上述冲突规则在 `run_backtest` 与 `run_warm_start` 中保持一致。
 *   对同一策略实例、同一冲突内容，告警日志会自动去重。
+*   优先级规则：显式传入的 `strategy_runtime_config` 参数高于转发配置映射中的同名配置。
 *   故障速查入口：参考 [Runtime Config 指南](../advanced/runtime_config.md)。
 
 ```python

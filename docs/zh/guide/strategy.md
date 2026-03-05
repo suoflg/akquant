@@ -164,10 +164,28 @@ AKQuant 提供了两种风格的策略开发接口：
 
 | 特性 | 类风格 (推荐) | 函数风格 |
 | :--- | :--- | :--- |
-| **定义方式** | 继承 `akquant.Strategy` | 定义 `initialize` 和 `on_bar` 函数 |
+| **定义方式** | 继承 `akquant.Strategy` | 定义 `initialize` + `on_bar`（必选），可选 `on_tick` / `on_order` / `on_trade` / `on_timer` |
 | **适用场景** | 复杂策略、需要维护内部状态、生产环境 | 快速原型验证、迁移 Zipline/Backtrader 策略 |
 | **代码结构** | 面向对象，逻辑封装性好 | 脚本化，简单直观 |
 | **API 调用** | `self.buy()`, `self.ctx` | `ctx.buy()`, `ctx` 作为参数传递 |
+
+### 5.1 函数式回调触发前提
+
+| 回调 | 触发前提 | 说明 |
+| :--- | :--- | :--- |
+| `on_bar(ctx, bar)` | 回测数据流产生 Bar 事件 | 函数式策略的必选主回调 |
+| `on_tick(ctx, tick)` | 回测数据流产生 Tick 事件 | 仅 Bar 数据集不会触发 Tick 回调 |
+| `on_order(ctx, order)` | 策略上下文中观察到订单状态变化 | 每轮事件循环中先于主事件回调触发 |
+| `on_trade(ctx, trade)` | `recent_trades` 中出现成交回报 | 框架会进行成交去重，避免重复触发 |
+| `on_timer(ctx, payload)` | 已注册的定时器到点触发 | 支持单次定时与每日定时 payload |
+
+### 5.2 相关示例
+
+*   函数式回调基础示例：`examples/23_functional_callbacks_demo.py`
+*   函数式 Tick 回调模拟示例：`examples/24_functional_tick_simulation_demo.py`
+*   运行后可分别观察输出标记：
+    *   `done_functional_callbacks_demo`
+    *   `done_functional_tick_simulation_demo`
 
 ## 6. 编写类风格策略 (Class-based) {: #class-based }
 

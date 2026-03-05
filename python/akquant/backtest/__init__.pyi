@@ -12,6 +12,10 @@ class FunctionalStrategy(Strategy):
         self,
         initialize: Optional[Callable[[Any], None]],
         on_bar: Optional[Callable[[Any, Bar], None]],
+        on_tick: Optional[Callable[[Any, Any], None]] = ...,
+        on_order: Optional[Callable[[Any, Any], None]] = ...,
+        on_trade: Optional[Callable[[Any, Any], None]] = ...,
+        on_timer: Optional[Callable[[Any, str], None]] = ...,
         context: Optional[Dict[str, Any]] = None,
     ) -> None: ...
 
@@ -32,6 +36,10 @@ def run_backtest(
     timezone: Optional[str] = ...,
     t_plus_one: bool = ...,
     initialize: Optional[Callable[[Any], None]] = ...,
+    on_tick: Optional[Callable[[Any, Any], None]] = ...,
+    on_order: Optional[Callable[[Any, Any], None]] = ...,
+    on_trade: Optional[Callable[[Any, Any], None]] = ...,
+    on_timer: Optional[Callable[[Any, str], None]] = ...,
     context: Optional[Dict[str, Any]] = ...,
     history_depth: Optional[int] = ...,
     warmup_period: int = ...,

@@ -188,6 +188,7 @@ The `risk_config` parameter has special handling logic designed to support a "Ba
 *   Conflict handling: `runtime_config_override=True` applies external config; `False` keeps strategy-side config.
 *   The same conflict rules apply consistently to both `run_backtest` and `run_warm_start`.
 *   Conflict warnings are deduplicated per strategy instance for identical conflict payloads.
+*   Priority rule: explicit `strategy_runtime_config` parameter has higher priority than forwarded config maps.
 *   Troubleshooting quick lookup: see [Runtime Config Guide](../advanced/runtime_config.md).
 
 ```python
