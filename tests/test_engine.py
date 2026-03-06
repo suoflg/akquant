@@ -423,6 +423,10 @@ def test_run_backtest_stream_high_frequency_keeps_critical_events() -> None:
     assert equity_count < 100
     seq_values = [event["seq"] for event in events]
     assert seq_values == sorted(seq_values)
+    finished_payload = events[-1]["payload"]
+    assert "dropped_event_count" in finished_payload
+    assert "dropped_event_count_by_type" in finished_payload
+    assert int(str(finished_payload["dropped_event_count"])) >= 0
 
 
 def test_run_backtest_stream_callback_error_continue_mode() -> None:
@@ -451,6 +455,62 @@ def test_run_backtest_stream_callback_error_continue_mode() -> None:
     assert "callback_error_count" in events[-1]["payload"]
     assert int(str(events[-1]["payload"]["callback_error_count"])) >= 3
     assert result.metrics.initial_market_value == pytest.approx(1000000.0, rel=1e-9)
+
+
+def test_run_backtest_stream_reports_dropped_events_under_backpressure() -> None:
+    """Finished payload should report dropped events when buffer is constrained."""
+    data = _build_benchmark_data(n=300, symbol="DROP")
+    events: list[akquant.BacktestStreamEvent] = []
+    akquant.run_backtest_stream(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="DROP",
+        show_progress=False,
+        on_event=events.append,
+        stream_progress_interval=1,
+        stream_equity_interval=1,
+        stream_batch_size=32,
+        stream_max_buffer=2,
+    )
+
+    assert events
+    assert events[-1]["event_type"] == "finished"
+    payload = events[-1]["payload"]
+    dropped_count = int(str(payload.get("dropped_event_count", "0")))
+    dropped_by_type = str(payload.get("dropped_event_count_by_type", ""))
+    assert dropped_count > 0
+    assert dropped_by_type
+
+
+def test_run_backtest_stream_audit_mode_enforces_full_delivery() -> None:
+    """Audit mode should disable sampling and avoid dropping non-critical events."""
+    data = _build_benchmark_data(n=300, symbol="AUDIT")
+    events: list[akquant.BacktestStreamEvent] = []
+    akquant.run_backtest_stream(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="AUDIT",
+        show_progress=False,
+        on_event=events.append,
+        stream_progress_interval=50,
+        stream_equity_interval=40,
+        stream_batch_size=32,
+        stream_max_buffer=2,
+        stream_mode="audit",
+    )
+
+    assert events
+    assert events[-1]["event_type"] == "finished"
+    progress_count = sum(1 for e in events if e.get("event_type") == "progress")
+    equity_count = sum(1 for e in events if e.get("event_type") == "equity")
+    assert progress_count > 100
+    assert equity_count > 100
+    payload = events[-1]["payload"]
+    assert str(payload.get("stream_mode")) == "audit"
+    assert str(payload.get("sampling_enabled")) == "false"
+    assert str(payload.get("backpressure_policy")) == "block"
+    assert int(str(payload.get("dropped_event_count", "0"))) == 0
+    assert str(payload.get("dropped_event_count_by_type", "")) == ""
 
 
 def test_run_backtest_stream_callback_error_fail_fast_mode() -> None:
@@ -483,3 +543,55 @@ def test_run_backtest_stream_rejects_invalid_error_mode() -> None:
             on_event=lambda _event: None,
             stream_error_mode=cast(Any, "bad_mode"),
         )
+
+
+def test_run_backtest_stream_rejects_invalid_stream_mode() -> None:
+    """Invalid stream mode should be rejected."""
+    data = _build_benchmark_data(n=5, symbol="MODE_BAD")
+    with pytest.raises(ValueError):
+        akquant.run_backtest_stream(
+            data=data,
+            strategy=NoopStrategy,
+            symbol="MODE_BAD",
+            show_progress=False,
+            on_event=lambda _event: None,
+            stream_mode=cast(Any, "bad_mode"),
+        )
+
+
+def test_run_backtest_stream_audit_mode_latency_budget_benchmark() -> None:
+    """Audit mode benchmark with fixed callback delays for budget baselining."""
+    data = _build_benchmark_data(n=240, symbol="AUDIT_BUDGET")
+    delay_ms_options = [0, 1, 5]
+    durations: dict[int, float] = {}
+    event_counts: dict[int, int] = {}
+
+    for delay_ms in delay_ms_options:
+        counter = {"n": 0}
+
+        def on_event(_event: akquant.BacktestStreamEvent) -> None:
+            counter["n"] += 1
+            if delay_ms > 0:
+                time.sleep(delay_ms / 1000.0)
+
+        start = time.perf_counter()
+        akquant.run_backtest_stream(
+            data=data,
+            strategy=NoopStrategy,
+            symbol="AUDIT_BUDGET",
+            show_progress=False,
+            on_event=on_event,
+            stream_progress_interval=50,
+            stream_equity_interval=50,
+            stream_batch_size=32,
+            stream_max_buffer=64,
+            stream_mode="audit",
+        )
+        durations[delay_ms] = time.perf_counter() - start
+        event_counts[delay_ms] = counter["n"]
+
+    assert event_counts[0] > 100
+    assert event_counts[1] == event_counts[0]
+    assert event_counts[5] == event_counts[0]
+    assert durations[1] > durations[0]
+    assert durations[5] > durations[1]

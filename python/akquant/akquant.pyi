@@ -576,6 +576,7 @@ class Engine:
         batch_size: int,
         max_buffer: int,
         error_mode: str,
+        stream_mode: str,
     ) -> None: ...
     def run(self, strategy: typing.Any, show_progress: bool) -> str:
         r"""

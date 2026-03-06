@@ -102,6 +102,9 @@ def run_backtest_stream(
 *   `stream_error_mode`: 回调异常处理策略。
     *   `"continue"`: 回调报错后继续回测，并在结束事件中回传统计信息。
     *   `"fail_fast"`: 回调首次报错后立即终止，并抛出异常。
+*   `stream_mode`: 流式模式。
+    *   `"observability"`: 观测模式，允许采样与非关键事件背压丢弃。
+    *   `"audit"`: 审计模式，禁用采样并采用阻塞背压（不丢弃非关键事件）。
 
 **事件结构 (`BacktestStreamEvent`):**
 
@@ -127,6 +130,11 @@ def run_backtest_stream(
 *   `processed_events`: 已处理事件数
 *   `total_trades`: 总成交笔数
 *   `callback_error_count`: 回调报错次数
+*   `dropped_event_count`: 背压丢弃事件总数
+*   `dropped_event_count_by_type`: 按事件类型聚合的丢弃计数（`event=count` 逗号拼接）
+*   `stream_mode`: 当前流式模式（`observability` 或 `audit`）
+*   `sampling_enabled`: 是否启用采样（`true`/`false`）
+*   `backpressure_policy`: 背压策略（`drop_non_critical` 或 `block`）
 *   `last_callback_error`: 最近一次回调报错信息（存在时提供）
 *   `reason`: 失败原因（存在时提供）
 

@@ -86,6 +86,7 @@ impl Engine {
         batch_size: usize,
         max_buffer: usize,
         error_mode: &str,
+        stream_mode: &str,
     ) {
         self.set_stream_options_internal(
             progress_interval,
@@ -93,6 +94,7 @@ impl Engine {
             batch_size,
             max_buffer,
             error_mode,
+            stream_mode,
         );
     }
 
@@ -138,6 +140,11 @@ impl Engine {
             stream_callback_error_count: 0,
             stream_callback_last_error: None,
             stream_fatal_error: None,
+            stream_dropped_event_count: 0,
+            stream_dropped_event_count_by_type: HashMap::new(),
+            stream_mode: "observability".to_string(),
+            stream_sampling_enabled: true,
+            stream_drop_non_critical: true,
         }
     }
 

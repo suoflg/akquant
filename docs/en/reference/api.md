@@ -103,6 +103,9 @@ def run_backtest_stream(
     *   `"continue"`: Continue backtest on callback errors and report summary in
         final `finished` event.
     *   `"fail_fast"`: Stop immediately and raise once callback throws.
+*   `stream_mode`: Stream mode.
+    *   `"observability"`: observability-oriented mode with sampling and non-critical dropping under backpressure.
+    *   `"audit"`: audit-oriented mode with sampling disabled and blocking backpressure for non-critical events.
 
 **Event Schema (`BacktestStreamEvent`):**
 
@@ -128,6 +131,11 @@ def run_backtest_stream(
 *   `processed_events`: Number of processed events
 *   `total_trades`: Number of trades
 *   `callback_error_count`: Total callback errors
+*   `dropped_event_count`: Total number of events dropped under backpressure
+*   `dropped_event_count_by_type`: Dropped count grouped by event type (`event=count` comma-separated)
+*   `stream_mode`: Effective stream mode (`observability` or `audit`)
+*   `sampling_enabled`: Whether sampling is enabled (`true`/`false`)
+*   `backpressure_policy`: Backpressure policy (`drop_non_critical` or `block`)
 *   `last_callback_error`: Latest callback error message (when present)
 *   `reason`: Failure reason (when present)
 
