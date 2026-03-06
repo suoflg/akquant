@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypedDict, Union
 
 import pandas as pd
 
@@ -18,6 +18,15 @@ class FunctionalStrategy(Strategy):
         on_timer: Optional[Callable[[Any, str], None]] = ...,
         context: Optional[Dict[str, Any]] = None,
     ) -> None: ...
+
+class BacktestStreamEvent(TypedDict):
+    run_id: str
+    seq: int
+    ts: int
+    event_type: str
+    symbol: Optional[str]
+    level: str
+    payload: Dict[str, str]
 
 def run_backtest(
     data: Optional[
@@ -54,6 +63,20 @@ def run_backtest(
         Union[StrategyRuntimeConfig, Dict[str, Any]]
     ] = ...,
     runtime_config_override: bool = ...,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
+    **kwargs: Any,
+) -> BacktestResult: ...
+def run_backtest_stream(
+    data: Optional[
+        Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed]
+    ] = ...,
+    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = ...,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
+    stream_progress_interval: int = ...,
+    stream_equity_interval: int = ...,
+    stream_batch_size: int = ...,
+    stream_max_buffer: int = ...,
+    stream_error_mode: Literal["continue", "fail_fast"] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
 def run_warm_start(
@@ -72,7 +95,9 @@ def run_warm_start(
 
 __all__ = [
     "BacktestResult",
+    "BacktestStreamEvent",
     "run_backtest",
+    "run_backtest_stream",
     "run_warm_start",
     "FunctionalStrategy",
 ]

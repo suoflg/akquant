@@ -35,6 +35,7 @@ def run_backtest(
     instruments_config: Optional[Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]] = None,
     custom_matchers: Optional[Dict[AssetType, Any]] = None,
     risk_config: Optional[Union[Dict[str, Any], RiskConfig]] = None,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -58,6 +59,70 @@ def run_backtest(
 *   `lot_size`: 最小交易单位。如果是 `int`，应用于所有标的；如果是字典，按标的匹配。
 *   `custom_matchers`: 自定义撮合器字典。
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
+*   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
+
+**兼容与迁移说明:**
+
+*   推荐逐步将实时 UI / 日志 / 告警接入迁移到 `run_backtest(..., on_event=...)`。
+*   `run_backtest_stream` 继续保留，用于显式表达“必须消费流式事件”的调用语义。
+*   如需灰度回滚，可通过内部参数 `_engine_mode="legacy_blocking"` 临时切回阻塞路径（仅用于兼容验证，不建议业务长期依赖）。
+*   阶段 4 观察窗口与推进门槛请参考：[流式统一内核观察清单](../advanced/stream_observability.md)。
+
+### `akquant.run_backtest_stream`
+
+流式回测入口。与 `run_backtest` 返回语义一致，但支持在运行期间通过回调接收事件。
+
+```python
+def run_backtest_stream(
+    data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
+    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    stream_progress_interval: int = 1,
+    stream_equity_interval: int = 1,
+    stream_batch_size: int = 1,
+    stream_max_buffer: int = 1024,
+    stream_error_mode: Literal["continue", "fail_fast"] = "continue",
+    **kwargs: Any,
+) -> BacktestResult
+```
+
+**关键参数:**
+
+*   `on_event`: 流式事件回调函数（必传），参数为 `BacktestStreamEvent`。
+*   `stream_progress_interval`: `progress` 事件采样间隔（正整数）。
+*   `stream_equity_interval`: `equity` 事件采样间隔（正整数）。
+*   `stream_batch_size`: 事件批量刷新阈值（正整数）。
+*   `stream_max_buffer`: 缓冲区上限（正整数）。
+*   `stream_error_mode`: 回调异常处理策略。
+    *   `"continue"`: 回调报错后继续回测，并在结束事件中回传统计信息。
+    *   `"fail_fast"`: 回调首次报错后立即终止，并抛出异常。
+
+**事件结构 (`BacktestStreamEvent`):**
+
+*   `run_id`: 本次流式回测 ID。
+*   `seq`: 事件序号（单调递增）。
+*   `ts`: 事件时间戳（纳秒）。
+*   `event_type`: 事件类型。
+*   `symbol`: 关联标的（部分事件为空）。
+*   `level`: 事件级别（如 `info`、`warn`、`error`）。
+*   `payload`: 事件内容字典（字符串键值）。
+
+**常见 `event_type`:**
+
+*   生命周期: `started`, `finished`
+*   采样更新: `progress`, `equity`
+*   交易相关: `order`, `trade`, `risk`
+*   运行异常: `error`
+*   行情流: `tick`
+
+**`finished.payload` 常用字段:**
+
+*   `status`: `completed` 或 `failed`
+*   `processed_events`: 已处理事件数
+*   `total_trades`: 总成交笔数
+*   `callback_error_count`: 回调报错次数
+*   `last_callback_error`: 最近一次回调报错信息（存在时提供）
+*   `reason`: 失败原因（存在时提供）
 
 ### `akquant.BacktestConfig`
 

@@ -2,7 +2,18 @@ import datetime as dt_module
 import os
 import sys
 from dataclasses import fields
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Type,
+    TypedDict,
+    Union,
+    cast,
+)
 
 import pandas as pd
 
@@ -24,6 +35,43 @@ from ..utils.inspector import infer_warmup_period
 from .result import BacktestResult
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
+
+
+class BacktestStreamEvent(TypedDict):
+    """Backtest stream event payload."""
+
+    run_id: str
+    seq: int
+    ts: int
+    event_type: str
+    symbol: Optional[str]
+    level: str
+    payload: Dict[str, str]
+
+
+def _parse_positive_int_option(name: str, value: Any) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return parsed
+
+
+def _parse_stream_error_mode(value: Any) -> str:
+    mode = str(value).strip().lower()
+    if mode not in {"continue", "fail_fast"}:
+        raise ValueError("stream_error_mode must be 'continue' or 'fail_fast'")
+    return mode
+
+
+def _noop_stream_event_handler(_event: BacktestStreamEvent) -> None:
+    return None
+
+
+def _parse_engine_mode(value: Any) -> str:
+    mode = str(value).strip().lower()
+    if mode not in {"unified_event", "legacy_blocking"}:
+        raise ValueError("_engine_mode must be 'unified_event' or 'legacy_blocking'")
+    return mode
 
 
 class FunctionalStrategy(Strategy):
@@ -193,6 +241,7 @@ def run_backtest(
         Union[StrategyRuntimeConfig, Dict[str, Any]]
     ] = None,
     runtime_config_override: bool = True,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -238,6 +287,7 @@ def run_backtest(
     :param config: BacktestConfig 配置对象 (可选)
     :param strategy_runtime_config: 策略运行时配置对象或字典 (可选)
     :param runtime_config_override: 是否覆盖策略实例内已有 runtime_config (默认 True)
+    :param on_event: 可选流式事件回调。不传则内部使用 no-op 回调并保持返回语义不变。
     故障速查可参考 docs/zh/advanced/runtime_config.md，
     英文文档参考 docs/en/advanced/runtime_config.md
     :param instruments_config: 标的配置列表或字典 (可选)
@@ -260,6 +310,33 @@ def run_backtest(
        如果上述两者都未提供，则使用系统默认值。
        例如: `initial_cash` 默认为 1,000,000。
     """
+    engine_mode = _parse_engine_mode(kwargs.pop("_engine_mode", "unified_event"))
+    stream_on_event = on_event
+    internal_stream_callback = kwargs.pop("_stream_on_event", None)
+    if internal_stream_callback is not None and stream_on_event is not None:
+        raise TypeError("on_event and _stream_on_event cannot be provided together")
+    if internal_stream_callback is not None:
+        stream_on_event = internal_stream_callback
+    if stream_on_event is not None and not callable(stream_on_event):
+        raise TypeError("on_event must be callable when provided")
+    if stream_on_event is None and engine_mode == "unified_event":
+        stream_on_event = _noop_stream_event_handler
+    stream_progress_interval = _parse_positive_int_option(
+        "stream_progress_interval", kwargs.pop("stream_progress_interval", 1)
+    )
+    stream_equity_interval = _parse_positive_int_option(
+        "stream_equity_interval", kwargs.pop("stream_equity_interval", 1)
+    )
+    stream_batch_size = _parse_positive_int_option(
+        "stream_batch_size", kwargs.pop("stream_batch_size", 1)
+    )
+    stream_max_buffer = _parse_positive_int_option(
+        "stream_max_buffer", kwargs.pop("stream_max_buffer", 1024)
+    )
+    stream_error_mode = _parse_stream_error_mode(
+        kwargs.pop("stream_error_mode", "continue")
+    )
+
     # 0. 设置默认值 (如果未传入且未在 Config 中设置)
     # 优先级: 参数 > Config > 默认值
 
@@ -731,6 +808,15 @@ def run_backtest(
     engine.set_cash(initial_cash)
     if history_depth > 0:
         engine.set_history_depth(history_depth)
+    if stream_on_event is not None:
+        cast(Any, engine).set_stream_callback(stream_on_event)
+        cast(Any, engine).set_stream_options(
+            stream_progress_interval,
+            stream_equity_interval,
+            stream_batch_size,
+            stream_max_buffer,
+            stream_error_mode,
+        )
 
     # Register Custom Matchers
     if custom_matchers:
@@ -1034,6 +1120,11 @@ def run_backtest(
         logger.error(f"Backtest failed: {e}")
         raise e
     finally:
+        if stream_on_event is not None and hasattr(engine, "clear_stream_callback"):
+            try:
+                cast(Any, engine).clear_stream_callback()
+            except Exception as e:
+                logger.debug(f"Failed to clear stream callback: {e}")
         if hasattr(strategy_instance, "_on_stop_internal"):
             try:
                 strategy_instance._on_stop_internal()
@@ -1051,6 +1142,35 @@ def run_backtest(
         initial_cash=initial_cash,
         strategy=strategy_instance,
         engine=engine,
+    )
+
+
+def run_backtest_stream(
+    data: Optional[
+        Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed]
+    ] = None,
+    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    stream_progress_interval: int = 1,
+    stream_equity_interval: int = 1,
+    stream_batch_size: int = 1,
+    stream_max_buffer: int = 1024,
+    stream_error_mode: str = "continue",
+    **kwargs: Any,
+) -> BacktestResult:
+    """Run backtest with realtime stream callback while keeping return semantics."""
+    if on_event is None:
+        raise ValueError("on_event must be provided for run_backtest_stream")
+    return run_backtest(
+        data=data,
+        strategy=strategy,
+        on_event=on_event,
+        stream_progress_interval=stream_progress_interval,
+        stream_equity_interval=stream_equity_interval,
+        stream_batch_size=stream_batch_size,
+        stream_max_buffer=stream_max_buffer,
+        stream_error_mode=stream_error_mode,
+        **kwargs,
     )
 
 

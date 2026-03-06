@@ -290,3 +290,11 @@ class AdjSignal(Strategy):
 *   **[24_functional_tick_simulation_demo.py](https://github.com/akfamily/akquant/blob/main/examples/24_functional_tick_simulation_demo.py)**:
     *   演示函数式 `on_tick` 回调在模拟 Tick 事件分发下的触发方式。
     *   输出 tick/order/trade/timer 计数，并以 `done_functional_tick_simulation_demo` 作为结束标记。
+
+*   **[25_streaming_backtest_demo.py](https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py)**:
+    *   演示 `run_backtest_stream` 在 `stream_error_mode="continue"` 与 `"fail_fast"` 两种模式下的行为差异。
+    *   输出 `continue_callback_error_count`、`fail_fast_exception=...`，并以 `done_streaming_backtest_demo` 作为结束标记。
+
+*   **[26_streaming_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/26_streaming_quickstart.py)**:
+    *   提供一个与 `01_quickstart.py` 同风格的流式版本，使用 `run_backtest_stream` 接收事件。
+    *   输出 `stream_started`、`stream_finished`、`stream_seq_monotonic` 等摘要，并以 `done_streaming_quickstart` 作为结束标记。

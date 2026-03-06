@@ -17,10 +17,12 @@ import pandas as pd
 from akquant import (
     AssetType,
     BacktestConfig,
+    BacktestStreamEvent,
     ExecutionMode,
     InstrumentConfig,
     StrategyConfig,
     run_backtest,
+    run_backtest_stream,
 )
 from akquant.backtest.result import BacktestResult
 
@@ -291,6 +293,160 @@ def run_test(
     else:
         print(f"Baseline generated for {test_name}")
         return []
+
+
+def run_stream_consistency_test(
+    test_name: str,
+    strategy_cls: Any,
+    data_file: str,
+    config: Dict[str, Any],
+) -> List[str]:
+    """Run one golden scenario in stream and non-stream modes and compare."""
+    data_path = DATA_DIR / data_file
+    df = pd.read_parquet(data_path)
+
+    initial_cash = config.get("initial_cash", 100000.0)
+    instr_configs = config.get("instruments_config", [])
+    bc_config = BacktestConfig(
+        strategy_config=StrategyConfig(initial_cash=initial_cash),
+        instruments_config=instr_configs,
+    )
+    t_plus_one = config.get("t_plus_one", False)
+    run_kwargs: Dict[str, Any] = {
+        "data": df,
+        "strategy": strategy_cls,
+        "config": bc_config,
+        "t_plus_one": t_plus_one,
+        "execution_mode": ExecutionMode.NextOpen,
+        "lot_size": config.get("lot_size", 1),
+        "commission_rate": config.get("commission_rate", 0.0),
+        "min_commission": config.get("min_commission", 0.0),
+        "stamp_tax_rate": config.get("stamp_tax_rate", 0.0),
+        "transfer_fee_rate": config.get("transfer_fee_rate", 0.0),
+        "show_progress": False,
+    }
+
+    normal_result = run_backtest(**run_kwargs)
+    events: List[BacktestStreamEvent] = []
+    stream_result = run_backtest_stream(
+        **run_kwargs,
+        on_event=events.append,
+        stream_progress_interval=8,
+        stream_equity_interval=8,
+        stream_batch_size=16,
+        stream_max_buffer=256,
+    )
+
+    errors: List[str] = []
+    if not events:
+        errors.append(f"{test_name}: no stream events emitted")
+        return errors
+    if events[0].get("event_type") != "started":
+        errors.append(f"{test_name}: first stream event is not started")
+    if events[-1].get("event_type") != "finished":
+        errors.append(f"{test_name}: last stream event is not finished")
+    seq_values = [event["seq"] for event in events]
+    if seq_values != sorted(seq_values):
+        errors.append(f"{test_name}: stream seq is not monotonic")
+    if len(stream_result.equity_curve) != len(normal_result.equity_curve):
+        normal_equity_len = len(normal_result.equity_curve)
+        stream_equity_len = len(stream_result.equity_curve)
+        errors.append(
+            f"{test_name}: equity length mismatch "
+            f"{normal_equity_len} vs {stream_equity_len}"
+        )
+    if len(stream_result.trades) != len(normal_result.trades):
+        normal_trades_len = len(normal_result.trades)
+        stream_trades_len = len(stream_result.trades)
+        errors.append(
+            f"{test_name}: trades count mismatch "
+            f"{normal_trades_len} vs {stream_trades_len}"
+        )
+    total_return_pct_diff = abs(
+        stream_result.metrics.total_return_pct - normal_result.metrics.total_return_pct
+    )
+    if total_return_pct_diff > 1e-9:
+        normal_total_return_pct = normal_result.metrics.total_return_pct
+        stream_total_return_pct = stream_result.metrics.total_return_pct
+        errors.append(
+            f"{test_name}: total_return_pct mismatch "
+            f"{normal_total_return_pct} vs {stream_total_return_pct}"
+        )
+    max_drawdown_pct_diff = abs(
+        stream_result.metrics.max_drawdown_pct - normal_result.metrics.max_drawdown_pct
+    )
+    if max_drawdown_pct_diff > 1e-9:
+        normal_max_drawdown_pct = normal_result.metrics.max_drawdown_pct
+        stream_max_drawdown_pct = stream_result.metrics.max_drawdown_pct
+        errors.append(
+            f"{test_name}: max_drawdown_pct mismatch "
+            f"{normal_max_drawdown_pct} vs {stream_max_drawdown_pct}"
+        )
+    return errors
+
+
+def run_stream_consistency_suite() -> List[str]:
+    """Run stream consistency checks for all golden scenarios."""
+    failures: List[str] = []
+
+    stock_errors = run_stream_consistency_test(
+        "stock_t1",
+        StockT1Strategy,
+        "stock_t1.parquet",
+        {
+            "t_plus_one": True,
+            "lot_size": 100,
+            "commission_rate": 0.0003,
+            "min_commission": 5.0,
+            "stamp_tax_rate": 0.001,
+            "transfer_fee_rate": 0.00002,
+        },
+    )
+    failures.extend(stock_errors)
+
+    future_config = InstrumentConfig(
+        symbol="FUTURE_A",
+        asset_type=str(AssetType.Futures),
+        multiplier=300.0,
+        margin_ratio=0.1,
+        tick_size=0.2,
+    )
+    future_errors = run_stream_consistency_test(
+        "futures_margin",
+        FutureMarginStrategy,
+        "future_margin.parquet",
+        {
+            "initial_cash": 200000.0,
+            "instruments_config": [future_config],
+            "commission_rate": 0.0001,
+        },
+    )
+    failures.extend(future_errors)
+
+    option_config = InstrumentConfig(
+        symbol="OPTION_A",
+        asset_type=str(AssetType.Option),
+        multiplier=100.0,
+        margin_ratio=1.0,
+        tick_size=0.0001,
+        option_type="CALL",
+        strike_price=100.0,
+        expiry_date=None,
+        underlying_symbol="STOCK_A",
+    )
+    option_errors = run_stream_consistency_test(
+        "option_basic",
+        OptionBasicStrategy,
+        "option_basic.parquet",
+        {
+            "initial_cash": 10000.0,
+            "instruments_config": [option_config],
+            "commission_rate": 0.0,
+        },
+    )
+    failures.extend(option_errors)
+
+    return failures
 
 
 def main(generate_baseline: bool = False) -> None:

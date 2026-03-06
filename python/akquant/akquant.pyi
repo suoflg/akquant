@@ -567,6 +567,16 @@ class Engine:
         """
         ...
 
+    def set_stream_callback(self, callback: typing.Any) -> None: ...
+    def clear_stream_callback(self) -> None: ...
+    def set_stream_options(
+        self,
+        progress_interval: int,
+        equity_interval: int,
+        batch_size: int,
+        max_buffer: int,
+        error_mode: str,
+    ) -> None: ...
     def run(self, strategy: typing.Any, show_progress: bool) -> str:
         r"""
         运行回测.

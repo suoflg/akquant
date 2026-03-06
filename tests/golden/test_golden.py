@@ -10,6 +10,7 @@ GOLDEN_DIR = Path(__file__).parent
 sys.path.append(str(GOLDEN_DIR))
 
 from runner import main as run_golden_suite  # noqa: E402
+from runner import run_stream_consistency_suite  # noqa: E402
 
 
 def test_golden_suite() -> None:
@@ -22,3 +23,9 @@ def test_golden_suite() -> None:
         run_golden_suite(generate_baseline=False)
 
     assert excinfo.value.code == 0, "Golden Suite Failed"
+
+
+def test_golden_stream_consistency_suite() -> None:
+    """Run stream consistency checks on golden scenarios."""
+    failures = run_stream_consistency_suite()
+    assert not failures, f"Golden Stream Consistency Failed: {failures}"

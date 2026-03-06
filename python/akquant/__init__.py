@@ -13,7 +13,13 @@ __engine_rule_version__ = "1.0.0"  # Increment on behavior-changing updates
 from . import akquant as _akquant
 from .akquant import *  # noqa: F403
 from .akquant import ATR, EMA, MACD, RSI, SMA, BollingerBands
-from .backtest import BacktestResult, run_backtest, run_warm_start  # type: ignore
+from .backtest import (  # type: ignore
+    BacktestResult,
+    BacktestStreamEvent,
+    run_backtest,
+    run_backtest_stream,
+    run_warm_start,
+)
 from .checkpoint import save_snapshot, warm_start
 from .config import BacktestConfig, InstrumentConfig, StrategyConfig, strategy_config
 from .data import DataLoader
@@ -44,9 +50,11 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "Indicator",
         "IndicatorSet",
         "run_backtest",
+        "run_backtest_stream",
         "run_warm_start",
         "plot_result",
         "BacktestResult",
+        "BacktestStreamEvent",
         "run_grid_search",
         "run_walk_forward",
         "OptimizationResult",
@@ -80,9 +88,11 @@ else:
         "Indicator",
         "IndicatorSet",
         "run_backtest",
+        "run_backtest_stream",
         "run_warm_start",
         "plot_result",
         "BacktestResult",
+        "BacktestStreamEvent",
         "run_grid_search",
         "run_walk_forward",
         "OptimizationResult",

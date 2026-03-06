@@ -231,7 +231,56 @@ You can view detailed trade metrics via `print(result.trades_df)`.
 [67 rows x 13 columns]
 ```
 
-## 3. Advanced Learning
+## 3. Streaming Backtest
+
+If you want real-time events during a backtest (progress, equity, orders, trades,
+and final status), use `run_backtest_stream`.
+
+```python
+from akquant import run_backtest_stream
+
+def on_event(event):
+    if event["event_type"] == "finished":
+        payload = event["payload"]
+        print("status:", payload.get("status"))
+        print("callback_error_count:", payload.get("callback_error_count"))
+
+result = run_backtest_stream(
+    data=df,
+    strategy=MyStrategy,
+    symbol="sh600000",
+    on_event=on_event,
+    show_progress=False,
+    stream_progress_interval=10,
+    stream_equity_interval=10,
+    stream_batch_size=32,
+    stream_max_buffer=256,
+    stream_error_mode="continue",
+)
+```
+
+Common streaming options:
+
+*   `stream_progress_interval`: sampling interval for `progress` events (positive int)
+*   `stream_equity_interval`: sampling interval for `equity` events (positive int)
+*   `stream_batch_size`: flush threshold for buffered events (positive int)
+*   `stream_max_buffer`: maximum buffered event count (positive int)
+*   `stream_error_mode`: callback exception policy
+    *   `"continue"`: continue backtest on callback exceptions and report summary in
+        `finished.payload`
+    *   `"fail_fast"`: stop immediately and raise an exception on callback errors
+
+Stream event common fields:
+
+*   `run_id`: stream run id
+*   `seq`: monotonic event sequence
+*   `ts`: event timestamp in nanoseconds
+*   `event_type`: event type
+*   `symbol`: related symbol (nullable for some events)
+*   `level`: event level
+*   `payload`: event payload
+
+## 4. Advanced Learning
 
 Too simple? Want to learn how to write real quantitative strategies (like Dual Moving Average, MACD, etc.)?
 
