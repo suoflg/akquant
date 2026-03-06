@@ -60,7 +60,8 @@ def get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[Any]:
     orders = [
         o
         for o in strategy.ctx.active_orders
-        if o.status in (OrderStatus.New, OrderStatus.Submitted)
+        if o.status
+        in (OrderStatus.New, OrderStatus.Submitted, OrderStatus.PartiallyFilled)
     ]
     if symbol:
         return [o for o in orders if o.symbol == symbol]

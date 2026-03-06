@@ -2,6 +2,7 @@ use crate::error::AkQuantError;
 use crate::model::{Order, OrderSide};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use super::rule::{RiskCheckContext, RiskRule};
 
@@ -122,6 +123,7 @@ mod tests {
             instruments,
             active_orders,
             current_prices,
+            current_time: 0,
             config,
         }
     }
@@ -370,6 +372,184 @@ impl RiskRule for SectorConcentrationRule {
             )));
         }
 
+        Ok(())
+    }
+
+    fn clone_box(&self) -> Box<dyn RiskRule> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MaxDrawdownRule {
+    pub limit: Decimal,
+    peak_equity: Arc<Mutex<Option<Decimal>>>,
+}
+
+impl MaxDrawdownRule {
+    pub fn new(limit: Decimal) -> Self {
+        Self {
+            limit,
+            peak_equity: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl RiskRule for MaxDrawdownRule {
+    fn name(&self) -> &'static str {
+        "MaxDrawdownRule"
+    }
+
+    fn check(
+        &self,
+        _order: &Order,
+        ctx: &RiskCheckContext,
+    ) -> Result<(), AkQuantError> {
+        let equity = ctx
+            .portfolio
+            .calculate_equity(ctx.current_prices, ctx.instruments);
+
+        if equity <= Decimal::ZERO {
+            return Ok(());
+        }
+
+        let mut peak_guard = self.peak_equity.lock().unwrap();
+        let peak = peak_guard.unwrap_or(equity);
+        let new_peak = if equity > peak { equity } else { peak };
+        *peak_guard = Some(new_peak);
+
+        if new_peak <= Decimal::ZERO {
+            return Ok(());
+        }
+
+        let drawdown = (new_peak - equity) / new_peak;
+        if drawdown > self.limit {
+            return Err(AkQuantError::OrderError(format!(
+                "Risk: Max drawdown {:.2}% exceeds limit {:.2}%",
+                drawdown * Decimal::from(100),
+                self.limit * Decimal::from(100),
+            )));
+        }
+        Ok(())
+    }
+
+    fn clone_box(&self) -> Box<dyn RiskRule> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DailyLossState {
+    day_key: i64,
+    start_equity: Decimal,
+}
+
+#[derive(Debug, Clone)]
+pub struct MaxDailyLossRule {
+    pub limit: Decimal,
+    state: Arc<Mutex<Option<DailyLossState>>>,
+}
+
+impl MaxDailyLossRule {
+    pub fn new(limit: Decimal) -> Self {
+        Self {
+            limit,
+            state: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl RiskRule for MaxDailyLossRule {
+    fn name(&self) -> &'static str {
+        "MaxDailyLossRule"
+    }
+
+    fn check(
+        &self,
+        _order: &Order,
+        ctx: &RiskCheckContext,
+    ) -> Result<(), AkQuantError> {
+        let equity = ctx
+            .portfolio
+            .calculate_equity(ctx.current_prices, ctx.instruments);
+        if equity <= Decimal::ZERO {
+            return Ok(());
+        }
+
+        let day_key = ctx.current_time / 86_400_000_000_000;
+        let mut state_guard = self.state.lock().unwrap();
+        let state = state_guard.get_or_insert(DailyLossState {
+            day_key,
+            start_equity: equity,
+        });
+
+        if state.day_key != day_key {
+            state.day_key = day_key;
+            state.start_equity = equity;
+        }
+
+        if state.start_equity <= Decimal::ZERO {
+            return Ok(());
+        }
+
+        let daily_loss = (state.start_equity - equity) / state.start_equity;
+        if daily_loss > self.limit {
+            return Err(AkQuantError::OrderError(format!(
+                "Risk: Daily loss {:.2}% exceeds limit {:.2}%",
+                daily_loss * Decimal::from(100),
+                self.limit * Decimal::from(100),
+            )));
+        }
+        Ok(())
+    }
+
+    fn clone_box(&self) -> Box<dyn RiskRule> {
+        Box::new(self.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StopLossRule {
+    pub threshold: Decimal,
+    initial_equity: Arc<Mutex<Option<Decimal>>>,
+}
+
+impl StopLossRule {
+    pub fn new(threshold: Decimal) -> Self {
+        Self {
+            threshold,
+            initial_equity: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl RiskRule for StopLossRule {
+    fn name(&self) -> &'static str {
+        "StopLossRule"
+    }
+
+    fn check(
+        &self,
+        _order: &Order,
+        ctx: &RiskCheckContext,
+    ) -> Result<(), AkQuantError> {
+        let equity = ctx
+            .portfolio
+            .calculate_equity(ctx.current_prices, ctx.instruments);
+        if equity <= Decimal::ZERO {
+            return Ok(());
+        }
+
+        let mut init_guard = self.initial_equity.lock().unwrap();
+        let base = *init_guard.get_or_insert(equity);
+        let trigger_equity = base * self.threshold;
+
+        if equity < trigger_equity {
+            return Err(AkQuantError::OrderError(format!(
+                "Risk: Equity {:.4} below stop-loss threshold {:.4}",
+                equity, trigger_equity,
+            )));
+        }
         Ok(())
     }
 

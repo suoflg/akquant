@@ -103,6 +103,9 @@ def run_backtest_stream(
     *   `"continue"`: Continue backtest on callback errors and report summary in
         final `finished` event.
     *   `"fail_fast"`: Stop immediately and raise once callback throws.
+*   `stream_mode`: Stream mode.
+    *   `"observability"`: observability-oriented mode with sampling and non-critical dropping under backpressure.
+    *   `"audit"`: audit-oriented mode with sampling disabled and blocking backpressure for non-critical events.
 
 **Event Schema (`BacktestStreamEvent`):**
 
@@ -128,6 +131,11 @@ def run_backtest_stream(
 *   `processed_events`: Number of processed events
 *   `total_trades`: Number of trades
 *   `callback_error_count`: Total callback errors
+*   `dropped_event_count`: Total number of events dropped under backpressure
+*   `dropped_event_count_by_type`: Dropped count grouped by event type (`event=count` comma-separated)
+*   `stream_mode`: Effective stream mode (`observability` or `audit`)
+*   `sampling_enabled`: Whether sampling is enabled (`true`/`false`)
+*   `backpressure_policy`: Backpressure policy (`drop_non_critical` or `block`)
 *   `last_callback_error`: Latest callback error message (when present)
 *   `reason`: Failure reason (when present)
 
@@ -463,6 +471,14 @@ class RiskConfig:
     max_daily_loss: Optional[float] = None
     stop_loss_threshold: Optional[float] = None
 ```
+
+Account-level field semantics:
+
+*   `max_account_drawdown`: Maximum drawdown limit in 0~1 ratio. Drawdown is measured against historical peak equity; once breached, new order requests are rejected.
+*   `max_daily_loss`: Daily loss limit in 0~1 ratio. Loss is measured against equity at the first risk check of the trading day; once breached, new order requests are rejected.
+*   `stop_loss_threshold`: Equity stop-loss threshold in 0~1 ratio. If current equity falls below `baseline_equity_at_rule_activation * threshold`, new order requests are rejected.
+
+Rejection reasons are available in `orders_df.reject_reason`.
 
 ## 6. Analysis
 

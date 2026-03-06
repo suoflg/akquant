@@ -63,6 +63,13 @@ def _parse_stream_error_mode(value: Any) -> str:
     return mode
 
 
+def _parse_stream_mode(value: Any) -> str:
+    mode = str(value).strip().lower()
+    if mode not in {"observability", "audit"}:
+        raise ValueError("stream_mode must be 'observability' or 'audit'")
+    return mode
+
+
 def _noop_stream_event_handler(_event: BacktestStreamEvent) -> None:
     return None
 
@@ -331,6 +338,7 @@ def run_backtest(
     stream_error_mode = _parse_stream_error_mode(
         kwargs.pop("stream_error_mode", "continue")
     )
+    stream_mode = _parse_stream_mode(kwargs.pop("stream_mode", "observability"))
 
     # 0. 设置默认值 (如果未传入且未在 Config 中设置)
     # 优先级: 参数 > Config > 默认值
@@ -811,6 +819,7 @@ def run_backtest(
             stream_batch_size,
             stream_max_buffer,
             stream_error_mode,
+            stream_mode,
         )
 
     # Register Custom Matchers
@@ -1151,6 +1160,7 @@ def run_backtest_stream(
     stream_batch_size: int = 1,
     stream_max_buffer: int = 1024,
     stream_error_mode: str = "continue",
+    stream_mode: str = "observability",
     **kwargs: Any,
 ) -> BacktestResult:
     """Run backtest with realtime stream callback while keeping return semantics."""
@@ -1165,6 +1175,7 @@ def run_backtest_stream(
         stream_batch_size=stream_batch_size,
         stream_max_buffer=stream_max_buffer,
         stream_error_mode=stream_error_mode,
+        stream_mode=stream_mode,
         **kwargs,
     )
 

@@ -214,7 +214,7 @@ impl CommonMatcher {
 
                         // Check partial fill
                         if trade_qty < order.quantity - order.filled_quantity {
-                            order.status = OrderStatus::Submitted;
+                            order.status = OrderStatus::PartiallyFilled;
                         }
 
                         order.filled_quantity += trade_qty;

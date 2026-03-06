@@ -2,6 +2,7 @@
 
 ## 1. 基础示例 (Basic Examples)
 
+*   [Examples 目录索引](../../../examples/README.md): 快速浏览 `examples/` 下所有脚本入口，并包含按场景整理的最短执行路径。
 *   [快速开始 (Quickstart)](../start/quickstart.md): 包含手动数据回测和 AKShare 数据回测的完整流程。
 *   [简单的均线策略 (SMA Strategy)](strategy.md#class-based): 展示了如何使用类风格编写策略，并在 `on_bar` 中进行简单的交易逻辑。
 
@@ -298,3 +299,31 @@ class AdjSignal(Strategy):
 *   **[26_streaming_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/26_streaming_quickstart.py)**:
     *   提供一个与 `01_quickstart.py` 同风格的流式版本，使用 `run_backtest_stream` 接收事件。
     *   输出 `stream_started`、`stream_finished`、`stream_seq_monotonic` 等摘要，并以 `done_streaming_quickstart` 作为结束标记。
+
+*   **[27_streaming_monitoring_console.py](https://github.com/akfamily/akquant/blob/main/examples/27_streaming_monitoring_console.py)**:
+    *   演示参数组合回测时的实时监控控制台输出，基于 `run_backtest(..., on_event=...)` 统计 `progress/order/trade/finished` 事件。
+    *   输出每组参数的事件计数与收益摘要，并以 `done_streaming_monitoring_console` 作为结束标记。
+
+*   **[28_streaming_alerts_and_persist.py](https://github.com/akfamily/akquant/blob/main/examples/28_streaming_alerts_and_persist.py)**:
+    *   演示流式事件告警与落盘：在 `equity` 事件上计算回撤并触发阈值告警，同时将事件快照保存为 CSV。
+    *   输出 `max_drawdown_seen`、`event_csv=...`，并以 `done_streaming_alerts_and_persist` 作为结束标记。
+
+*   **[29_streaming_event_report.py](https://github.com/akfamily/akquant/blob/main/examples/29_streaming_event_report.py)**:
+    *   读取 `28_streaming_alerts_and_persist.py` 生成的 CSV，输出交互式 HTML 报告（累计事件曲线 + 事件分布）。
+    *   输出 `report_html=...`，并以 `done_streaming_event_report` 作为结束标记。
+
+*   **[30_streaming_report_oneclick.py](https://github.com/akfamily/akquant/blob/main/examples/30_streaming_report_oneclick.py)**:
+    *   一键串联 28 与 29：先生成事件 CSV，再生成 HTML 报告，并可自动打开浏览器。
+    *   支持 `--no-open`、`--serve`、`--port`、`--serve-seconds` 参数，输出 `done_streaming_report_oneclick` 作为结束标记。
+
+*   **[31_streaming_live_console.py](https://github.com/akfamily/akquant/blob/main/examples/31_streaming_live_console.py)**:
+    *   演示“边回测边看效果”：在 `equity` 事件上实时输出终端 sparkline 图形，并在回撤超过阈值时打印告警消息。
+    *   输出 `total_return`、`max_drawdown_live`，并以 `done_streaming_live_console` 作为结束标记。
+
+*   **[32_streaming_live_web.py](https://github.com/akfamily/akquant/blob/main/examples/32_streaming_live_web.py)**:
+    *   演示“肉眼可见”的网页实时回测：浏览器轮询流式状态并动态绘制权益曲线，同时显示告警与进度。
+    *   支持 `--port`、`--open`、`--sleep-ms`、`--keep-seconds` 参数，并以 `done_streaming_live_web` 作为结束标记。
+
+*   **[33_report_and_analysis_outputs.py](https://github.com/akfamily/akquant/blob/main/examples/33_report_and_analysis_outputs.py)**:
+    *   演示回测后的一站式产出：生成交互式报告，并输出 `exposure_df` / `attribution_df` / `capacity_df` 的行数摘要。
+    *   输出 `report_html=...`，并以 `done_report_and_analysis_outputs` 作为结束标记。

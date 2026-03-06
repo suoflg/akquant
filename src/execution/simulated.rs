@@ -75,7 +75,9 @@ impl ExecutionClient for SimulatedExecutionClient {
 
     fn on_cancel(&mut self, order_id: &str) {
         if let Some(order) = self.orders.get_mut(order_id)
-            && (order.status == OrderStatus::Submitted || order.status == OrderStatus::New) {
+            && (order.status == OrderStatus::Submitted
+                || order.status == OrderStatus::PartiallyFilled
+                || order.status == OrderStatus::New) {
                 order.status = OrderStatus::Cancelled;
             }
     }
@@ -401,6 +403,7 @@ mod tests {
             market_model: market_model.as_ref(),
             execution_mode: ExecutionMode::NextOpen,
             bar_index: 0,
+            current_time: 0,
             session: TradingSession::Continuous,
             active_orders: &[],
         };
@@ -480,6 +483,7 @@ mod tests {
             market_model: market_model.as_ref(),
             execution_mode: ExecutionMode::NextOpen,
             bar_index: 0,
+            current_time: 0,
             session: TradingSession::Continuous,
             active_orders: &[],
         };
@@ -538,6 +542,7 @@ mod tests {
             market_model: market_model.as_ref(),
             execution_mode: ExecutionMode::NextOpen,
             bar_index: 0,
+            current_time: 0,
             session: TradingSession::Continuous,
             active_orders: &[],
         };
@@ -596,6 +601,7 @@ mod tests {
             market_model: market_model.as_ref(),
             execution_mode: ExecutionMode::NextOpen,
             bar_index: 0,
+            current_time: 0,
             session: TradingSession::Continuous,
             active_orders: &[],
         };

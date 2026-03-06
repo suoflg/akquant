@@ -28,6 +28,7 @@ pub struct EngineContext<'a> {
     pub market_model: &'a dyn MarketModel,
     pub execution_mode: ExecutionMode,
     pub bar_index: usize,
+    pub current_time: i64,
     pub session: TradingSession,
     pub active_orders: &'a [Order],
 }

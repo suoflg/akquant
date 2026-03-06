@@ -171,8 +171,35 @@ AKQuant 提供了强大的可视化工具，帮助用户直观地分析策略表
 result.report(
     title="我的策略报告",
     filename="report.html",
-    show=True  # 设为 True 以自动在浏览器中打开 (默认为 False)
+    show=True,  # 设为 True 以自动在浏览器中打开 (默认为 False)
+    compact_currency=True,  # 金额列使用 K/M/B 紧凑显示 (默认为 True)
 )
+```
+
+如果你希望报告表格中的金额保留原始精度（不缩写为 K/M/B），可以关闭该选项：
+
+```python
+result.report(
+    title="我的策略报告",
+    filename="report_raw_amount.html",
+    compact_currency=False,
+)
+```
+
+### 组合归因与容量分析 (Attribution & Capacity)
+
+`BacktestResult` 提供了可直接用于二次分析的结构化结果：
+
+```python
+# 1) 组合暴露分解（净暴露、总暴露、杠杆）
+exposure = result.exposure_df()
+
+# 2) 归因分析（按 symbol / tag 聚合）
+attr_by_symbol = result.attribution_df(by="symbol")
+attr_by_tag = result.attribution_df(by="tag")
+
+# 3) 容量代理指标（订单数、成交率、换手）
+capacity = result.capacity_df()
 ```
 
 或者使用 `plot` 方法快速预览特定图表：

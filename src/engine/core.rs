@@ -80,6 +80,11 @@ pub struct Engine {
     pub(crate) stream_callback_error_count: u64,
     pub(crate) stream_callback_last_error: Option<String>,
     pub(crate) stream_fatal_error: Option<String>,
+    pub(crate) stream_dropped_event_count: u64,
+    pub(crate) stream_dropped_event_count_by_type: HashMap<String, u64>,
+    pub(crate) stream_mode: String,
+    pub(crate) stream_sampling_enabled: bool,
+    pub(crate) stream_drop_non_critical: bool,
 }
 
 pub(crate) struct PendingStreamEvent {
@@ -99,6 +104,8 @@ impl Engine {
         self.stream_callback_error_count = 0;
         self.stream_callback_last_error = None;
         self.stream_fatal_error = None;
+        self.stream_dropped_event_count = 0;
+        self.stream_dropped_event_count_by_type.clear();
     }
 
     pub(crate) fn set_stream_options_internal(
@@ -108,12 +115,22 @@ impl Engine {
         batch_size: usize,
         max_buffer: usize,
         error_mode: &str,
+        stream_mode: &str,
     ) {
         self.stream_progress_interval = progress_interval.max(1);
         self.stream_equity_interval = equity_interval.max(1);
         self.stream_batch_size = batch_size.max(1);
-        self.stream_max_buffer = max_buffer.max(self.stream_batch_size);
+        self.stream_max_buffer = max_buffer.max(1);
         self.stream_fail_fast_on_callback_error = error_mode == "fail_fast";
+        if stream_mode == "audit" {
+            self.stream_mode = "audit".to_string();
+            self.stream_sampling_enabled = false;
+            self.stream_drop_non_critical = false;
+        } else {
+            self.stream_mode = "observability".to_string();
+            self.stream_sampling_enabled = true;
+            self.stream_drop_non_critical = true;
+        }
     }
 
     pub(crate) fn start_stream_run(
@@ -128,6 +145,8 @@ impl Engine {
             self.stream_callback_error_count = 0;
             self.stream_callback_last_error = None;
             self.stream_fatal_error = None;
+            self.stream_dropped_event_count = 0;
+            self.stream_dropped_event_count_by_type.clear();
             return;
         }
         self.stream_seq = 0;
@@ -135,6 +154,8 @@ impl Engine {
         self.stream_callback_error_count = 0;
         self.stream_callback_last_error = None;
         self.stream_fatal_error = None;
+        self.stream_dropped_event_count = 0;
+        self.stream_dropped_event_count_by_type.clear();
 
         let mut payload = HashMap::new();
         payload.insert("total_events", total_events.unwrap_or(0).to_string());
@@ -154,12 +175,14 @@ impl Engine {
             return;
         };
 
-        if event_type == "progress"
+        if self.stream_sampling_enabled
+            && event_type == "progress"
             && self.bar_count % self.stream_progress_interval != 0
         {
             return;
         }
-        if event_type == "equity"
+        if self.stream_sampling_enabled
+            && event_type == "equity"
             && self.bar_count % self.stream_equity_interval != 0
         {
             return;
@@ -170,9 +193,10 @@ impl Engine {
             "started" | "order" | "trade" | "risk" | "error" | "finished"
         );
         if self.stream_buffer.len() >= self.stream_max_buffer {
-            if is_critical {
+            if is_critical || !self.stream_drop_non_critical {
                 self.flush_stream_events(py);
             } else {
+                self.record_dropped_stream_event(event_type);
                 return;
             }
         }
@@ -259,6 +283,8 @@ impl Engine {
             self.stream_callback_error_count = 0;
             self.stream_callback_last_error = None;
             self.stream_fatal_error = None;
+            self.stream_dropped_event_count = 0;
+            self.stream_dropped_event_count_by_type.clear();
             return;
         }
 
@@ -276,6 +302,27 @@ impl Engine {
             "callback_error_count",
             self.stream_callback_error_count.to_string(),
         );
+        payload.insert(
+            "dropped_event_count",
+            self.stream_dropped_event_count.to_string(),
+        );
+        payload.insert(
+            "dropped_event_count_by_type",
+            self.format_stream_dropped_event_counts(),
+        );
+        payload.insert("stream_mode", self.stream_mode.clone());
+        payload.insert(
+            "sampling_enabled",
+            self.stream_sampling_enabled.to_string(),
+        );
+        payload.insert(
+            "backpressure_policy",
+            if self.stream_drop_non_critical {
+                "drop_non_critical".to_string()
+            } else {
+                "block".to_string()
+            },
+        );
         if let Some(message) = reason {
             payload.insert("reason", message.to_string());
         }
@@ -286,6 +333,30 @@ impl Engine {
         self.flush_stream_events(py);
         self.stream_run_id = None;
         self.stream_buffer.clear();
+    }
+
+    pub(crate) fn record_dropped_stream_event(&mut self, event_type: &str) {
+        self.stream_dropped_event_count =
+            self.stream_dropped_event_count.saturating_add(1);
+        let counter = self
+            .stream_dropped_event_count_by_type
+            .entry(event_type.to_string())
+            .or_insert(0);
+        *counter = counter.saturating_add(1);
+    }
+
+    pub(crate) fn format_stream_dropped_event_counts(&self) -> String {
+        if self.stream_dropped_event_count_by_type.is_empty() {
+            return String::new();
+        }
+        let mut entries: Vec<(&String, &u64)> =
+            self.stream_dropped_event_count_by_type.iter().collect();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries
+            .into_iter()
+            .map(|(event_type, count)| format!("{}={}", event_type, count))
+            .collect::<Vec<String>>()
+            .join(",")
     }
 
     pub(crate) fn raise_stream_fatal_error_if_any(&mut self) -> PyResult<()> {

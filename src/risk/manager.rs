@@ -13,7 +13,10 @@ use super::common::{
 use super::config::RiskConfig;
 use super::futures::FuturesMarginRule;
 use super::option::OptionGreekRiskRule;
-use super::portfolio::{MaxLeverageRule, MaxPositionPercentRule, SectorConcentrationRule};
+use super::portfolio::{
+    MaxDailyLossRule, MaxDrawdownRule, MaxLeverageRule, MaxPositionPercentRule,
+    SectorConcentrationRule, StopLossRule,
+};
 use super::rule::RiskRule;
 use super::stock::StockAvailablePositionRule;
 
@@ -78,6 +81,7 @@ impl RiskManager {
             market_model: &market_model,
             execution_mode: crate::model::ExecutionMode::NextOpen,
             bar_index: 0,
+            current_time: 0,
             session: crate::model::TradingSession::Continuous,
             active_orders: &active_orders,
         };
@@ -108,6 +112,36 @@ impl RiskManager {
             max_pct: Decimal::from_f64(max_pct).unwrap_or(Decimal::ZERO),
             sector_map,
         }));
+    }
+
+    /// Add max drawdown rule (0.2 = max 20% drawdown)
+    pub fn add_max_drawdown_rule(&mut self, limit: f64) {
+        if !(0.0..=1.0).contains(&limit) {
+            return;
+        }
+        self.dynamic_rules.push(Box::new(MaxDrawdownRule::new(
+            Decimal::from_f64(limit).unwrap_or(Decimal::ZERO),
+        )));
+    }
+
+    /// Add max daily loss rule (0.05 = max 5% daily loss)
+    pub fn add_max_daily_loss_rule(&mut self, limit: f64) {
+        if !(0.0..=1.0).contains(&limit) {
+            return;
+        }
+        self.dynamic_rules.push(Box::new(MaxDailyLossRule::new(
+            Decimal::from_f64(limit).unwrap_or(Decimal::ZERO),
+        )));
+    }
+
+    /// Add stop loss rule (0.8 = stop if equity < initial_equity * 0.8)
+    pub fn add_stop_loss_rule(&mut self, threshold: f64) {
+        if !(0.0..=1.0).contains(&threshold) {
+            return;
+        }
+        self.dynamic_rules.push(Box::new(StopLossRule::new(
+            Decimal::from_f64(threshold).unwrap_or(Decimal::ZERO),
+        )));
     }
 }
 
@@ -227,6 +261,7 @@ impl RiskManager {
             instruments: ctx.instruments,
             active_orders: ctx.active_orders,
             current_prices: ctx.last_prices,
+            current_time: ctx.current_time,
             config: &self.config,
         };
 

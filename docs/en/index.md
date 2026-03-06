@@ -217,3 +217,7 @@ For more examples, please refer to the `examples/` directory.
 
 *   Phase-5 migration FAQ (quickstart): [Phase-5 Migration FAQ](start/quickstart.md#phase-5-migration-faq)
 *   Full compatibility notes (API reference): [Compatibility & Migration Notes](reference/api.md#compatibility--migration-notes)
+
+## Strategy Playbook Entry
+
+*   Cross-section strategy checklist: [Cross-Section Strategy Playbook Checklist](guide/cross_section_checklist.md)

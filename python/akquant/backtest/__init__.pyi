@@ -64,6 +64,7 @@ def run_backtest(
     ] = ...,
     runtime_config_override: bool = ...,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
+    stream_mode: Literal["observability", "audit"] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
 def run_backtest_stream(
@@ -77,6 +78,7 @@ def run_backtest_stream(
     stream_batch_size: int = ...,
     stream_max_buffer: int = ...,
     stream_error_mode: Literal["continue", "fail_fast"] = ...,
+    stream_mode: Literal["observability", "audit"] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
 def run_warm_start(

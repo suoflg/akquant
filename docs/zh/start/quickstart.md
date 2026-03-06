@@ -231,6 +231,33 @@ kelly_criterion                         -0.086485
 [67 rows x 13 columns]
 ```
 
+## 报告与分析输出
+
+回测完成后，你可以直接生成交互式报告：
+
+```python
+result.report(
+    show=True,
+    filename="report.html",
+    compact_currency=True,
+)
+
+result.report(
+    show=False,
+    filename="report_raw_amount.html",
+    compact_currency=False,
+)
+```
+
+你也可以直接获取结构化分析结果用于二次研究：
+
+```python
+exposure = result.exposure_df()
+attr_by_symbol = result.attribution_df(by="symbol")
+attr_by_tag = result.attribution_df(by="tag")
+capacity = result.capacity_df()
+```
+
 ## 3. 进阶学习
 
 刚才的例子太简单了？想要学习如何编写真正的量化策略（如双均线、MACD 等）？

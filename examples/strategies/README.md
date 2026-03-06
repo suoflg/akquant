@@ -48,6 +48,22 @@
     - 跨标的动量比较与换仓逻辑.
     - `order_target_percent` 的正确使用。
 
+### 5. [05_stock_momentum_rotation_timer.py](./05_stock_momentum_rotation_timer.py) - 定时触发横截面轮动
+- **目标**: 演示在单事件流模型下，用 `on_timer` 实现稳定的横截面轮动。
+- **策略**: 定时调仓动量轮动策略。
+- **核心点**:
+    - 在 `on_start` 注册每日定时器。
+    - 在 `on_timer` 中统一完成跨标的打分与调仓。
+    - 避免依赖“最后一个 symbol”触发时机。
+
+### 6. [06_stock_momentum_rotation_bucket.py](./06_stock_momentum_rotation_bucket.py) - 收齐时间片后横截面轮动
+- **目标**: 演示不使用定时器时，如何在 `on_bar` 中收齐同一 `timestamp` 后再执行一次横截面逻辑。
+- **策略**: 时间片缓存 + 动量轮动策略。
+- **核心点**:
+    - 使用 `timestamp -> set(symbol)` 的缓存桶判断是否收齐。
+    - 收齐后只执行一次跨标的打分与调仓。
+    - 适用于无固定定时触发点的横截面策略。
+
 ## 使用方法
 
 直接运行对应的 Python 脚本即可：

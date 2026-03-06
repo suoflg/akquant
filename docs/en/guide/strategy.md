@@ -121,6 +121,94 @@ def on_timer(self, payload):
         self.log("Running daily check...")
 ```
 
+### 3.4 Recommended Cross-Section Pattern
+
+AKQuant triggers `on_bar` in single-event flow. For cross-sectional tasks such as rotation, ranking, and scoring across symbols, place decision logic in `on_timer`.
+
+Recommended flow:
+
+1. Define the `universe` in `on_start` and register a daily timer.
+2. Compute cross-sectional scores in `on_timer`.
+3. Rebalance in `on_timer` so each decision timestamp runs once.
+
+```python
+class CrossSectionStrategy(Strategy):
+    def __init__(self, lookback=20):
+        self.lookback = lookback
+        self.universe = ["sh600519", "sz000858", "sh601318"]
+        self.warmup_period = lookback + 1
+
+    def on_start(self):
+        self.add_daily_timer("14:55:00", "rebalance")
+
+    def on_timer(self, payload):
+        if payload != "rebalance":
+            return
+        scores = {}
+        for symbol in self.universe:
+            closes = self.get_history(count=self.lookback, symbol=symbol, field="close")
+            if len(closes) < self.lookback:
+                return
+            scores[symbol] = (closes[-1] - closes[0]) / closes[0]
+        best = max(scores, key=scores.get)
+        self.order_target_percent(target_percent=0.95, symbol=best)
+```
+
+Full runnable sample: `examples/strategies/05_stock_momentum_rotation_timer.py`.
+
+### 3.5 Cross-Section Plan B: Execute After Collecting One Timestamp
+
+If your strategy has no fixed rebalance time and `on_timer` is not convenient, collect symbols by timestamp in `on_bar`, then run cross-sectional logic once when the slice is complete.
+
+```python
+from collections import defaultdict
+
+class CrossSectionBucketStrategy(Strategy):
+    def __init__(self, lookback=20):
+        self.lookback = lookback
+        self.universe = ["sh600519", "sz000858", "sh601318"]
+        self.warmup_period = lookback + 1
+        self.pending = defaultdict(set)
+
+    def on_bar(self, bar):
+        self.pending[bar.timestamp].add(bar.symbol)
+        if len(self.pending[bar.timestamp]) < len(self.universe):
+            return
+        self.pending.pop(bar.timestamp, None)
+        scores = {}
+        for symbol in self.universe:
+            closes = self.get_history(count=self.lookback, symbol=symbol, field="close")
+            if len(closes) < self.lookback:
+                return
+            scores[symbol] = (closes[-1] - closes[0]) / closes[0]
+        best = max(scores, key=lambda s: scores[s])
+        self.order_target_percent(target_percent=0.95, symbol=best)
+```
+
+Full runnable sample: `examples/strategies/06_stock_momentum_rotation_bucket.py`.
+
+### 3.6 Decision Matrix (A vs B)
+
+| Dimension | Plan A: Unified `on_timer` | Plan B: Execute after timestamp completion |
+| :--- | :--- | :--- |
+| Trigger | Fixed rebalance time (e.g., 14:55) | Event-driven, when one slice is complete |
+| Robustness | High, independent from symbol arrival order | Medium, needs buffering and missing-symbol handling |
+| Complexity | Low, centralized decision path | Medium, requires `timestamp -> symbols` state |
+| Best for | Daily/timed rebalances, production default | Cross-section without stable rebalance time |
+| Common risk | Timer time not aligned with data frequency | Missing symbols can prevent trigger |
+
+Recommendation: use Plan A by default; use Plan B only when a stable rebalance time cannot be defined.
+
+### 3.7 Cross-Section Pitfall Checklist
+
+*   **Suspensions / missing bars**: Plan B may not trigger if some symbols have no bar at a timestamp; add timeout fallback or minimum-valid-sample execution.
+*   **Universe drift**: If constituents change but your universe list is stale, weights and ranks diverge from target; refresh periodically and track effective date.
+*   **Rebalance time vs execution mode mismatch**: With `execution_mode="next_open"`, close-time signals are filled on next bar; document this in result interpretation.
+*   **Insufficient history windows**: Newly listed or recently resumed symbols may fail window requirements; check `len(closes)` and skip invalid samples.
+*   **Position convergence lag**: Multi-asset sell-then-buy cycles can leave partial allocations in one event; use target-position APIs and converge again on next cycle.
+
+For full pre-live checks, see: [Cross-Section Strategy Playbook Checklist](cross_section_checklist.md).
+
 ## 4. Choosing a Strategy Style {: #style-selection }
 
 AKQuant provides two styles of strategy development interfaces:
@@ -199,7 +287,7 @@ In AKQuant, order status transitions are as follows:
 2.  **Submitted**: Order has been sent to the exchange/simulation matching engine.
 3.  **Accepted**: (Live mode) Exchange confirms receipt of the order.
 4.  **Filled**: Order is fully filled.
-    *   **PartiallyFilled**: Partially filled (currently unified as Filled status code, check `filled_quantity`).
+    *   **PartiallyFilled**: Partially filled (`filled_quantity < quantity`).
 5.  **Cancelled**: Order has been cancelled.
 6.  **Rejected**: Order rejected by risk control or exchange (e.g., insufficient funds, exceeding price limits).
 
@@ -292,11 +380,41 @@ risk_config.active = True
 risk_config.max_order_value = 1_000_000.0  # Max 1 million per order
 risk_config.max_position_size = 5000       # Max 5000 shares per symbol
 risk_config.restricted_list = ["ST_STOCK"] # Blacklist (Symbol)
+risk_config.max_account_drawdown = 0.20    # Reject new orders after 20% drawdown
+risk_config.max_daily_loss = 0.05          # Reject new orders after 5% daily loss
+risk_config.stop_loss_threshold = 0.80     # Reject new orders if equity < 80% baseline
 
 engine.risk_manager.config = risk_config # Apply config
 ```
 
 If an order violates risk rules, functions like `self.buy()` will return `None` or the generated order status will be directly `Rejected`, and the reason will be recorded in the logs.
+
+You can also pass account-level rules directly in `run_backtest`:
+
+```python
+from akquant import run_backtest
+from akquant.config import RiskConfig
+
+result = run_backtest(
+    data=data,
+    strategy=MyStrategy,
+    risk_config=RiskConfig(
+        max_account_drawdown=0.20,
+        max_daily_loss=0.05,
+        stop_loss_threshold=0.80,
+    ),
+)
+```
+
+Suggested account-level presets (starting points):
+
+| Profile | `max_account_drawdown` | `max_daily_loss` | `stop_loss_threshold` |
+| :--- | :--- | :--- | :--- |
+| Conservative | `0.10` | `0.02` | `0.90` |
+| Balanced | `0.20` | `0.05` | `0.80` |
+| Aggressive | `0.30` | `0.08` | `0.70` |
+
+Start from the balanced preset, then tighten or loosen values based on observed volatility and turnover.
 
 ## 6. Using High-Performance Indicators {: #indicatorset }
 

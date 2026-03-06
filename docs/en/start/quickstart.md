@@ -231,6 +231,33 @@ You can view detailed trade metrics via `print(result.trades_df)`.
 [67 rows x 13 columns]
 ```
 
+## Report & Analysis Outputs
+
+After the backtest, you can generate an interactive report directly:
+
+```python
+result.report(
+    show=True,
+    filename="report.html",
+    compact_currency=True,
+)
+
+result.report(
+    show=False,
+    filename="report_raw_amount.html",
+    compact_currency=False,
+)
+```
+
+You can also reuse structured analysis outputs for downstream research:
+
+```python
+exposure = result.exposure_df()
+attr_by_symbol = result.attribution_df(by="symbol")
+attr_by_tag = result.attribution_df(by="tag")
+capacity = result.capacity_df()
+```
+
 ## 3. Streaming Backtest
 
 If you want real-time events during a backtest (progress, equity, orders, trades,
