@@ -242,3 +242,51 @@ kelly_criterion                         -0.086485
 *   如何获取历史数据 (`get_history`)
 *   如何计算技术指标 (MA, RSI)
 *   如何止盈止损
+
+## 4. 流式回测
+
+如果你希望在回测过程中实时接收事件（进度、权益、订单、成交、结束状态），可以使用
+`run_backtest_stream`。
+
+```python
+from akquant import run_backtest_stream
+
+def on_event(event):
+    if event["event_type"] == "finished":
+        payload = event["payload"]
+        print("status:", payload.get("status"))
+        print("callback_error_count:", payload.get("callback_error_count"))
+
+result = run_backtest_stream(
+    data=df,
+    strategy=MyStrategy,
+    symbol="sh600000",
+    on_event=on_event,
+    show_progress=False,
+    stream_progress_interval=10,
+    stream_equity_interval=10,
+    stream_batch_size=32,
+    stream_max_buffer=256,
+    stream_error_mode="continue",
+)
+```
+
+常用流式参数说明：
+
+- `stream_progress_interval`: `progress` 事件采样间隔（正整数）
+- `stream_equity_interval`: `equity` 事件采样间隔（正整数）
+- `stream_batch_size`: 事件批量刷新阈值（正整数）
+- `stream_max_buffer`: 最大缓冲事件数（正整数）
+- `stream_error_mode`: 回调异常策略
+  - `"continue"`：回调报错后继续回测，并在 `finished.payload` 给出错误统计
+  - `"fail_fast"`：回调报错后立即终止并抛出异常
+
+流式事件公共字段：
+
+- `run_id`: 本次流式回测 ID
+- `seq`: 事件序号（单调递增）
+- `ts`: 事件时间戳（纳秒）
+- `event_type`: 事件类型
+- `symbol`: 关联标的（部分事件为空）
+- `level`: 事件级别
+- `payload`: 事件内容

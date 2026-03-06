@@ -6,12 +6,12 @@ use crate::model::{Bar, ExecutionMode, OrderStatus, TradingSession};
 use crate::pipeline::processor::{Processor, ProcessorResult};
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub struct ChannelProcessor;
 
 impl Processor for ChannelProcessor {
-    fn process(&mut self, engine: &mut Engine, _py: Python<'_>, _strategy: &Bound<'_, PyAny>) -> PyResult<ProcessorResult> {
+    fn process(&mut self, engine: &mut Engine, py: Python<'_>, _strategy: &Bound<'_, PyAny>) -> PyResult<ProcessorResult> {
         let mut trades_to_process = Vec::new();
         while let Some(event) = engine.event_manager.try_recv() {
             match event {
@@ -35,9 +35,33 @@ impl Processor for ChannelProcessor {
                         order.reject_reason = err.to_string();
                         order.updated_at = engine.clock.timestamp().unwrap_or(0);
 
+                        let mut risk_payload = HashMap::new();
+                        risk_payload.insert("order_id", order.id.clone());
+                        risk_payload.insert("symbol", order.symbol.clone());
+                        risk_payload.insert("reason", order.reject_reason.clone());
+                        engine.emit_stream_event(
+                            py,
+                            "risk",
+                            Some(order.symbol.as_str()),
+                            "warn",
+                            risk_payload,
+                        );
+
                         // Send ExecutionReport (Rejected)
                         let _ = engine.event_manager.send(Event::ExecutionReport(order, None));
                     } else {
+                        let mut order_payload = HashMap::new();
+                        order_payload.insert("order_id", order.id.clone());
+                        order_payload.insert("status", format!("{:?}", OrderStatus::New));
+                        order_payload.insert("symbol", order.symbol.clone());
+                        engine.emit_stream_event(
+                            py,
+                            "order",
+                            Some(order.symbol.as_str()),
+                            "info",
+                            order_payload,
+                        );
+
                         // Validated -> Send OrderValidated
                         let _ = engine.event_manager.send(Event::OrderValidated(order));
                     }
@@ -51,9 +75,36 @@ impl Processor for ChannelProcessor {
                 Event::ExecutionReport(order, trade) => {
                     // 3. Update Order State
                     engine.state.order_manager.on_execution_report(order);
+                    let updated_order = engine.state.order_manager.orders.last().cloned();
+                    if let Some(order_snapshot) = updated_order {
+                        let mut order_payload = HashMap::new();
+                        order_payload.insert("order_id", order_snapshot.id.clone());
+                        order_payload.insert("status", format!("{:?}", order_snapshot.status));
+                        order_payload.insert("filled_qty", order_snapshot.filled_quantity.to_string());
+                        order_payload.insert("symbol", order_snapshot.symbol.clone());
+                        engine.emit_stream_event(
+                            py,
+                            "order",
+                            Some(order_snapshot.symbol.as_str()),
+                            "info",
+                            order_payload,
+                        );
+                    }
 
                     // 4. Process Trade (if any)
                     if let Some(t) = trade {
+                        let mut trade_payload = HashMap::new();
+                        trade_payload.insert("trade_id", t.id.clone());
+                        trade_payload.insert("order_id", t.order_id.clone());
+                        trade_payload.insert("price", t.price.to_string());
+                        trade_payload.insert("quantity", t.quantity.to_string());
+                        engine.emit_stream_event(
+                            py,
+                            "trade",
+                            Some(t.symbol.as_str()),
+                            "info",
+                            trade_payload,
+                        );
                         trades_to_process.push(t);
                     }
                 }
@@ -164,6 +215,11 @@ impl Processor for DataProcessor {
                     if let Some(pb) = &engine.progress_bar {
                         pb.inc(1);
                     }
+                    let total_events = engine.state.feed.len_hint().unwrap_or(0);
+                    let mut progress_payload = HashMap::new();
+                    progress_payload.insert("processed", engine.bar_count.to_string());
+                    progress_payload.insert("total", total_events.to_string());
+                    engine.emit_stream_event(py, "progress", None, "info", progress_payload);
                 }
                 self.last_timestamp = timestamp;
 
@@ -228,6 +284,37 @@ impl Processor for DataProcessor {
                 }
 
                 engine.current_event = Some(event);
+                if let Some(current) = engine.current_event.clone() {
+                    match current {
+                        Event::Bar(b) => {
+                            let mut payload = HashMap::new();
+                            payload.insert("timestamp", b.timestamp.to_string());
+                            payload.insert("close", b.close.to_string());
+                            payload.insert("volume", b.volume.to_string());
+                            engine.emit_stream_event(
+                                py,
+                                "bar",
+                                Some(b.symbol.as_str()),
+                                "info",
+                                payload,
+                            );
+                        }
+                        Event::Tick(t) => {
+                            let mut payload = HashMap::new();
+                            payload.insert("timestamp", t.timestamp.to_string());
+                            payload.insert("price", t.price.to_string());
+                            payload.insert("volume", t.volume.to_string());
+                            engine.emit_stream_event(
+                                py,
+                                "tick",
+                                Some(t.symbol.as_str()),
+                                "info",
+                                payload,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
                 Ok(ProcessorResult::Next)
             }
         }
@@ -327,11 +414,16 @@ impl Processor for CleanupProcessor {
 pub struct StatisticsProcessor;
 
 impl Processor for StatisticsProcessor {
-    fn process(&mut self, engine: &mut Engine, _py: Python<'_>, _strategy: &Bound<'_, PyAny>) -> PyResult<ProcessorResult> {
+    fn process(&mut self, engine: &mut Engine, py: Python<'_>, _strategy: &Bound<'_, PyAny>) -> PyResult<ProcessorResult> {
         if let Some(Event::Bar(_) | Event::Tick(_)) = engine.current_event.clone()
             && let Some(timestamp) = engine.clock.timestamp() {
                 let equity = engine.state.portfolio.calculate_equity(&engine.last_prices, &engine.instruments);
                 engine.statistics_manager.update(timestamp, equity, engine.state.portfolio.cash);
+                let mut payload = HashMap::new();
+                payload.insert("timestamp", timestamp.to_string());
+                payload.insert("equity", equity.to_string());
+                payload.insert("cash", engine.state.portfolio.cash.to_string());
+                engine.emit_stream_event(py, "equity", None, "info", payload);
             }
         Ok(ProcessorResult::Next)
     }

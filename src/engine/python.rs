@@ -71,6 +71,31 @@ impl Engine {
         self.risk_manager.config = config;
     }
 
+    fn set_stream_callback(&mut self, callback: Py<PyAny>) {
+        self.set_stream_callback_internal(Some(callback));
+    }
+
+    fn clear_stream_callback(&mut self) {
+        self.set_stream_callback_internal(None);
+    }
+
+    fn set_stream_options(
+        &mut self,
+        progress_interval: usize,
+        equity_interval: usize,
+        batch_size: usize,
+        max_buffer: usize,
+        error_mode: &str,
+    ) {
+        self.set_stream_options_internal(
+            progress_interval,
+            equity_interval,
+            batch_size,
+            max_buffer,
+            error_mode,
+        );
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例
@@ -101,6 +126,18 @@ impl Engine {
             progress_bar: None,
             strategy_context: None,
             snapshot_time: 0,
+            stream_callback: None,
+            stream_run_id: None,
+            stream_seq: 0,
+            stream_progress_interval: 1,
+            stream_equity_interval: 1,
+            stream_batch_size: 1,
+            stream_max_buffer: 1024,
+            stream_buffer: Vec::new(),
+            stream_fail_fast_on_callback_error: false,
+            stream_callback_error_count: 0,
+            stream_callback_last_error: None,
+            stream_fatal_error: None,
         }
     }
 
@@ -435,6 +472,7 @@ impl Engine {
             None
         };
         self.progress_bar = pb;
+        self.start_stream_run(py, Some(total_events));
 
         // Record initial equity
         if self.state.feed.peek_timestamp().is_some() {
@@ -449,6 +487,10 @@ impl Engine {
 
         // Run Pipeline
         if let Err(e) = pipeline.run(self, py, strategy) {
+            let mut payload = HashMap::new();
+            payload.insert("message", e.to_string());
+            self.emit_stream_event(py, "error", None, "error", payload);
+            self.finish_stream_run(py, "failed", Some(&e.to_string()));
             // Clean up pb if error
             self.progress_bar = None;
             return Err(e);
@@ -474,6 +516,7 @@ impl Engine {
         }
 
         let count = self.bar_count;
+        self.finish_stream_run(py, "completed", None);
         self.progress_bar = None;
 
         Ok(format!(

@@ -75,6 +75,28 @@ tests/golden/
     ```
 3.  **提交变更**: 将更新后的 `tests/golden/baselines/` 文件随你的代码一起提交。
 
+### 流式回测回归清单
+
+在修改 `run_backtest_stream`、事件协议或引擎流式通道后，建议至少执行以下检查：
+
+1.  **核心语义一致性**: 流式与非流式结果保持一致（权益长度、成交数量、关键指标）。
+2.  **事件协议正确性**: 事件序列从 `started` 开始，以 `finished` 结束，`seq` 单调递增。
+3.  **采样与背压行为**: 高频场景下 `progress`/`equity` 事件量受采样参数控制，关键事件不丢失。
+4.  **回调异常策略**:
+    *   `stream_error_mode="continue"`: 回调报错不终止回测，结束事件包含 `callback_error_count`。
+    *   `stream_error_mode="fail_fast"`: 回调首次报错立即失败并抛异常。
+5.  **参数校验**: `stream_progress_interval`、`stream_equity_interval`、`stream_batch_size`、`stream_max_buffer` 必须为正整数，`stream_error_mode` 取值合法。
+
+推荐命令：
+
+```bash
+# 流式与回测引擎相关单元测试
+pytest -q tests/test_engine.py
+
+# 黄金测试（含流式与非流式一致性套件）
+pytest -q tests/golden/test_golden.py
+```
+
 ---
 
 ## ➕ 如何添加新测试？

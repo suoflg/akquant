@@ -148,6 +148,41 @@ max_leverage                              0.01458
 min_margin_level                        68.587671
 ```
 
+## 流式回测 (Streaming)
+
+如果你希望在回测执行过程中实时消费事件，可使用 `run_backtest_stream`：
+
+```python
+def on_event(event):
+    if event["event_type"] == "finished":
+        payload = event["payload"]
+        print("status:", payload.get("status"))
+        print("callback_error_count:", payload.get("callback_error_count"))
+
+result = aq.run_backtest_stream(
+    data=df,
+    strategy=MyStrategy,
+    symbol="sh600000",
+    on_event=on_event,
+    show_progress=False,
+    stream_progress_interval=10,
+    stream_equity_interval=10,
+    stream_batch_size=32,
+    stream_max_buffer=256,
+    stream_error_mode="continue",
+)
+```
+
+`run_backtest` 也支持可选 `on_event`。如果不传，框架会使用内部 no-op 回调，
+保持与传统阻塞调用一致的返回语义；如果传入 `on_event`，即可在保持
+`run_backtest(...)` 调用方式不变的同时接入实时事件。
+
+关键参数：
+
+*   `stream_progress_interval` / `stream_equity_interval`: 进度与权益事件采样间隔
+*   `stream_batch_size` / `stream_max_buffer`: 缓冲与批量刷新控制
+*   `stream_error_mode`: 回调异常策略，支持 `"continue"` 与 `"fail_fast"`
+
 ## 可视化 (Visualization)
 
 AKQuant 内置了基于 **Plotly** 的强大可视化模块，仅需一行代码即可生成包含权益曲线、回撤分析、月度热力图等详细指标的交互式 HTML 报告。

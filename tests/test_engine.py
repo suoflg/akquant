@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import akquant
 import numpy as np
@@ -198,3 +199,300 @@ def test_backtest_performance_baseline() -> None:
     throughput = len(data) / duration if duration > 0 else 0.0
     assert throughput >= 200.0
     assert result.metrics.initial_market_value == pytest.approx(100000.0, rel=1e-9)
+
+
+def test_run_backtest_stream_emits_ordered_events() -> None:
+    """Stream API should emit ordered lifecycle events."""
+    data = _build_benchmark_data(n=20, symbol="STREAM")
+    events: list[akquant.BacktestStreamEvent] = []
+
+    def on_event(event: akquant.BacktestStreamEvent) -> None:
+        events.append(event)
+
+    result = akquant.run_backtest_stream(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="STREAM",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+        on_event=on_event,
+        stream_progress_interval=5,
+        stream_equity_interval=7,
+        stream_batch_size=8,
+        stream_max_buffer=64,
+    )
+
+    assert events
+    assert events[0]["event_type"] == "started"
+    assert events[-1]["event_type"] == "finished"
+    seq_values = [event["seq"] for event in events]
+    assert seq_values == sorted(seq_values)
+    progress_count = sum(1 for event in events if event.get("event_type") == "progress")
+    equity_count = sum(1 for event in events if event.get("event_type") == "equity")
+    assert 0 < progress_count < 10
+    assert 0 < equity_count < 10
+    assert result.metrics.initial_market_value == pytest.approx(100000.0, rel=1e-9)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"stream_progress_interval": 0},
+        {"stream_equity_interval": 0},
+        {"stream_batch_size": 0},
+        {"stream_max_buffer": 0},
+    ],
+)
+def test_run_backtest_stream_rejects_non_positive_stream_options(
+    kwargs: dict[str, Any],
+) -> None:
+    """Stream API should reject non-positive option values."""
+    data = _build_benchmark_data(n=5, symbol="STREAM_OPT")
+
+    with pytest.raises(ValueError):
+        akquant.run_backtest_stream(
+            data=data,
+            strategy=NoopStrategy,
+            symbol="STREAM_OPT",
+            show_progress=False,
+            on_event=lambda _event: None,
+            **kwargs,
+        )
+
+
+def test_run_backtest_stream_matches_run_backtest_result() -> None:
+    """Stream run should keep the same backtest result semantics."""
+    data = _build_benchmark_data(n=120, symbol="CONSIST")
+    common_args: dict[str, Any] = dict(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="CONSIST",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+    )
+
+    normal = akquant.run_backtest(**common_args)
+    stream_events: list[akquant.BacktestStreamEvent] = []
+    stream = akquant.run_backtest_stream(
+        **common_args,
+        on_event=stream_events.append,
+        stream_progress_interval=8,
+        stream_equity_interval=8,
+        stream_batch_size=16,
+        stream_max_buffer=128,
+    )
+
+    assert len(stream.trades) == len(normal.trades)
+    assert len(stream.equity_curve) == len(normal.equity_curve)
+    assert stream.metrics.total_return == pytest.approx(
+        normal.metrics.total_return, rel=1e-9
+    )
+    assert stream.metrics.max_drawdown == pytest.approx(
+        normal.metrics.max_drawdown, rel=1e-9
+    )
+    assert stream_events[0]["event_type"] == "started"
+    assert stream_events[-1]["event_type"] == "finished"
+
+
+def test_run_backtest_without_on_event_keeps_legacy_semantics() -> None:
+    """run_backtest without on_event should keep non-stream semantics."""
+    data = _build_benchmark_data(n=80, symbol="NO_EVENT")
+    result = akquant.run_backtest(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="NO_EVENT",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+    )
+    assert result.metrics.initial_market_value == pytest.approx(100000.0, rel=1e-9)
+    assert len(result.equity_curve) == len(data)
+
+
+def test_run_backtest_with_on_event_matches_stream_entry() -> None:
+    """run_backtest with on_event should match run_backtest_stream semantics."""
+    data = _build_benchmark_data(n=120, symbol="EVENT_EQ")
+    common_args: dict[str, Any] = dict(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="EVENT_EQ",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+    )
+    direct_events: list[akquant.BacktestStreamEvent] = []
+    via_run_backtest = akquant.run_backtest(
+        **common_args,
+        on_event=direct_events.append,
+        stream_progress_interval=8,
+        stream_equity_interval=8,
+        stream_batch_size=16,
+        stream_max_buffer=128,
+    )
+    stream_events: list[akquant.BacktestStreamEvent] = []
+    via_stream_entry = akquant.run_backtest_stream(
+        **common_args,
+        on_event=stream_events.append,
+        stream_progress_interval=8,
+        stream_equity_interval=8,
+        stream_batch_size=16,
+        stream_max_buffer=128,
+    )
+
+    assert direct_events
+    assert direct_events[0]["event_type"] == "started"
+    assert direct_events[-1]["event_type"] == "finished"
+    direct_seq_values = [event["seq"] for event in direct_events]
+    assert direct_seq_values == sorted(direct_seq_values)
+    assert len(via_run_backtest.trades) == len(via_stream_entry.trades)
+    assert len(via_run_backtest.equity_curve) == len(via_stream_entry.equity_curve)
+    assert via_run_backtest.metrics.total_return == pytest.approx(
+        via_stream_entry.metrics.total_return, rel=1e-9
+    )
+    assert via_run_backtest.metrics.max_drawdown == pytest.approx(
+        via_stream_entry.metrics.max_drawdown, rel=1e-9
+    )
+
+
+def test_run_backtest_accepts_legacy_blocking_engine_mode() -> None:
+    """Internal legacy_blocking mode should remain available as rollback switch."""
+    data = _build_benchmark_data(n=60, symbol="LEGACY_MODE")
+    result = akquant.run_backtest(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="LEGACY_MODE",
+        show_progress=False,
+        _engine_mode="legacy_blocking",
+    )
+    assert result.metrics.initial_market_value == pytest.approx(1000000.0, rel=1e-9)
+
+
+def test_run_backtest_rejects_invalid_engine_mode() -> None:
+    """Invalid internal engine mode should be rejected."""
+    data = _build_benchmark_data(n=10, symbol="BAD_MODE")
+    with pytest.raises(ValueError):
+        akquant.run_backtest(
+            data=data,
+            strategy=NoopStrategy,
+            symbol="BAD_MODE",
+            show_progress=False,
+            _engine_mode="not_valid",
+        )
+
+
+def test_run_backtest_stream_high_frequency_keeps_critical_events() -> None:
+    """High-frequency stream should keep critical events and sampled updates."""
+    data = _build_benchmark_data(n=2000, symbol="HF")
+    events: list[akquant.BacktestStreamEvent] = []
+    akquant.run_backtest_stream(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="HF",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+        on_event=events.append,
+        stream_progress_interval=50,
+        stream_equity_interval=40,
+        stream_batch_size=64,
+        stream_max_buffer=256,
+    )
+
+    assert events
+    assert events[0]["event_type"] == "started"
+    assert events[-1]["event_type"] == "finished"
+    assert sum(1 for e in events if e.get("event_type") == "started") == 1
+    assert sum(1 for e in events if e.get("event_type") == "finished") == 1
+    progress_count = sum(1 for e in events if e.get("event_type") == "progress")
+    equity_count = sum(1 for e in events if e.get("event_type") == "equity")
+    assert progress_count < 80
+    assert equity_count < 100
+    seq_values = [event["seq"] for event in events]
+    assert seq_values == sorted(seq_values)
+
+
+def test_run_backtest_stream_callback_error_continue_mode() -> None:
+    """Continue mode should survive callback exceptions."""
+    data = _build_benchmark_data(n=40, symbol="CALLBACK_CONT")
+    events: list[akquant.BacktestStreamEvent] = []
+    counter = {"n": 0}
+
+    def on_event(event: akquant.BacktestStreamEvent) -> None:
+        counter["n"] += 1
+        if counter["n"] <= 3:
+            raise RuntimeError("callback boom")
+        events.append(event)
+
+    result = akquant.run_backtest_stream(
+        data=data,
+        strategy=NoopStrategy,
+        symbol="CALLBACK_CONT",
+        show_progress=False,
+        on_event=on_event,
+        stream_error_mode="continue",
+    )
+
+    assert events
+    assert events[-1]["event_type"] == "finished"
+    assert "callback_error_count" in events[-1]["payload"]
+    assert int(str(events[-1]["payload"]["callback_error_count"])) >= 3
+    assert result.metrics.initial_market_value == pytest.approx(1000000.0, rel=1e-9)
+
+
+def test_run_backtest_stream_callback_error_fail_fast_mode() -> None:
+    """Fail-fast mode should raise once callback throws."""
+    data = _build_benchmark_data(n=40, symbol="CALLBACK_FAIL")
+
+    def on_event(_event: akquant.BacktestStreamEvent) -> None:
+        raise RuntimeError("callback boom")
+
+    with pytest.raises(RuntimeError, match="stream callback failed in fail_fast mode"):
+        akquant.run_backtest_stream(
+            data=data,
+            strategy=NoopStrategy,
+            symbol="CALLBACK_FAIL",
+            show_progress=False,
+            on_event=on_event,
+            stream_error_mode="fail_fast",
+        )
+
+
+def test_run_backtest_stream_rejects_invalid_error_mode() -> None:
+    """Invalid stream error mode should be rejected."""
+    data = _build_benchmark_data(n=5, symbol="CALLBACK_MODE")
+    with pytest.raises(ValueError):
+        akquant.run_backtest_stream(
+            data=data,
+            strategy=NoopStrategy,
+            symbol="CALLBACK_MODE",
+            show_progress=False,
+            on_event=lambda _event: None,
+            stream_error_mode=cast(Any, "bad_mode"),
+        )

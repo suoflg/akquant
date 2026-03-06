@@ -40,10 +40,16 @@ class MyStrategy(Strategy):
 
 
 # 运行回测
+events: list[aq.BacktestStreamEvent] = []
 result = aq.run_backtest(
-    data=df, strategy=MyStrategy, initial_cash=100000.0, symbol="sh600000"
+    data=df,
+    strategy=MyStrategy,
+    initial_cash=100000.0,
+    symbol="sh600000",
+    on_event=events.append,
 )
 
 # 打印回测结果
 print("\n=== Backtest Result ===")
 print(result)
+print(f"stream_events={len(events)}")

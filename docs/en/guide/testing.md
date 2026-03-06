@@ -75,6 +75,35 @@ If you modify core algorithms (e.g., improved matching logic or fee calculation)
     ```
 3.  **Submit Changes**: Commit the updated `tests/golden/baselines/` files along with your code.
 
+### Streaming Regression Checklist
+
+After changes to `run_backtest_stream`, event protocol, or streaming pipeline,
+run this minimum checklist:
+
+1.  **Semantic parity**: Stream and non-stream runs keep identical semantics
+    (equity length, trade count, key metrics).
+2.  **Event protocol correctness**: Event sequence starts with `started`, ends with
+    `finished`, and `seq` is monotonic.
+3.  **Sampling and backpressure behavior**: Under high-frequency data, sampled
+    `progress`/`equity` volumes are controlled while critical events are preserved.
+4.  **Callback exception policy**:
+    *   `stream_error_mode="continue"`: callback exceptions do not stop backtest,
+        and `finished` payload includes `callback_error_count`.
+    *   `stream_error_mode="fail_fast"`: first callback exception fails immediately.
+5.  **Parameter validation**: `stream_progress_interval`, `stream_equity_interval`,
+    `stream_batch_size`, and `stream_max_buffer` must be positive integers, and
+    `stream_error_mode` must be valid.
+
+Recommended commands:
+
+```bash
+# Streaming and engine-related unit tests
+pytest -q tests/test_engine.py
+
+# Golden suite (includes stream/non-stream consistency checks)
+pytest -q tests/golden/test_golden.py
+```
+
 ---
 
 ## ➕ How to Add New Tests?

@@ -89,6 +89,8 @@ backtest_config = BacktestConfig(
     strategy_config=strategy_config,
 )
 
+events: list[aq.BacktestStreamEvent] = []
+
 result = aq.run_backtest(
     strategy=MyStrategy,
     data=df,
@@ -103,12 +105,14 @@ result = aq.run_backtest(
     start_time="20250101",
     end_time="20250105",
     symbol=["600000", "600004", "600006"],
+    on_event=events.append,
 )
 
 pd.set_option("display.max_columns", None)
 pd.set_option("display.max_rows", None)
 print(result)
 print(result.orders_df)
+print(f"stream_events={len(events)}")
 
 # Verify metrics manually in Python
 equity_curve = result.equity_curve

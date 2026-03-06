@@ -35,6 +35,7 @@ def run_backtest(
     instruments_config: Optional[Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]] = None,
     custom_matchers: Optional[Dict[AssetType, Any]] = None,
     risk_config: Optional[Union[Dict[str, Any], RiskConfig]] = None,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -57,6 +58,72 @@ def run_backtest(
 *   `instruments_config`: Instrument configuration. Used to set parameters for non-stock assets like futures/options (e.g., multiplier, margin ratio).
     *   Accepts `List[InstrumentConfig]` or `{symbol: InstrumentConfig}`.
 *   `risk_config`: Risk configuration. Supports dict (e.g., `{"max_position_pct": 0.1}`) or `RiskConfig` object. Overrides fields in `config.strategy_config.risk` if both are provided.
+*   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
+
+**Compatibility & Migration Notes:**
+
+*   Prefer migrating realtime UI/logging/alerting to `run_backtest(..., on_event=...)`.
+*   `run_backtest_stream` remains available to keep explicit “stream callback required” semantics.
+*   For staged rollback, internal parameter `_engine_mode="legacy_blocking"` is available for compatibility verification and should not be a long-term business dependency.
+*   Phase-4 observation window and go/no-go gates are documented in [Unified Stream Core Checklist](../advanced/stream_observability.md).
+
+### `akquant.run_backtest_stream`
+
+Streaming backtest entry. It preserves the same return semantics as `run_backtest`,
+while emitting runtime events via callback.
+
+```python
+def run_backtest_stream(
+    data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
+    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
+    stream_progress_interval: int = 1,
+    stream_equity_interval: int = 1,
+    stream_batch_size: int = 1,
+    stream_max_buffer: int = 1024,
+    stream_error_mode: Literal["continue", "fail_fast"] = "continue",
+    **kwargs: Any,
+) -> BacktestResult
+```
+
+**Key Parameters:**
+
+*   `on_event`: Stream callback receiving `BacktestStreamEvent` (required).
+*   `stream_progress_interval`: Sampling interval for `progress` events (positive int).
+*   `stream_equity_interval`: Sampling interval for `equity` events (positive int).
+*   `stream_batch_size`: Flush threshold for buffered events (positive int).
+*   `stream_max_buffer`: Maximum buffered events (positive int).
+*   `stream_error_mode`: Callback exception handling policy.
+    *   `"continue"`: Continue backtest on callback errors and report summary in
+        final `finished` event.
+    *   `"fail_fast"`: Stop immediately and raise once callback throws.
+
+**Event Schema (`BacktestStreamEvent`):**
+
+*   `run_id`: Stream run id.
+*   `seq`: Monotonic event sequence.
+*   `ts`: Event timestamp in nanoseconds.
+*   `event_type`: Event type.
+*   `symbol`: Related symbol (nullable for some events).
+*   `level`: Event level (e.g., `info`, `warn`, `error`).
+*   `payload`: Event payload as string key-value map.
+
+**Common `event_type` values:**
+
+*   Lifecycle: `started`, `finished`
+*   Sampled updates: `progress`, `equity`
+*   Trading: `order`, `trade`, `risk`
+*   Runtime failure: `error`
+*   Market data: `tick`
+
+**Common `finished.payload` fields:**
+
+*   `status`: `completed` or `failed`
+*   `processed_events`: Number of processed events
+*   `total_trades`: Number of trades
+*   `callback_error_count`: Total callback errors
+*   `last_callback_error`: Latest callback error message (when present)
+*   `reason`: Failure reason (when present)
 
 ### `akquant.BacktestConfig`
 

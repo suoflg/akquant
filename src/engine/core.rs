@@ -1,11 +1,14 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
 use indicatif::ProgressBar;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, RwLock};
+use uuid::Uuid;
 
 // use crate::analysis::{BacktestResult, PositionSnapshot};
 use crate::clock::Clock;
@@ -65,10 +68,233 @@ pub struct Engine {
     pub(crate) progress_bar: Option<ProgressBar>,
     pub(crate) strategy_context: Option<Py<StrategyContext>>,
     pub(crate) snapshot_time: i64,
+    pub(crate) stream_callback: Option<Py<PyAny>>,
+    pub(crate) stream_run_id: Option<String>,
+    pub(crate) stream_seq: u64,
+    pub(crate) stream_progress_interval: usize,
+    pub(crate) stream_equity_interval: usize,
+    pub(crate) stream_batch_size: usize,
+    pub(crate) stream_max_buffer: usize,
+    pub(crate) stream_buffer: Vec<PendingStreamEvent>,
+    pub(crate) stream_fail_fast_on_callback_error: bool,
+    pub(crate) stream_callback_error_count: u64,
+    pub(crate) stream_callback_last_error: Option<String>,
+    pub(crate) stream_fatal_error: Option<String>,
+}
+
+pub(crate) struct PendingStreamEvent {
+    pub(crate) event_type: String,
+    pub(crate) symbol: Option<String>,
+    pub(crate) level: String,
+    pub(crate) payload: Vec<(String, String)>,
 }
 
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
+    pub(crate) fn set_stream_callback_internal(&mut self, callback: Option<Py<PyAny>>) {
+        self.stream_callback = callback;
+        self.stream_run_id = None;
+        self.stream_seq = 0;
+        self.stream_buffer.clear();
+        self.stream_callback_error_count = 0;
+        self.stream_callback_last_error = None;
+        self.stream_fatal_error = None;
+    }
+
+    pub(crate) fn set_stream_options_internal(
+        &mut self,
+        progress_interval: usize,
+        equity_interval: usize,
+        batch_size: usize,
+        max_buffer: usize,
+        error_mode: &str,
+    ) {
+        self.stream_progress_interval = progress_interval.max(1);
+        self.stream_equity_interval = equity_interval.max(1);
+        self.stream_batch_size = batch_size.max(1);
+        self.stream_max_buffer = max_buffer.max(self.stream_batch_size);
+        self.stream_fail_fast_on_callback_error = error_mode == "fail_fast";
+    }
+
+    pub(crate) fn start_stream_run(
+        &mut self,
+        py: Python<'_>,
+        total_events: Option<usize>,
+    ) {
+        if self.stream_callback.is_none() {
+            self.stream_run_id = None;
+            self.stream_seq = 0;
+            self.stream_buffer.clear();
+            self.stream_callback_error_count = 0;
+            self.stream_callback_last_error = None;
+            self.stream_fatal_error = None;
+            return;
+        }
+        self.stream_seq = 0;
+        self.stream_run_id = Some(Uuid::new_v4().to_string());
+        self.stream_callback_error_count = 0;
+        self.stream_callback_last_error = None;
+        self.stream_fatal_error = None;
+
+        let mut payload = HashMap::new();
+        payload.insert("total_events", total_events.unwrap_or(0).to_string());
+        payload.insert("execution_mode", format!("{:?}", self.execution_mode));
+        self.emit_stream_event(py, "started", None, "info", payload);
+    }
+
+    pub(crate) fn emit_stream_event(
+        &mut self,
+        py: Python<'_>,
+        event_type: &str,
+        symbol: Option<&str>,
+        level: &str,
+        payload: HashMap<&str, String>,
+    ) {
+        let (Some(_), Some(_)) = (&self.stream_callback, &self.stream_run_id) else {
+            return;
+        };
+
+        if event_type == "progress"
+            && self.bar_count % self.stream_progress_interval != 0
+        {
+            return;
+        }
+        if event_type == "equity"
+            && self.bar_count % self.stream_equity_interval != 0
+        {
+            return;
+        }
+
+        let is_critical = matches!(
+            event_type,
+            "started" | "order" | "trade" | "risk" | "error" | "finished"
+        );
+        if self.stream_buffer.len() >= self.stream_max_buffer {
+            if is_critical {
+                self.flush_stream_events(py);
+            } else {
+                return;
+            }
+        }
+
+        let mut payload_vec = Vec::new();
+        for (k, v) in payload {
+            payload_vec.push((k.to_string(), v));
+        }
+        self.stream_buffer.push(PendingStreamEvent {
+            event_type: event_type.to_string(),
+            symbol: symbol.map(str::to_string),
+            level: level.to_string(),
+            payload: payload_vec,
+        });
+
+        if is_critical || self.stream_buffer.len() >= self.stream_batch_size {
+            self.flush_stream_events(py);
+        }
+    }
+
+    pub(crate) fn flush_stream_events(&mut self, py: Python<'_>) {
+        let (Some(callback_ref), Some(run_id_ref)) = (&self.stream_callback, &self.stream_run_id) else {
+            self.stream_buffer.clear();
+            return;
+        };
+        let callback = callback_ref.clone_ref(py);
+        let run_id = run_id_ref.clone();
+        if self.stream_buffer.is_empty() {
+            return;
+        }
+
+        for pending in self.stream_buffer.drain(..) {
+            self.stream_seq = self.stream_seq.saturating_add(1);
+            let event_dict = PyDict::new(py);
+            if event_dict.set_item("run_id", run_id.as_str()).is_err()
+                || event_dict.set_item("seq", self.stream_seq).is_err()
+                || event_dict
+                    .set_item("ts", self.clock.timestamp().unwrap_or(0))
+                    .is_err()
+                || event_dict
+                    .set_item("event_type", pending.event_type.as_str())
+                    .is_err()
+                || event_dict.set_item("symbol", pending.symbol).is_err()
+                || event_dict.set_item("level", pending.level.as_str()).is_err()
+            {
+                continue;
+            }
+
+            let payload_dict = PyDict::new(py);
+            for (k, v) in pending.payload {
+                if payload_dict.set_item(k, v).is_err() {
+                    continue;
+                }
+            }
+            if event_dict.set_item("payload", payload_dict).is_err() {
+                continue;
+            }
+            if let Err(err) = callback.bind(py).call1((event_dict,)) {
+                self.stream_callback_error_count =
+                    self.stream_callback_error_count.saturating_add(1);
+                let message = err.to_string();
+                self.stream_callback_last_error = Some(message.clone());
+                if self.stream_fail_fast_on_callback_error {
+                    self.stream_fatal_error = Some(format!(
+                        "stream callback failed in fail_fast mode: {}",
+                        message
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn finish_stream_run(
+        &mut self,
+        py: Python<'_>,
+        status: &str,
+        reason: Option<&str>,
+    ) {
+        if self.stream_callback.is_none() {
+            self.stream_run_id = None;
+            self.stream_seq = 0;
+            self.stream_buffer.clear();
+            self.stream_callback_error_count = 0;
+            self.stream_callback_last_error = None;
+            self.stream_fatal_error = None;
+            return;
+        }
+
+        let mut payload = HashMap::new();
+        payload.insert("status", status.to_string());
+        payload.insert(
+            "processed_events",
+            self.bar_count.to_string(),
+        );
+        payload.insert(
+            "total_trades",
+            self.state.order_manager.trades.len().to_string(),
+        );
+        payload.insert(
+            "callback_error_count",
+            self.stream_callback_error_count.to_string(),
+        );
+        if let Some(message) = reason {
+            payload.insert("reason", message.to_string());
+        }
+        if let Some(message) = &self.stream_callback_last_error {
+            payload.insert("last_callback_error", message.clone());
+        }
+        self.emit_stream_event(py, "finished", None, "info", payload);
+        self.flush_stream_events(py);
+        self.stream_run_id = None;
+        self.stream_buffer.clear();
+    }
+
+    pub(crate) fn raise_stream_fatal_error_if_any(&mut self) -> PyResult<()> {
+        if let Some(message) = self.stream_fatal_error.take() {
+            return Err(PyRuntimeError::new_err(message));
+        }
+        Ok(())
+    }
+
     pub(crate) fn create_context(
         &self,
         active_orders: Arc<Vec<Order>>,
