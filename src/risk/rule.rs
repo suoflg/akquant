@@ -14,6 +14,7 @@ pub struct RiskCheckContext<'a> {
     pub instruments: &'a HashMap<String, Instrument>,
     pub active_orders: &'a [Order],
     pub current_prices: &'a HashMap<String, Decimal>,
+    pub current_time: i64,
     pub config: &'a RiskConfig,
 }
 

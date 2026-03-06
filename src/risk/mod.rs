@@ -15,12 +15,14 @@ mod tests {
     use super::*;
     use crate::model::instrument::{FuturesInstrument, InstrumentEnum, StockInstrument};
     use crate::model::{
-        AssetType, Instrument, Order, OrderSide, OrderStatus, OrderType, TimeInForce,
+        AssetType, ExecutionMode, Instrument, Order, OrderSide, OrderStatus, OrderType,
+        TimeInForce, TradingSession,
     };
     use crate::portfolio::Portfolio;
     use rust_decimal::prelude::*;
     use rust_decimal::Decimal;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     fn create_test_order(symbol: &str, quantity: Decimal, price: Option<Decimal>) -> Order {
         Order {
@@ -110,5 +112,192 @@ mod tests {
         );
         assert!(result.is_some());
         assert!(result.unwrap().contains("restricted"));
+    }
+
+    #[test]
+    fn test_max_drawdown_rule_blocks_orders_after_breach() {
+        let mut manager = RiskManager::default();
+        manager.add_max_drawdown_rule(0.10);
+        manager.config.check_cash = false;
+
+        let mut positions = HashMap::new();
+        positions.insert("AAPL".to_string(), Decimal::from(100));
+
+        let portfolio = Portfolio {
+            cash: Decimal::from(0),
+            positions: Arc::new(positions.clone()),
+            available_positions: Arc::new(positions),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "AAPL".to_string(),
+            create_test_instrument("AAPL", AssetType::Stock),
+        );
+        let order = create_test_order("AAPL", Decimal::from(10), Some(Decimal::from(100)));
+        let market_model = crate::market::SimpleMarket::from_config(
+            crate::market::SimpleMarketConfig::default(),
+        );
+
+        let mut prices_high = HashMap::new();
+        prices_high.insert("AAPL".to_string(), Decimal::from(100));
+        let ctx_high = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_high,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 1,
+            current_time: 1_700_000_000_000_000_000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        assert!(manager.check_internal(&order, &ctx_high).is_ok());
+
+        let mut prices_low = HashMap::new();
+        prices_low.insert("AAPL".to_string(), Decimal::from(80));
+        let ctx_low = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_low,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 2,
+            current_time: 1_700_000_100_000_000_000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        let err = manager.check_internal(&order, &ctx_low).unwrap_err().to_string();
+        assert!(err.contains("Max drawdown"));
+    }
+
+    #[test]
+    fn test_max_daily_loss_rule_resets_on_new_day() {
+        let mut manager = RiskManager::default();
+        manager.add_max_daily_loss_rule(0.05);
+        manager.config.check_cash = false;
+
+        let mut positions = HashMap::new();
+        positions.insert("AAPL".to_string(), Decimal::from(100));
+
+        let portfolio = Portfolio {
+            cash: Decimal::from(0),
+            positions: Arc::new(positions.clone()),
+            available_positions: Arc::new(positions),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "AAPL".to_string(),
+            create_test_instrument("AAPL", AssetType::Stock),
+        );
+        let order = create_test_order("AAPL", Decimal::from(10), Some(Decimal::from(100)));
+        let market_model = crate::market::SimpleMarket::from_config(
+            crate::market::SimpleMarketConfig::default(),
+        );
+
+        let day1_open = 1_700_000_000_000_000_000;
+        let mut prices_day1_start = HashMap::new();
+        prices_day1_start.insert("AAPL".to_string(), Decimal::from(100));
+        let ctx_day1_start = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_day1_start,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 1,
+            current_time: day1_open,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        assert!(manager.check_internal(&order, &ctx_day1_start).is_ok());
+
+        let mut prices_day1_drop = HashMap::new();
+        prices_day1_drop.insert("AAPL".to_string(), Decimal::from(94));
+        let ctx_day1_drop = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_day1_drop,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 2,
+            current_time: day1_open + 10_000_000_000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        let err = manager
+            .check_internal(&order, &ctx_day1_drop)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Daily loss"));
+
+        let mut prices_day2_start = HashMap::new();
+        prices_day2_start.insert("AAPL".to_string(), Decimal::from(100));
+        let ctx_day2_start = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_day2_start,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 3,
+            current_time: day1_open + 86_400_000_000_000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        assert!(manager.check_internal(&order, &ctx_day2_start).is_ok());
+    }
+
+    #[test]
+    fn test_stop_loss_rule_blocks_below_threshold() {
+        let mut manager = RiskManager::default();
+        manager.add_stop_loss_rule(0.90);
+        manager.config.check_cash = false;
+
+        let mut positions = HashMap::new();
+        positions.insert("AAPL".to_string(), Decimal::from(100));
+
+        let portfolio = Portfolio {
+            cash: Decimal::from(0),
+            positions: Arc::new(positions.clone()),
+            available_positions: Arc::new(positions),
+        };
+        let mut instruments = HashMap::new();
+        instruments.insert(
+            "AAPL".to_string(),
+            create_test_instrument("AAPL", AssetType::Stock),
+        );
+        let order = create_test_order("AAPL", Decimal::from(10), Some(Decimal::from(100)));
+        let market_model = crate::market::SimpleMarket::from_config(
+            crate::market::SimpleMarketConfig::default(),
+        );
+
+        let mut prices_start = HashMap::new();
+        prices_start.insert("AAPL".to_string(), Decimal::from(100));
+        let ctx_start = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_start,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 1,
+            current_time: 1_700_000_000_000_000_000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        assert!(manager.check_internal(&order, &ctx_start).is_ok());
+
+        let mut prices_drop = HashMap::new();
+        prices_drop.insert("AAPL".to_string(), Decimal::from(89));
+        let ctx_drop = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices_drop,
+            market_model: &market_model,
+            execution_mode: ExecutionMode::NextOpen,
+            bar_index: 2,
+            current_time: 1_700_000_100_000_000_000,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+        };
+        let err = manager.check_internal(&order, &ctx_drop).unwrap_err().to_string();
+        assert!(err.contains("stop-loss threshold"));
     }
 }

@@ -472,6 +472,14 @@ class RiskConfig:
     stop_loss_threshold: Optional[float] = None
 ```
 
+Account-level field semantics:
+
+*   `max_account_drawdown`: Maximum drawdown limit in 0~1 ratio. Drawdown is measured against historical peak equity; once breached, new order requests are rejected.
+*   `max_daily_loss`: Daily loss limit in 0~1 ratio. Loss is measured against equity at the first risk check of the trading day; once breached, new order requests are rejected.
+*   `stop_loss_threshold`: Equity stop-loss threshold in 0~1 ratio. If current equity falls below `baseline_equity_at_rule_activation * threshold`, new order requests are rejected.
+
+Rejection reasons are available in `orders_df.reject_reason`.
+
 ## 6. Analysis
 
 ### `akquant.BacktestResult`

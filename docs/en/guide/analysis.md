@@ -15,7 +15,18 @@ The easiest way to visualize your backtest results is using the `report()` metho
 result.report(
     title="My Strategy Report",
     filename="report.html",
-    show=True  # Set to True to open in browser automatically (default is False)
+    show=True,  # Set to True to open in browser automatically (default is False)
+    compact_currency=True,  # Format amount columns as K/M/B in report tables
+)
+```
+
+If you prefer raw amount precision in report tables:
+
+```python
+result.report(
+    title="My Strategy Report",
+    filename="report_raw_amount.html",
+    compact_currency=False,
 )
 ```
 
@@ -147,6 +158,7 @@ The `result` object provides equity and cash curves over time, useful for plotti
 | `entry_time` | Entry Time | Datetime | Time of entry. |
 | `exit_time` | Exit Time | Datetime | Time of exit. |
 | `entry_price` | Entry Price | Float | Average entry price. |
+
 | `exit_price` | Exit Price | Float | Average exit price. |
 | `quantity` | Quantity | Float | Traded quantity. |
 | `side` | Side | String | `long` or `short`. |
@@ -204,3 +216,14 @@ The `result` object provides equity and cash curves over time, useful for plotti
 | `margin` | Margin | Float | Margin used. |
 | `unrealized_pnl` | Unrealized PnL | Float | Floating PnL. |
 | `entry_price` | Entry Price | Float | Average entry price. |
+
+## Attribution & Capacity
+
+`BacktestResult` also exposes structured analysis outputs that are easy to reuse:
+
+```python
+exposure = result.exposure_df()  # net/gross exposure and leverage
+attr_by_symbol = result.attribution_df(by="symbol")
+attr_by_tag = result.attribution_df(by="tag")
+capacity = result.capacity_df()  # order count, fill rates, turnover
+```

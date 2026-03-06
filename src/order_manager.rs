@@ -56,6 +56,7 @@ impl OrderManager {
             // If it's a new order report (e.g. Rejected immediately), add to active so it can be moved to history later
             if report.status == OrderStatus::Rejected
                 || report.status == OrderStatus::New
+                || report.status == OrderStatus::PartiallyFilled
                 || report.status == OrderStatus::Submitted
             {
                 self.active_orders.push(report);

@@ -197,7 +197,26 @@ AKQuant 内置了基于 **Plotly** 的强大可视化模块，仅需一行代码
 
 ```python
 # 生成交互式 HTML 报告，自动在浏览器中打开
-result.report(show=True)
+result.report(
+    show=True,
+    compact_currency=True,  # 金额列按 K/M/B 紧凑显示（默认 True）
+)
+
+# 如果你希望金额列保留原始数值精度（不缩写），可关闭：
+result.report(
+    show=False,
+    filename="report_raw_amount.html",
+    compact_currency=False,
+)
+```
+
+你也可以直接复用结构化分析结果做二次研究：
+
+```python
+exposure = result.exposure_df()             # 暴露分解（净暴露/总暴露/杠杆）
+attr_by_symbol = result.attribution_df(by="symbol")
+attr_by_tag = result.attribution_df(by="tag")
+capacity = result.capacity_df()             # 容量代理（成交率/换手等）
 ```
 
 <p align="center">

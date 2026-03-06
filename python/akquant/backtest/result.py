@@ -583,6 +583,203 @@ class BacktestResult:
 
         return df
 
+    def exposure_df(self, freq: Optional[str] = "D") -> pd.DataFrame:
+        """Get portfolio exposure decomposition time series."""
+        positions = self.positions_df.copy()
+        columns = [
+            "date",
+            "equity",
+            "long_exposure",
+            "short_exposure",
+            "net_exposure",
+            "gross_exposure",
+            "net_exposure_pct",
+            "gross_exposure_pct",
+            "leverage",
+        ]
+        if positions.empty or "date" not in positions.columns:
+            return pd.DataFrame(columns=columns)
+
+        numeric_cols = ["long_shares", "short_shares", "close", "equity"]
+        for col in numeric_cols:
+            if col not in positions.columns:
+                positions[col] = 0.0
+            positions[col] = pd.to_numeric(positions[col], errors="coerce").fillna(0.0)
+
+        long_shares = positions["long_shares"].clip(lower=0.0)
+        short_shares = positions["short_shares"].clip(lower=0.0)
+        closes = positions["close"]
+        positions["long_exposure"] = long_shares * closes
+        positions["short_exposure"] = short_shares * closes
+
+        exposure = positions.groupby("date", as_index=True).agg(
+            {
+                "long_exposure": "sum",
+                "short_exposure": "sum",
+                "equity": "first",
+            }
+        )
+        exposure["net_exposure"] = (
+            exposure["long_exposure"] - exposure["short_exposure"]
+        )
+        exposure["gross_exposure"] = (
+            exposure["long_exposure"] + exposure["short_exposure"]
+        )
+
+        safe_equity = exposure["equity"].replace(0.0, pd.NA)
+        exposure["net_exposure_pct"] = (exposure["net_exposure"] / safe_equity).fillna(
+            0.0
+        )
+        exposure["gross_exposure_pct"] = (
+            exposure["gross_exposure"] / safe_equity
+        ).fillna(0.0)
+        exposure["leverage"] = (exposure["gross_exposure"] / safe_equity).fillna(0.0)
+
+        if freq:
+            exposure = exposure.resample(freq).last().dropna(how="all")
+
+        exposure = exposure.reset_index()
+        return cast(pd.DataFrame, exposure[columns])
+
+    def attribution_df(
+        self, by: str = "symbol", use_net: bool = True, top_n: Optional[int] = None
+    ) -> pd.DataFrame:
+        """Get grouped contribution analysis by symbol or tag."""
+        trades = self.trades_df.copy()
+        columns = [
+            "group",
+            "trade_count",
+            "total_pnl",
+            "avg_return_pct",
+            "total_commission",
+            "contribution_pct",
+            "abs_contribution_pct",
+        ]
+        if trades.empty:
+            return pd.DataFrame(columns=columns)
+
+        value_col = "net_pnl" if use_net and "net_pnl" in trades.columns else "pnl"
+        if value_col not in trades.columns:
+            return pd.DataFrame(columns=columns)
+
+        by_key = by.lower().strip()
+        if by_key == "symbol":
+            group_values = trades["symbol"].astype(str)
+        elif by_key == "entry_tag":
+            entry_fallback = pd.Series(index=trades.index, dtype=object)
+            group_values = trades.get("entry_tag", entry_fallback).fillna("")
+        elif by_key == "exit_tag":
+            exit_fallback = pd.Series(index=trades.index, dtype=object)
+            group_values = trades.get("exit_tag", exit_fallback).fillna("")
+        elif by_key == "tag":
+            entry_fallback = pd.Series(index=trades.index, dtype=object)
+            exit_fallback = pd.Series(index=trades.index, dtype=object)
+            entry_tags = trades.get("entry_tag", entry_fallback).fillna("")
+            exit_tags = trades.get("exit_tag", exit_fallback).fillna("")
+            group_values = entry_tags.where(entry_tags.astype(str) != "", exit_tags)
+        else:
+            raise ValueError("`by` must be one of: symbol, entry_tag, exit_tag, tag")
+
+        trades = trades.copy()
+        trades["group"] = group_values.astype(str).replace("", "_untagged")
+        if "return_pct" not in trades.columns:
+            trades["return_pct"] = 0.0
+        if "commission" not in trades.columns:
+            trades["commission"] = 0.0
+
+        grouped = trades.groupby("group", as_index=False).agg(
+            trade_count=(value_col, "count"),
+            total_pnl=(value_col, "sum"),
+            avg_return_pct=("return_pct", "mean"),
+            total_commission=("commission", "sum"),
+        )
+
+        total_pnl = float(pd.to_numeric(grouped["total_pnl"], errors="coerce").sum())
+        if total_pnl == 0.0:
+            grouped["contribution_pct"] = 0.0
+        else:
+            grouped["contribution_pct"] = grouped["total_pnl"] / total_pnl
+        grouped["abs_contribution_pct"] = grouped["contribution_pct"].abs()
+        grouped = grouped.sort_values("total_pnl", ascending=False)
+        grouped = grouped.reset_index(drop=True)
+
+        if top_n is not None and top_n > 0:
+            grouped = grouped.head(top_n).reset_index(drop=True)
+
+        return cast(pd.DataFrame, grouped[columns])
+
+    def capacity_df(self, freq: str = "D") -> pd.DataFrame:
+        """Get execution capacity proxy metrics from orders and equity."""
+        orders = self.orders_df.copy()
+        columns = [
+            "date",
+            "order_count",
+            "filled_order_count",
+            "ordered_quantity",
+            "filled_quantity",
+            "ordered_value",
+            "filled_value",
+            "fill_rate_qty",
+            "fill_rate_value",
+            "equity",
+            "turnover",
+        ]
+        if orders.empty:
+            return pd.DataFrame(columns=columns)
+
+        ts_col = "updated_at" if "updated_at" in orders.columns else "created_at"
+        if ts_col not in orders.columns:
+            return pd.DataFrame(columns=columns)
+
+        numeric_cols = [
+            "quantity",
+            "filled_quantity",
+            "filled_value",
+            "avg_price",
+            "limit_price",
+        ]
+        for col in numeric_cols:
+            if col not in orders.columns:
+                orders[col] = 0.0
+            orders[col] = pd.to_numeric(orders[col], errors="coerce").fillna(0.0)
+
+        price_proxy = orders["limit_price"].where(
+            orders["limit_price"] > 0.0, orders["avg_price"]
+        )
+        orders["ordered_value"] = orders["quantity"] * price_proxy.fillna(0.0)
+        orders["is_filled"] = (orders["filled_quantity"] > 0.0).astype(int)
+
+        frame = pd.DataFrame(
+            {
+                "date": pd.to_datetime(orders[ts_col]),
+                "order_count": 1,
+                "filled_order_count": orders["is_filled"],
+                "ordered_quantity": orders["quantity"],
+                "filled_quantity": orders["filled_quantity"],
+                "ordered_value": orders["ordered_value"],
+                "filled_value": orders["filled_value"],
+            }
+        ).set_index("date")
+
+        grouped = frame.resample(freq).sum()
+
+        equity = self.equity_curve
+        if not equity.empty:
+            equity_resampled = equity.resample(freq).last().ffill()
+            grouped["equity"] = equity_resampled.reindex(grouped.index).ffill()
+        else:
+            grouped["equity"] = 0.0
+
+        safe_qty = grouped["ordered_quantity"].replace(0.0, pd.NA)
+        safe_value = grouped["ordered_value"].replace(0.0, pd.NA)
+        safe_equity = grouped["equity"].replace(0.0, pd.NA)
+        grouped["fill_rate_qty"] = (grouped["filled_quantity"] / safe_qty).fillna(0.0)
+        grouped["fill_rate_value"] = (grouped["filled_value"] / safe_value).fillna(0.0)
+        grouped["turnover"] = (grouped["filled_value"] / safe_equity).fillna(0.0)
+
+        grouped = grouped.reset_index()
+        return cast(pd.DataFrame, grouped[columns])
+
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the raw result."""
         return getattr(self._raw, name)
@@ -693,6 +890,7 @@ class BacktestResult:
         title: str = "AKQuant 策略回测报告",
         filename: str = "akquant_report.html",
         show: bool = False,
+        compact_currency: bool = True,
     ) -> None:
         """
         生成 HTML 策略回测报告 (便捷方法).
@@ -702,6 +900,7 @@ class BacktestResult:
         :param title: 报告标题
         :param filename: 保存的文件名
         :param show: 是否在浏览器中自动打开 (默认 False)
+        :param compact_currency: 是否将金额用 K/M/B 紧凑显示 (默认 True)
         """
         # 延迟导入，避免循环引用和非必要的 Plotly 依赖
         try:
@@ -710,4 +909,10 @@ class BacktestResult:
             print("Plot module not found. Please install akquant[plot] or plotly.")
             return
 
-        return plot_report(result=self, title=title, filename=filename, show=show)
+        return plot_report(
+            result=self,
+            title=title,
+            filename=filename,
+            show=show,
+            compact_currency=compact_currency,
+        )

@@ -88,12 +88,51 @@ rm.add_sector_concentration_rule(0.20, sector_map)
 rm.config.check_cash = False
 rm.add_max_leverage_rule(1.5)
 
+# 4. 账户最大回撤限制 (例如 20%)
+# 当前权益相对历史峰值回撤超过阈值时，拒绝新订单
+rm.add_max_drawdown_rule(0.20)
+
+# 5. 单日亏损限制 (例如 5%)
+# 当日权益相对当日首个风控检查时点下跌超过阈值时，拒绝新订单
+rm.add_max_daily_loss_rule(0.05)
+
+# 6. 账户净值止损阈值 (例如 80%)
+# 当前权益低于“规则首次生效时权益 * 阈值”时，拒绝新订单
+rm.add_stop_loss_rule(0.80)
+
 # 应用配置
 engine.risk_manager = rm
 
 # 运行回测
 engine.run(strategy=MyStrategy)
 ```
+
+通过 `run_backtest` 统一入口也可直接配置账户级风控：
+
+```python
+from akquant import run_backtest
+from akquant.config import RiskConfig
+
+result = run_backtest(
+    data=data,
+    strategy=MyStrategy,
+    risk_config=RiskConfig(
+        max_account_drawdown=0.20,
+        max_daily_loss=0.05,
+        stop_loss_threshold=0.80,
+    ),
+)
+```
+
+账户级参数建议（可作为起步值）：
+
+| 风格 | `max_account_drawdown` | `max_daily_loss` | `stop_loss_threshold` |
+| :--- | :--- | :--- | :--- |
+| 保守 | `0.10` | `0.02` | `0.90` |
+| 中性 | `0.20` | `0.05` | `0.80` |
+| 激进 | `0.30` | `0.08` | `0.70` |
+
+建议先从“中性”起步，再根据策略波动与换手逐步收紧或放宽。
 
 ## 4. 常用工具 (Utilities)
 
@@ -157,6 +196,94 @@ def on_timer(self, payload):
     if payload == "daily_check":
         self.log("Running daily check...")
 ```
+
+### 3.4 横截面策略推荐范式 (Cross-Section Pattern)
+
+AKQuant 的 `on_bar` 按“单事件流”逐条触发。若你要做多标的横截面比较（轮动、排序、打分），推荐把决策统一放在 `on_timer`。
+
+推荐步骤：
+
+1. 在 `on_start` 中定义 `universe` 并注册每日定时器。
+2. 在 `on_timer` 中遍历 `universe` 计算分数。
+3. 在 `on_timer` 中统一选股与调仓，确保每个时点只执行一次。
+
+```python
+class CrossSectionStrategy(Strategy):
+    def __init__(self, lookback=20):
+        self.lookback = lookback
+        self.universe = ["sh600519", "sz000858", "sh601318"]
+        self.warmup_period = lookback + 1
+
+    def on_start(self):
+        self.add_daily_timer("14:55:00", "rebalance")
+
+    def on_timer(self, payload):
+        if payload != "rebalance":
+            return
+        scores = {}
+        for symbol in self.universe:
+            closes = self.get_history(count=self.lookback, symbol=symbol, field="close")
+            if len(closes) < self.lookback:
+                return
+            scores[symbol] = (closes[-1] - closes[0]) / closes[0]
+        best = max(scores, key=scores.get)
+        self.order_target_percent(target_percent=0.95, symbol=best)
+```
+
+完整示例见：`examples/strategies/05_stock_momentum_rotation_timer.py`。
+
+### 3.5 横截面方案 B：收齐同 timestamp 后执行
+
+当策略没有固定调仓时点（不方便用 `on_timer`）时，可在 `on_bar` 中先缓存同一时间片的标的，收齐后再执行一次横截面逻辑。
+
+```python
+from collections import defaultdict
+
+class CrossSectionBucketStrategy(Strategy):
+    def __init__(self, lookback=20):
+        self.lookback = lookback
+        self.universe = ["sh600519", "sz000858", "sh601318"]
+        self.warmup_period = lookback + 1
+        self.pending = defaultdict(set)
+
+    def on_bar(self, bar):
+        self.pending[bar.timestamp].add(bar.symbol)
+        if len(self.pending[bar.timestamp]) < len(self.universe):
+            return
+        self.pending.pop(bar.timestamp, None)
+        scores = {}
+        for symbol in self.universe:
+            closes = self.get_history(count=self.lookback, symbol=symbol, field="close")
+            if len(closes) < self.lookback:
+                return
+            scores[symbol] = (closes[-1] - closes[0]) / closes[0]
+        best = max(scores, key=lambda s: scores[s])
+        self.order_target_percent(target_percent=0.95, symbol=best)
+```
+
+完整示例见：`examples/strategies/06_stock_momentum_rotation_bucket.py`。
+
+### 3.6 方案选型对照 (A vs B)
+
+| 维度 | 方案 A：`on_timer` 统一执行 | 方案 B：收齐 `timestamp` 后执行 |
+| :--- | :--- | :--- |
+| 触发方式 | 固定时点触发（如 14:55） | 事件驱动，时间片收齐触发 |
+| 稳健性 | 高，不依赖到达顺序 | 中，需维护缓存并处理缺失 |
+| 实现复杂度 | 低，逻辑集中 | 中，需管理 `timestamp -> symbols` |
+| 适用场景 | 日频/定时调仓、生产默认 | 无固定调仓时点的横截面策略 |
+| 常见风险 | 定时器时间与数据频率不匹配 | 某些标的缺失导致不触发 |
+
+建议：优先使用方案 A；只有在无法定义稳定调仓时点时再采用方案 B。
+
+### 3.7 横截面常见坑位清单
+
+*   **停牌/缺失数据**：某些标的当日无 Bar 时，方案 B 可能不触发；可设置超时降级，或允许“有效样本数达阈值”即执行。
+*   **Universe 漂移**：成分股调整后若仍用旧列表，会出现权重与真实池不一致；建议定期刷新并记录生效日期。
+*   **调仓时点与执行模式错配**：例如 `execution_mode="next_open"` 时，收盘时点信号会在下一根撮合，需在回测解释里明确。
+*   **历史长度不足**：新上市或停牌恢复标的数据窗口不完整；评分前统一做 `len(closes)` 检查并跳过不足样本。
+*   **仓位未收敛**：多标的先卖后买若资金未及时释放，可能导致买入不足；可采用目标仓位 API 并在下一时点二次收敛。
+
+完整上线检查可参考：[横截面策略实战清单](cross_section_checklist.md)。
 
 ## 5. 策略风格选择 {: #style-selection }
 
@@ -256,7 +383,7 @@ class MyStrategy(Strategy):
 2.  **Submitted**: 订单已发送给交易所/仿真撮合引擎。
 3.  **Accepted**: (实盘模式) 交易所确认接收订单。
 4.  **Filled**: 订单全部成交。
-    *   **PartiallyFilled**: 部分成交 (目前状态码统一为 Filled，需通过 `filled_quantity` 判断)。
+    *   **PartiallyFilled**: 订单部分成交（`filled_quantity < quantity`）。
 5.  **Cancelled**: 订单已取消。
 6.  **Rejected**: 订单被风控或交易所拒绝 (如资金不足、超出涨跌停)。
 

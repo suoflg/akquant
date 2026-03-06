@@ -25,6 +25,7 @@ impl Processor for ChannelProcessor {
                         market_model: engine.market_manager.model.as_ref(),
                         execution_mode: engine.execution_mode,
                         bar_index: engine.bar_count,
+                        current_time: engine.clock.timestamp().unwrap_or(0),
                         session: engine.clock.session,
                         active_orders: &engine.state.order_manager.active_orders,
                     };
@@ -386,6 +387,7 @@ impl Processor for ExecutionProcessor {
                         market_model: engine.market_manager.model.as_ref(),
                         execution_mode: engine.execution_mode,
                         bar_index: engine.bar_count,
+                        current_time: engine.clock.timestamp().unwrap_or(0),
                         session: engine.clock.session,
                         active_orders: &engine.state.order_manager.active_orders,
                     };
@@ -451,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_data_alignment_late_fill() {
-        // pyo3::prepare_freethreaded_python() is deprecated and not needed with auto-initialize feature
+        pyo3::Python::initialize();
 
         let mut engine = Engine::new();
         engine.instruments.insert("A".to_string(), create_instrument("A"));
@@ -537,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_corporate_action_processing() {
-        // pyo3::prepare_freethreaded_python();
+        pyo3::Python::initialize();
 
         use crate::model::corporate_action::{CorporateAction, CorporateActionType};
         use chrono::NaiveDate;

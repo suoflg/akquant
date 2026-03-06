@@ -2,7 +2,9 @@
 
 import base64
 import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
+
+import pandas as pd
 
 from .analysis import (
     plot_pnl_vs_duration,
@@ -334,6 +336,23 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
+        <div class="section-title">组合归因与容量分析 (Attribution & Capacity)</div>
+        <div class="row">
+            <div class="col">
+                <div class="chart-container">
+                    {exposure_summary_html}
+                </div>
+            </div>
+            <div class="col">
+                <div class="chart-container">
+                    {capacity_summary_html}
+                </div>
+            </div>
+        </div>
+        <div class="chart-container" style="margin-top: 20px;">
+            {attribution_summary_html}
+        </div>
+
         <footer>
             AKQuant Report | Powered by Plotly & AKQuant
         </footer>
@@ -366,38 +385,50 @@ HTML_TEMPLATE = """
 
 def _format_currency(value: float) -> str:
     """Format large numbers nicely."""
-    if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.2f}B"
-    elif value >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
-    elif value >= 1_000:
-        return f"{value / 1_000:.2f}K"
+    sign = "-" if value < 0 else ""
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000:
+        return f"{sign}{abs_value / 1_000_000_000:.2f}B"
+    elif abs_value >= 1_000_000:
+        return f"{sign}{abs_value / 1_000_000:.2f}M"
+    elif abs_value >= 1_000:
+        return f"{sign}{abs_value / 1_000:.2f}K"
     else:
         return f"{value:.2f}"
 
 
-def plot_report(
-    result: "BacktestResult",
-    title: str = "AKQuant 策略回测报告",
-    filename: str = "akquant_report.html",
-    show: bool = False,
-) -> None:
-    """
-    生成类似 QuantStats 的整合版 HTML 报告 (中文优化版).
+def _format_table(
+    df: pd.DataFrame,
+    max_rows: int = 10,
+    percentage_columns: set[str] | None = None,
+    compact_currency_columns: set[str] | None = None,
+    compact_currency: bool = True,
+) -> str:
+    """Render a compact HTML table from a dataframe."""
+    if df.empty:
+        return "<div>暂无数据</div>"
+    table = df.head(max_rows).copy()
+    pct_cols = percentage_columns or set()
+    money_cols = compact_currency_columns or set()
+    for col in table.columns:
+        if pd.api.types.is_float_dtype(table[col]):
+            if col in pct_cols:
+                table[col] = table[col].map(lambda x: f"{x * 100:,.6f}%")
+            elif compact_currency and col in money_cols:
+                table[col] = table[col].map(_format_currency)
+            else:
+                table[col] = table[col].map(lambda x: f"{x:,.6f}")
+    return str(table.to_html(index=False, border=0, classes="table"))
 
-    内容包括:
-    1. 核心指标概览 (Key Metrics)
-    2. 权益曲线、回撤、月度热力图 (Dashboard)
-    3. 交易分布与持仓时间分析 (Trade Analysis)
-    """
-    if not check_plotly():
-        return
 
-    # Prepare Icon
-    icon_b64 = base64.b64encode(AKQUANT_ICON_SVG.encode("utf-8")).decode("utf-8")
-    favicon_uri = f"data:image/svg+xml;base64,{icon_b64}"
+def _rename_table_columns(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
+    """Rename technical columns to user-friendly labels."""
+    renamed = df.rename(columns={k: v for k, v in mapping.items() if k in df.columns})
+    return cast(pd.DataFrame, renamed)
 
-    # 1. Prepare Summary Data
+
+def _build_summary_context(result: Any) -> dict[str, str]:
+    """Build summary text values for report header."""
     equity_curve = result.equity_curve
     start_date = "N/A"
     end_date = "N/A"
@@ -412,18 +443,38 @@ def plot_report(
         end_ts = equity_curve.index[-1]
         start_date = start_ts.strftime("%Y-%m-%d")
         end_date = end_ts.strftime("%Y-%m-%d")
+        duration_str = f"{(end_ts - start_ts).days} 天"
+        final_equity_str = f"{equity_curve.iloc[-1]:,.2f}"
 
-        duration = end_ts - start_ts
-        duration_days = duration.days
-        duration_str = f"{duration_days} 天"
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "duration_str": duration_str,
+        "initial_cash": initial_cash_str,
+        "final_equity": final_equity_str,
+    }
 
-        final_equity = equity_curve.iloc[-1]
-        final_equity_str = f"{final_equity:,.2f}"
 
-    # 2. Generate Metrics HTML
+def _get_metric_value(
+    result: Any, metrics: Any, name: str, default: float = 0.0
+) -> float:
+    """Read metric value from object or metrics_df."""
+    if hasattr(metrics, name):
+        val = getattr(metrics, name)
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return default
+    try:
+        return float(cast(Any, result.metrics_df.loc[name, "value"]))
+    except Exception:
+        return default
+
+
+def _build_metrics_html(result: Any) -> str:
+    """Build key-metrics HTML cards."""
     metrics = result.metrics
 
-    # Helper for coloring
     def get_color_class(val: float) -> str:
         if val > 0:
             return "positive"
@@ -431,29 +482,11 @@ def plot_report(
             return "negative"
         return ""
 
-    # Define Metrics to display
-    # (Label, Value, Formatted Value, Color Class)
-    # Using getattr for robust access
-    def get_metric(name: str, default: float = 0.0) -> float:
-        if hasattr(metrics, name):
-            val = getattr(metrics, name)
-            # Ensure it's a float
-            try:
-                return float(val)  # type: ignore
-            except (ValueError, TypeError):
-                return default
-        # Try finding in metrics_df if not in object properties
-        try:
-            return float(result.metrics_df.loc[name, "value"])  # type: ignore
-        except Exception:
-            return default
-
     metric_data = [
-        # Returns
         (
             "累计收益率 (Total Return)",
             metrics.total_return_pct,
-            f"{metrics.total_return_pct:.2f}%",  # Fixed: removed double percentage
+            f"{metrics.total_return_pct:.2f}%",
             get_color_class(metrics.total_return_pct),
         ),
         (
@@ -464,11 +497,10 @@ def plot_report(
         ),
         (
             "平均盈亏 (Avg PnL)",
-            get_metric("avg_pnl"),
-            f"{get_metric('avg_pnl'):.2f}",
-            get_color_class(get_metric("avg_pnl")),
+            _get_metric_value(result, metrics, "avg_pnl"),
+            f"{_get_metric_value(result, metrics, 'avg_pnl'):.2f}",
+            get_color_class(_get_metric_value(result, metrics, "avg_pnl")),
         ),
-        # Risk
         (
             "夏普比率 (Sharpe)",
             metrics.sharpe_ratio,
@@ -477,20 +509,20 @@ def plot_report(
         ),
         (
             "索提诺比率 (Sortino)",
-            get_metric("sortino_ratio"),
-            f"{get_metric('sortino_ratio'):.2f}",
-            get_color_class(get_metric("sortino_ratio")),
+            _get_metric_value(result, metrics, "sortino_ratio"),
+            f"{_get_metric_value(result, metrics, 'sortino_ratio'):.2f}",
+            get_color_class(_get_metric_value(result, metrics, "sortino_ratio")),
         ),
         (
             "卡玛比率 (Calmar)",
-            get_metric("calmar_ratio"),
-            f"{get_metric('calmar_ratio'):.2f}",
-            get_color_class(get_metric("calmar_ratio")),
+            _get_metric_value(result, metrics, "calmar_ratio"),
+            f"{_get_metric_value(result, metrics, 'calmar_ratio'):.2f}",
+            get_color_class(_get_metric_value(result, metrics, "calmar_ratio")),
         ),
         (
             "最大回撤 (Max DD)",
             metrics.max_drawdown_pct,
-            f"{metrics.max_drawdown_pct:.2f}%",  # max_drawdown_pct is scaled (0-100+)
+            f"{metrics.max_drawdown_pct:.2f}%",
             "negative",
         ),
         (
@@ -498,42 +530,43 @@ def plot_report(
             metrics.volatility,
             f"{metrics.volatility:.2%}",
             "",
-        ),  # volatility is ratio (0-1)
-        # Trading
+        ),
         (
             "胜率 (Win Rate)",
             metrics.win_rate,
             f"{metrics.win_rate:.2f}%",
             "",
-        ),  # win_rate is scaled (0-100)
+        ),
         (
             "盈亏比 (Profit Factor)",
-            get_metric("profit_factor"),
-            f"{get_metric('profit_factor'):.2f}",
+            _get_metric_value(result, metrics, "profit_factor"),
+            f"{_get_metric_value(result, metrics, 'profit_factor'):.2f}",
             "",
         ),
         (
             "凯利公式 (Kelly)",
-            get_metric("kelly_criterion"),
-            f"{get_metric('kelly_criterion'):.2%}",  # Kelly is typically a ratio (0-1)
+            _get_metric_value(result, metrics, "kelly_criterion"),
+            f"{_get_metric_value(result, metrics, 'kelly_criterion'):.2%}",
             "",
         ),
         ("交易次数 (Trades)", len(result.trades_df), f"{len(result.trades_df)}", ""),
     ]
 
     metrics_html = ""
-    for label, raw_val, fmt_val, color_cls in metric_data:
+    for label, _raw_val, fmt_val, color_cls in metric_data:
         metrics_html += f"""
         <div class="metric-card">
             <div class="metric-value {color_cls}">{fmt_val}</div>
             <div class="metric-label">{label}</div>
         </div>
         """
+    return metrics_html
 
-    # 3. Generate Plots
-    # Dashboard (Equity, Drawdown, Heatmap)
-    # Add responsive config
+
+def _build_chart_html_sections(result: Any) -> dict[str, str]:
+    """Build chart HTML sections from plot figures."""
     config = {"responsive": True}
+
     fig_dashboard = plot_dashboard(result, show=False, theme="light")
     dashboard_html = (
         fig_dashboard.to_html(full_html=False, include_plotlyjs=False, config=config)
@@ -541,23 +574,19 @@ def plot_report(
         else "<div>暂无数据</div>"
     )
 
-    # Return Analysis
     returns_series = result.daily_returns
-
     fig_rolling = plot_rolling_metrics(returns_series, theme="light")
     rolling_metrics_html = (
         fig_rolling.to_html(full_html=False, include_plotlyjs=False, config=config)
         if fig_rolling
         else "<div>暂无数据</div>"
     )
-
     fig_dist_ret = plot_returns_distribution(returns_series, theme="light")
     returns_dist_html = (
         fig_dist_ret.to_html(full_html=False, include_plotlyjs=False, config=config)
         if fig_dist_ret
         else "<div>暂无数据</div>"
     )
-
     fig_yearly = plot_yearly_returns(returns_series, theme="light")
     yearly_returns_html = (
         fig_yearly.to_html(full_html=False, include_plotlyjs=False, config=config)
@@ -565,22 +594,179 @@ def plot_report(
         else "<div>暂无数据</div>"
     )
 
-    # Trade Analysis
-    # Add responsive config to ensure charts resize with container
-    config = {"responsive": True}
-
     fig_dist = plot_trades_distribution(result.trades_df)
     trades_dist_html = (
         fig_dist.to_html(full_html=False, include_plotlyjs=False, config=config)
         if fig_dist
         else "<div>无交易数据</div>"
     )
-
     fig_duration = plot_pnl_vs_duration(result.trades_df)
     pnl_duration_html = (
         fig_duration.to_html(full_html=False, include_plotlyjs=False, config=config)
         if fig_duration
         else "<div>无交易数据</div>"
+    )
+
+    return {
+        "dashboard_html": dashboard_html,
+        "yearly_returns_html": yearly_returns_html,
+        "returns_dist_html": returns_dist_html,
+        "rolling_metrics_html": rolling_metrics_html,
+        "trades_dist_html": trades_dist_html,
+        "pnl_duration_html": pnl_duration_html,
+    }
+
+
+def _build_analysis_table_sections(
+    result: Any, compact_currency: bool = True
+) -> dict[str, str]:
+    """Build attribution/exposure/capacity HTML tables."""
+    exposure_df = (
+        result.exposure_df() if hasattr(result, "exposure_df") else pd.DataFrame()
+    )
+    if not exposure_df.empty:
+        exposure_view = pd.DataFrame(
+            [
+                {
+                    "latest_net_exposure_pct": float(
+                        exposure_df["net_exposure_pct"].iloc[-1]
+                    ),
+                    "latest_gross_exposure_pct": float(
+                        exposure_df["gross_exposure_pct"].iloc[-1]
+                    ),
+                    "max_leverage": float(exposure_df["leverage"].max()),
+                }
+            ]
+        )
+        exposure_view = _rename_table_columns(
+            exposure_view,
+            {
+                "latest_net_exposure_pct": "最新净暴露比 (Latest Net Exposure %)",
+                "latest_gross_exposure_pct": "最新总暴露比 (Latest Gross Exposure %)",
+                "max_leverage": "最大杠杆 (Max Leverage)",
+            },
+        )
+        exposure_summary_html = _format_table(
+            exposure_view,
+            max_rows=1,
+            percentage_columns={
+                "最新净暴露比 (Latest Net Exposure %)",
+                "最新总暴露比 (Latest Gross Exposure %)",
+            },
+            compact_currency=compact_currency,
+        )
+    else:
+        exposure_summary_html = "<div>暂无暴露数据</div>"
+
+    capacity_df = (
+        result.capacity_df() if hasattr(result, "capacity_df") else pd.DataFrame()
+    )
+    if not capacity_df.empty:
+        capacity_view = pd.DataFrame(
+            [
+                {
+                    "total_order_count": float(capacity_df["order_count"].sum()),
+                    "total_filled_value": float(capacity_df["filled_value"].sum()),
+                    "avg_fill_rate_qty": float(capacity_df["fill_rate_qty"].mean()),
+                    "avg_turnover": float(capacity_df["turnover"].mean()),
+                }
+            ]
+        )
+        capacity_view = _rename_table_columns(
+            capacity_view,
+            {
+                "total_order_count": "总订单数 (Total Orders)",
+                "total_filled_value": "总成交额 (Total Filled Value)",
+                "avg_fill_rate_qty": "平均成交率 (Avg Fill Rate Qty)",
+                "avg_turnover": "平均换手率 (Avg Turnover)",
+            },
+        )
+        capacity_summary_html = _format_table(
+            capacity_view,
+            max_rows=1,
+            percentage_columns={
+                "平均成交率 (Avg Fill Rate Qty)",
+                "平均换手率 (Avg Turnover)",
+            },
+            compact_currency_columns={"总成交额 (Total Filled Value)"},
+            compact_currency=compact_currency,
+        )
+    else:
+        capacity_summary_html = "<div>暂无容量数据</div>"
+
+    attribution_df = (
+        result.attribution_df(by="symbol")
+        if hasattr(result, "attribution_df")
+        else pd.DataFrame()
+    )
+    if not attribution_df.empty:
+        cols = [
+            "group",
+            "trade_count",
+            "total_pnl",
+            "contribution_pct",
+            "total_commission",
+        ]
+        cols = [c for c in cols if c in attribution_df.columns]
+        attribution_view = _rename_table_columns(
+            attribution_df[cols],
+            {
+                "group": "分组 (Group)",
+                "trade_count": "交易次数 (Trade Count)",
+                "total_pnl": "总盈亏 (Total PnL)",
+                "contribution_pct": "贡献占比 (Contribution %)",
+                "total_commission": "总手续费 (Total Commission)",
+            },
+        )
+        attribution_summary_html = _format_table(
+            attribution_view,
+            max_rows=10,
+            percentage_columns={"贡献占比 (Contribution %)"},
+            compact_currency_columns={
+                "总盈亏 (Total PnL)",
+                "总手续费 (Total Commission)",
+            },
+            compact_currency=compact_currency,
+        )
+    else:
+        attribution_summary_html = "<div>暂无归因数据</div>"
+
+    return {
+        "exposure_summary_html": exposure_summary_html,
+        "capacity_summary_html": capacity_summary_html,
+        "attribution_summary_html": attribution_summary_html,
+    }
+
+
+def plot_report(
+    result: "BacktestResult",
+    title: str = "AKQuant 策略回测报告",
+    filename: str = "akquant_report.html",
+    show: bool = False,
+    compact_currency: bool = True,
+) -> None:
+    """
+    生成类似 QuantStats 的整合版 HTML 报告 (中文优化版).
+
+    内容包括:
+    1. 核心指标概览 (Key Metrics)
+    2. 权益曲线、回撤、月度热力图 (Dashboard)
+    3. 交易分布与持仓时间分析 (Trade Analysis)
+
+    :param compact_currency: 是否将金额列按 K/M/B 紧凑显示
+    """
+    if not check_plotly():
+        return
+
+    # Prepare Icon
+    icon_b64 = base64.b64encode(AKQUANT_ICON_SVG.encode("utf-8")).decode("utf-8")
+    favicon_uri = f"data:image/svg+xml;base64,{icon_b64}"
+
+    summary_context = _build_summary_context(result)
+    metrics_html = _build_metrics_html(result)
+    chart_sections = _build_chart_html_sections(result)
+    analysis_sections = _build_analysis_table_sections(
+        result, compact_currency=compact_currency
     )
 
     # 4. Assemble HTML
@@ -589,18 +775,21 @@ def plot_report(
         favicon_uri=favicon_uri,
         icon_svg=AKQUANT_LOGO_SVG,
         date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        start_date=start_date,
-        end_date=end_date,
-        duration_str=duration_str,
-        initial_cash=initial_cash_str,
-        final_equity=final_equity_str,
+        start_date=summary_context["start_date"],
+        end_date=summary_context["end_date"],
+        duration_str=summary_context["duration_str"],
+        initial_cash=summary_context["initial_cash"],
+        final_equity=summary_context["final_equity"],
         metrics_html=metrics_html,
-        dashboard_html=dashboard_html,
-        yearly_returns_html=yearly_returns_html,
-        returns_dist_html=returns_dist_html,
-        rolling_metrics_html=rolling_metrics_html,
-        trades_dist_html=trades_dist_html,
-        pnl_duration_html=pnl_duration_html,
+        dashboard_html=chart_sections["dashboard_html"],
+        yearly_returns_html=chart_sections["yearly_returns_html"],
+        returns_dist_html=chart_sections["returns_dist_html"],
+        rolling_metrics_html=chart_sections["rolling_metrics_html"],
+        trades_dist_html=chart_sections["trades_dist_html"],
+        pnl_duration_html=chart_sections["pnl_duration_html"],
+        exposure_summary_html=analysis_sections["exposure_summary_html"],
+        capacity_summary_html=analysis_sections["capacity_summary_html"],
+        attribution_summary_html=analysis_sections["attribution_summary_html"],
     )
 
     # 5. Save File

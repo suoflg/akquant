@@ -142,6 +142,7 @@ impl OrderSide {
 pub enum OrderStatus {
     New,
     Submitted,
+    PartiallyFilled,
     Filled,
     Cancelled,
     Rejected,

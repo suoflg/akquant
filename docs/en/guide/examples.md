@@ -2,6 +2,7 @@
 
 ## 1. Basic Examples
 
+*   [Examples Directory Index](../../../examples/README.md): Quick entry to all scripts under `examples/`, including scenario-based shortest run paths.
 *   [Quick Start](../start/quickstart.md): Complete workflow covering manual data backtesting and AKShare data backtesting.
 *   [Simple SMA Strategy](strategy.md#class-based): Demonstrates how to write a strategy in class style and perform simple trading logic in `on_bar`.
 
@@ -322,3 +323,7 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
 *   **[32_streaming_live_web.py](https://github.com/akfamily/akquant/blob/main/examples/32_streaming_live_web.py)**:
     *   Demonstrates visible live backtesting in browser: polls streaming state, draws a dynamic equity chart, and shows alerts and progress in realtime.
     *   Supports `--port`, `--open`, `--sleep-ms`, and `--keep-seconds`, and ends with `done_streaming_live_web`.
+
+*   **[33_report_and_analysis_outputs.py](https://github.com/akfamily/akquant/blob/main/examples/33_report_and_analysis_outputs.py)**:
+    *   Demonstrates post-backtest one-stop outputs: generates an interactive report and prints row-count summaries of `exposure_df` / `attribution_df` / `capacity_df`.
+    *   Prints `report_html=...` and ends with `done_report_and_analysis_outputs`.

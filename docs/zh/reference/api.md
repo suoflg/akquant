@@ -480,6 +480,14 @@ class RiskConfig:
     stop_loss_threshold: Optional[float] = None
 ```
 
+账户级字段说明：
+
+*   `max_account_drawdown`: 最大回撤阈值（0~1 小数）。以历史权益峰值为基准，当前权益回撤超过阈值后，新的下单请求会被拒绝。
+*   `max_daily_loss`: 单日亏损阈值（0~1 小数）。以当日首次风控检查时的权益为基准，当日亏损超过阈值后，新的下单请求会被拒绝。
+*   `stop_loss_threshold`: 账户净值止损阈值（0~1 小数）。当当前权益低于“规则首次生效时权益 × 阈值”后，新的下单请求会被拒绝。
+
+这些拒单原因会体现在 `orders_df.reject_reason` 字段中。
+
 ## 6. 结果分析 (Analysis)
 
 ### `akquant.BacktestResult`
