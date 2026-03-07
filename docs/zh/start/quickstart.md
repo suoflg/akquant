@@ -256,6 +256,8 @@ exposure = result.exposure_df()
 attr_by_symbol = result.attribution_df(by="symbol")
 attr_by_tag = result.attribution_df(by="tag")
 capacity = result.capacity_df()
+orders_by_strategy = result.orders_by_strategy()
+executions_by_strategy = result.executions_by_strategy()
 ```
 
 ## 3. 进阶学习

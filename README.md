@@ -217,6 +217,8 @@ exposure = result.exposure_df()             # 暴露分解（净暴露/总暴露
 attr_by_symbol = result.attribution_df(by="symbol")
 attr_by_tag = result.attribution_df(by="tag")
 capacity = result.capacity_df()             # 容量代理（成交率/换手等）
+orders_by_strategy = result.orders_by_strategy()         # 按策略归属聚合订单
+executions_by_strategy = result.executions_by_strategy() # 按策略归属聚合成交
 ```
 
 <p align="center">
@@ -249,7 +251,10 @@ pip install -e ".[dev]"
 # 2. 运行所有测试
 pytest
 
-# 3. 仅运行黄金测试
+# 3. 运行 Rust 核心测试（自动处理 macOS + conda 动态库路径）
+./scripts/cargo-test.sh -q
+
+# 4. 仅运行黄金测试
 pytest tests/golden/test_golden.py
 ```
 

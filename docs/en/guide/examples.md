@@ -2,7 +2,7 @@
 
 ## 1. Basic Examples
 
-*   [Examples Directory Index](../../../examples/README.md): Quick entry to all scripts under `examples/`, including scenario-based shortest run paths.
+*   [Examples Directory Index](https://github.com/akfamily/akquant/blob/main/examples/README.md): Quick entry to all scripts under `examples/`, including scenario-based shortest run paths.
 *   [Quick Start](../start/quickstart.md): Complete workflow covering manual data backtesting and AKShare data backtesting.
 *   [Simple SMA Strategy](strategy.md#class-based): Demonstrates how to write a strategy in class style and perform simple trading logic in `on_bar`.
 
@@ -325,5 +325,9 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
     *   Supports `--port`, `--open`, `--sleep-ms`, and `--keep-seconds`, and ends with `done_streaming_live_web`.
 
 *   **[33_report_and_analysis_outputs.py](https://github.com/akfamily/akquant/blob/main/examples/33_report_and_analysis_outputs.py)**:
-    *   Demonstrates post-backtest one-stop outputs: generates an interactive report and prints row-count summaries of `exposure_df` / `attribution_df` / `capacity_df`.
+    *   Demonstrates post-backtest one-stop outputs: generates an interactive report and prints row-count summaries of `exposure_df` / `attribution_df` / `capacity_df` and strategy-level summaries via `orders_by_strategy` / `executions_by_strategy`.
     *   Prints `report_html=...` and ends with `done_report_and_analysis_outputs`.
+
+*   **[34_multi_strategy_migration_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_migration_demo.py)**:
+    *   Demonstrates before/after migration from single strategy to multi-slot execution, including strategy-level limits, reduce-only behavior, and cooldown bars.
+    *   Prints `single_owner_ids`, `multi_owner_ids`, `multi_alpha_cooldown_rejections`, and ends with `done_multi_strategy_migration_demo`.

@@ -2,7 +2,7 @@
 
 ## 1. 基础示例 (Basic Examples)
 
-*   [Examples 目录索引](../../../examples/README.md): 快速浏览 `examples/` 下所有脚本入口，并包含按场景整理的最短执行路径。
+*   [Examples 目录索引](https://github.com/akfamily/akquant/blob/main/examples/README.md): 快速浏览 `examples/` 下所有脚本入口，并包含按场景整理的最短执行路径。
 *   [快速开始 (Quickstart)](../start/quickstart.md): 包含手动数据回测和 AKShare 数据回测的完整流程。
 *   [简单的均线策略 (SMA Strategy)](strategy.md#class-based): 展示了如何使用类风格编写策略，并在 `on_bar` 中进行简单的交易逻辑。
 
@@ -325,5 +325,9 @@ class AdjSignal(Strategy):
     *   支持 `--port`、`--open`、`--sleep-ms`、`--keep-seconds` 参数，并以 `done_streaming_live_web` 作为结束标记。
 
 *   **[33_report_and_analysis_outputs.py](https://github.com/akfamily/akquant/blob/main/examples/33_report_and_analysis_outputs.py)**:
-    *   演示回测后的一站式产出：生成交互式报告，并输出 `exposure_df` / `attribution_df` / `capacity_df` 的行数摘要。
+    *   演示回测后的一站式产出：生成交互式报告，并输出 `exposure_df` / `attribution_df` / `capacity_df` 以及按策略归属聚合 `orders_by_strategy` / `executions_by_strategy` 的行数摘要。
     *   输出 `report_html=...`，并以 `done_report_and_analysis_outputs` 作为结束标记。
+
+*   **[34_multi_strategy_migration_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_migration_demo.py)**:
+    *   演示单策略到多策略 slot 的迁移对照：先跑 `strategy_id` 单策略，再跑 `strategies_by_slot` 多策略，并启用策略级限额、仅平仓、冷却 bars。
+    *   输出 `single_owner_ids`、`multi_owner_ids`、`multi_alpha_cooldown_rejections` 等摘要，并以 `done_multi_strategy_migration_demo` 作为结束标记。
