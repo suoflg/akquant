@@ -293,11 +293,11 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
     *   Prints tick/order/trade/timer counters and ends with `done_functional_tick_simulation_demo`.
 
 *   **[25_streaming_backtest_demo.py](https://github.com/akfamily/akquant/blob/main/examples/25_streaming_backtest_demo.py)**:
-    *   Demonstrates `run_backtest_stream` behavior under both `stream_error_mode="continue"` and `"fail_fast"`.
+    *   Demonstrates `run_backtest(..., on_event=...)` behavior under both `stream_error_mode="continue"` and `"fail_fast"`.
     *   Prints `continue_callback_error_count`, `fail_fast_exception=...`, and ends with `done_streaming_backtest_demo`.
 
 *   **[26_streaming_quickstart.py](https://github.com/akfamily/akquant/blob/main/examples/26_streaming_quickstart.py)**:
-    *   Provides a stream-style counterpart of `01_quickstart.py` using `run_backtest_stream`.
+    *   Provides a stream-style counterpart of `01_quickstart.py` using `run_backtest(..., on_event=...)`.
     *   Prints `stream_started`, `stream_finished`, `stream_seq_monotonic`, and ends with `done_streaming_quickstart`.
 
 *   **[27_streaming_monitoring_console.py](https://github.com/akfamily/akquant/blob/main/examples/27_streaming_monitoring_console.py)**:

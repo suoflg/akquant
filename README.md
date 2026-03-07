@@ -150,7 +150,7 @@ min_margin_level                        68.587671
 
 ## 流式回测 (Streaming)
 
-如果你希望在回测执行过程中实时消费事件，可使用 `run_backtest_stream`：
+如果你希望在回测执行过程中实时消费事件，可直接使用 `run_backtest` 并传入 `on_event`：
 
 ```python
 def on_event(event):
@@ -159,7 +159,7 @@ def on_event(event):
         print("status:", payload.get("status"))
         print("callback_error_count:", payload.get("callback_error_count"))
 
-result = aq.run_backtest_stream(
+result = aq.run_backtest(
     data=df,
     strategy=MyStrategy,
     symbol="sh600000",

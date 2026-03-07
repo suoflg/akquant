@@ -83,20 +83,6 @@ def run_backtest(
     stream_mode: Literal["observability", "audit"] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
-def run_backtest_stream(
-    data: Optional[
-        Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed]
-    ] = ...,
-    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = ...,
-    on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
-    stream_progress_interval: int = ...,
-    stream_equity_interval: int = ...,
-    stream_batch_size: int = ...,
-    stream_max_buffer: int = ...,
-    stream_error_mode: Literal["continue", "fail_fast"] = ...,
-    stream_mode: Literal["observability", "audit"] = ...,
-    **kwargs: Any,
-) -> BacktestResult: ...
 def run_warm_start(
     checkpoint_path: str,
     data: Optional[
@@ -115,7 +101,6 @@ __all__ = [
     "BacktestResult",
     "BacktestStreamEvent",
     "run_backtest",
-    "run_backtest_stream",
     "run_warm_start",
     "FunctionalStrategy",
 ]

@@ -1555,37 +1555,6 @@ def run_backtest(
     return result
 
 
-def run_backtest_stream(
-    data: Optional[
-        Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar], DataFeed]
-    ] = None,
-    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
-    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
-    stream_progress_interval: int = 1,
-    stream_equity_interval: int = 1,
-    stream_batch_size: int = 1,
-    stream_max_buffer: int = 1024,
-    stream_error_mode: str = "continue",
-    stream_mode: str = "observability",
-    **kwargs: Any,
-) -> BacktestResult:
-    """Run backtest with realtime stream callback while keeping return semantics."""
-    if on_event is None:
-        raise ValueError("on_event must be provided for run_backtest_stream")
-    return run_backtest(
-        data=data,
-        strategy=strategy,
-        on_event=on_event,
-        stream_progress_interval=stream_progress_interval,
-        stream_equity_interval=stream_equity_interval,
-        stream_batch_size=stream_batch_size,
-        stream_max_buffer=stream_max_buffer,
-        stream_error_mode=stream_error_mode,
-        stream_mode=stream_mode,
-        **kwargs,
-    )
-
-
 def run_warm_start(
     checkpoint_path: str,
     data: Optional[

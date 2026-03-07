@@ -65,7 +65,7 @@ def run_backtest(
 **Compatibility & Migration Notes:**
 
 *   Prefer migrating realtime UI/logging/alerting to `run_backtest(..., on_event=...)`.
-*   `run_backtest_stream` remains available to keep explicit “stream callback required” semantics.
+*   Stream use cases are unified under `run_backtest(..., on_event=...)`.
 *   Since Phase 5, runtime rollback flags are removed; use release-level rollback when needed.
 *   Phase-4 observation window and go/no-go gates are documented in [Unified Stream Core Checklist](../advanced/stream_observability.md).
 
@@ -75,24 +75,7 @@ def run_backtest(
 *   Can `run_backtest` still be called without `on_event`? Yes, and result-return semantics stay the same.
 *   How do we roll back in production? Use release-level rollback; `_engine_mode` runtime fallback is removed.
 
-### `akquant.run_backtest_stream`
-
-Streaming backtest entry. It preserves the same return semantics as `run_backtest`,
-while emitting runtime events via callback.
-
-```python
-def run_backtest_stream(
-    data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
-    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
-    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
-    stream_progress_interval: int = 1,
-    stream_equity_interval: int = 1,
-    stream_batch_size: int = 1,
-    stream_max_buffer: int = 1024,
-    stream_error_mode: Literal["continue", "fail_fast"] = "continue",
-    **kwargs: Any,
-) -> BacktestResult
-```
+### Stream Parameters & Events (`run_backtest`)
 
 **Key Parameters:**
 

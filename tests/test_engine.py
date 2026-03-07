@@ -353,7 +353,7 @@ def test_backtest_performance_baseline() -> None:
     assert result.metrics.initial_market_value == pytest.approx(100000.0, rel=1e-9)
 
 
-def test_run_backtest_stream_emits_ordered_events() -> None:
+def test_run_backtest_on_event_emits_ordered_events() -> None:
     """Stream API should emit ordered lifecycle events."""
     data = _build_benchmark_data(n=20, symbol="STREAM")
     events: list[akquant.BacktestStreamEvent] = []
@@ -361,7 +361,7 @@ def test_run_backtest_stream_emits_ordered_events() -> None:
     def on_event(event: akquant.BacktestStreamEvent) -> None:
         events.append(event)
 
-    result = akquant.run_backtest_stream(
+    result = akquant.run_backtest(
         data=data,
         strategy=NoopStrategy,
         symbol="STREAM",
@@ -401,14 +401,14 @@ def test_run_backtest_stream_emits_ordered_events() -> None:
         {"stream_max_buffer": 0},
     ],
 )
-def test_run_backtest_stream_rejects_non_positive_stream_options(
+def test_run_backtest_on_event_rejects_non_positive_stream_options(
     kwargs: dict[str, Any],
 ) -> None:
     """Stream API should reject non-positive option values."""
     data = _build_benchmark_data(n=5, symbol="STREAM_OPT")
 
     with pytest.raises(ValueError):
-        akquant.run_backtest_stream(
+        akquant.run_backtest(
             data=data,
             strategy=NoopStrategy,
             symbol="STREAM_OPT",
@@ -418,7 +418,7 @@ def test_run_backtest_stream_rejects_non_positive_stream_options(
         )
 
 
-def test_run_backtest_stream_matches_run_backtest_result() -> None:
+def test_run_backtest_on_event_matches_run_backtest_result() -> None:
     """Stream run should keep the same backtest result semantics."""
     data = _build_benchmark_data(n=120, symbol="CONSIST")
     common_args: dict[str, Any] = dict(
@@ -437,7 +437,7 @@ def test_run_backtest_stream_matches_run_backtest_result() -> None:
 
     normal = akquant.run_backtest(**common_args)
     stream_events: list[akquant.BacktestStreamEvent] = []
-    stream = akquant.run_backtest_stream(
+    stream = akquant.run_backtest(
         **common_args,
         on_event=stream_events.append,
         stream_progress_interval=8,
@@ -458,11 +458,11 @@ def test_run_backtest_stream_matches_run_backtest_result() -> None:
     assert stream_events[-1]["event_type"] == "finished"
 
 
-def test_run_backtest_stream_emits_owner_strategy_id_for_trade_events() -> None:
+def test_run_backtest_on_event_emits_owner_strategy_id_for_trade_events() -> None:
     """Stream trade events should include owner strategy id in payload."""
     bars = _build_regression_bars("STREAM_OWNER")
     events: list[akquant.BacktestStreamEvent] = []
-    result = akquant.run_backtest_stream(
+    result = akquant.run_backtest(
         data=bars,
         strategy=RegressionStrategy,
         symbol="STREAM_OWNER",
@@ -1157,7 +1157,7 @@ def test_run_backtest_strategy_id_propagates_to_executions_df() -> None:
 
 
 def test_run_backtest_with_on_event_matches_stream_entry() -> None:
-    """run_backtest with on_event should match run_backtest_stream semantics."""
+    """run_backtest with on_event should match unified stream semantics."""
     data = _build_benchmark_data(n=120, symbol="EVENT_EQ")
     common_args: dict[str, Any] = dict(
         data=data,
@@ -1182,7 +1182,7 @@ def test_run_backtest_with_on_event_matches_stream_entry() -> None:
         stream_max_buffer=128,
     )
     stream_events: list[akquant.BacktestStreamEvent] = []
-    via_stream_entry = akquant.run_backtest_stream(
+    via_stream_entry = akquant.run_backtest(
         **common_args,
         on_event=stream_events.append,
         stream_progress_interval=8,
@@ -1206,8 +1206,8 @@ def test_run_backtest_with_on_event_matches_stream_entry() -> None:
     )
 
 
-def test_run_backtest_stream_multi_slot_owner_strategy_ids_mixed() -> None:
-    """run_backtest_stream should emit mixed owner strategy ids across slots."""
+def test_run_backtest_on_event_multi_slot_owner_strategy_ids_mixed() -> None:
+    """run_backtest with on_event should emit mixed owner strategy ids across slots."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_slots") or not hasattr(
         probe, "set_strategy_for_slot"
@@ -1216,7 +1216,7 @@ def test_run_backtest_stream_multi_slot_owner_strategy_ids_mixed() -> None:
 
     bars = _build_regression_bars("STREAM_SLOT_OWNER")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=RegressionStrategy,
         symbol="STREAM_SLOT_OWNER",
@@ -1246,15 +1246,15 @@ def test_run_backtest_stream_multi_slot_owner_strategy_ids_mixed() -> None:
     assert owner_ids == {"alpha", "beta"}
 
 
-def test_run_backtest_stream_strategy_priority_orders_requests_by_priority() -> None:
-    """run_backtest_stream should process higher-priority strategy orders first."""
+def test_run_backtest_on_event_strategy_priority_orders_requests_by_priority() -> None:
+    """run_backtest with on_event should process higher-priority orders first."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_priorities"):
         pytest.skip("Engine binary does not expose strategy priority methods")
 
     bars = _build_regression_bars("STREAM_SLOT_PRIORITY")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=SingleBuyStrategy,
         symbol="STREAM_SLOT_PRIORITY",
@@ -1286,7 +1286,7 @@ def test_run_backtest_stream_strategy_priority_orders_requests_by_priority() -> 
     assert submitted_owner_ids[1] == "alpha"
 
 
-def test_run_backtest_stream_portfolio_risk_budget_respects_priority_order() -> None:
+def test_run_backtest_on_event_portfolio_risk_budget_respects_priority_order() -> None:
     """Portfolio risk budget should reject lower-priority strategy."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_portfolio_risk_budget_limit"):
@@ -1294,7 +1294,7 @@ def test_run_backtest_stream_portfolio_risk_budget_respects_priority_order() -> 
 
     bars = _build_regression_bars("STREAM_SLOT_PORTFOLIO_BUDGET")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=SingleBuyStrategy,
         symbol="STREAM_SLOT_PORTFOLIO_BUDGET",
@@ -1390,7 +1390,7 @@ def test_run_backtest_trade_notional_budget_resets_daily() -> None:
     assert not any("risk budget" in reason.lower() for reason in reasons)
 
 
-def test_run_backtest_stream_strategy_max_order_value_by_slot() -> None:
+def test_run_backtest_on_event_strategy_max_order_value_by_slot() -> None:
     """Per-strategy order value limit should reflect in stream risk events."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_max_order_value_limits"):
@@ -1398,7 +1398,7 @@ def test_run_backtest_stream_strategy_max_order_value_by_slot() -> None:
 
     bars = _build_regression_bars("STREAM_SLOT_RISK")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=SingleBuyStrategy,
         symbol="STREAM_SLOT_RISK",
@@ -1427,7 +1427,7 @@ def test_run_backtest_stream_strategy_max_order_value_by_slot() -> None:
     assert risk_owner_ids == {"alpha"}
 
 
-def test_run_backtest_stream_strategy_max_order_size_by_slot() -> None:
+def test_run_backtest_on_event_strategy_max_order_size_by_slot() -> None:
     """Per-strategy order size limit should reflect in stream risk events."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_max_order_size_limits"):
@@ -1435,7 +1435,7 @@ def test_run_backtest_stream_strategy_max_order_size_by_slot() -> None:
 
     bars = _build_regression_bars("STREAM_SLOT_SIZE")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=SingleBuyStrategy,
         symbol="STREAM_SLOT_SIZE",
@@ -1464,7 +1464,7 @@ def test_run_backtest_stream_strategy_max_order_size_by_slot() -> None:
     assert risk_owner_ids == {"alpha"}
 
 
-def test_run_backtest_stream_strategy_max_position_size_by_slot() -> None:
+def test_run_backtest_on_event_strategy_max_position_size_by_slot() -> None:
     """Per-strategy position limit should reflect in stream risk events."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_max_position_size_limits"):
@@ -1472,7 +1472,7 @@ def test_run_backtest_stream_strategy_max_position_size_by_slot() -> None:
 
     bars = _build_regression_bars("STREAM_SLOT_POSITION")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=DualBuyStrategy,
         symbol="STREAM_SLOT_POSITION",
@@ -1501,7 +1501,7 @@ def test_run_backtest_stream_strategy_max_position_size_by_slot() -> None:
     assert risk_owner_ids == {"alpha"}
 
 
-def test_run_backtest_stream_strategy_max_daily_loss_by_slot() -> None:
+def test_run_backtest_on_event_strategy_max_daily_loss_by_slot() -> None:
     """Per-strategy daily loss limit should reflect in stream risk events."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_max_daily_loss_limits"):
@@ -1509,7 +1509,7 @@ def test_run_backtest_stream_strategy_max_daily_loss_by_slot() -> None:
 
     bars = _build_daily_loss_bars("STREAM_SLOT_DAILY_LOSS")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=DualBuyStrategy,
         symbol="STREAM_SLOT_DAILY_LOSS",
@@ -1538,7 +1538,7 @@ def test_run_backtest_stream_strategy_max_daily_loss_by_slot() -> None:
     assert risk_owner_ids == {"alpha"}
 
 
-def test_run_backtest_stream_strategy_max_drawdown_by_slot() -> None:
+def test_run_backtest_on_event_strategy_max_drawdown_by_slot() -> None:
     """Per-strategy drawdown limit should reflect in stream risk events."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_max_drawdown_limits"):
@@ -1546,7 +1546,7 @@ def test_run_backtest_stream_strategy_max_drawdown_by_slot() -> None:
 
     bars = _build_daily_loss_bars("STREAM_SLOT_DRAWDOWN")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=DualBuyStrategy,
         symbol="STREAM_SLOT_DRAWDOWN",
@@ -1575,7 +1575,7 @@ def test_run_backtest_stream_strategy_max_drawdown_by_slot() -> None:
     assert risk_owner_ids == {"alpha"}
 
 
-def test_run_backtest_stream_reduce_only_after_risk_by_slot() -> None:
+def test_run_backtest_on_event_reduce_only_after_risk_by_slot() -> None:
     """Stream risk events should include reduce-only rejections."""
     probe = akquant.Engine()
     if not hasattr(probe, "set_strategy_reduce_only_after_risk"):
@@ -1583,7 +1583,7 @@ def test_run_backtest_stream_reduce_only_after_risk_by_slot() -> None:
 
     bars = _build_reduce_only_bars("STREAM_SLOT_REDUCE_ONLY")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=bars,
         strategy=BuyBuySellBuyStrategy,
         symbol="STREAM_SLOT_REDUCE_ONLY",
@@ -1628,11 +1628,11 @@ def test_run_backtest_rejects_removed_engine_mode_option() -> None:
         )
 
 
-def test_run_backtest_stream_high_frequency_keeps_critical_events() -> None:
+def test_run_backtest_on_event_high_frequency_keeps_critical_events() -> None:
     """High-frequency stream should keep critical events and sampled updates."""
     data = _build_benchmark_data(n=2000, symbol="HF")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=data,
         strategy=NoopStrategy,
         symbol="HF",
@@ -1668,7 +1668,7 @@ def test_run_backtest_stream_high_frequency_keeps_critical_events() -> None:
     assert int(str(finished_payload["dropped_event_count"])) >= 0
 
 
-def test_run_backtest_stream_callback_error_continue_mode() -> None:
+def test_run_backtest_on_event_callback_error_continue_mode() -> None:
     """Continue mode should survive callback exceptions."""
     data = _build_benchmark_data(n=40, symbol="CALLBACK_CONT")
     events: list[akquant.BacktestStreamEvent] = []
@@ -1680,7 +1680,7 @@ def test_run_backtest_stream_callback_error_continue_mode() -> None:
             raise RuntimeError("callback boom")
         events.append(event)
 
-    result = akquant.run_backtest_stream(
+    result = akquant.run_backtest(
         data=data,
         strategy=NoopStrategy,
         symbol="CALLBACK_CONT",
@@ -1696,11 +1696,11 @@ def test_run_backtest_stream_callback_error_continue_mode() -> None:
     assert result.metrics.initial_market_value == pytest.approx(1000000.0, rel=1e-9)
 
 
-def test_run_backtest_stream_reports_dropped_events_under_backpressure() -> None:
+def test_run_backtest_on_event_reports_dropped_events_under_backpressure() -> None:
     """Finished payload should report dropped events when buffer is constrained."""
     data = _build_benchmark_data(n=300, symbol="DROP")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=data,
         strategy=NoopStrategy,
         symbol="DROP",
@@ -1721,11 +1721,11 @@ def test_run_backtest_stream_reports_dropped_events_under_backpressure() -> None
     assert dropped_by_type
 
 
-def test_run_backtest_stream_audit_mode_enforces_full_delivery() -> None:
+def test_run_backtest_on_event_audit_mode_enforces_full_delivery() -> None:
     """Audit mode should disable sampling and avoid dropping non-critical events."""
     data = _build_benchmark_data(n=300, symbol="AUDIT")
     events: list[akquant.BacktestStreamEvent] = []
-    akquant.run_backtest_stream(
+    akquant.run_backtest(
         data=data,
         strategy=NoopStrategy,
         symbol="AUDIT",
@@ -1752,7 +1752,7 @@ def test_run_backtest_stream_audit_mode_enforces_full_delivery() -> None:
     assert str(payload.get("dropped_event_count_by_type", "")) == ""
 
 
-def test_run_backtest_stream_callback_error_fail_fast_mode() -> None:
+def test_run_backtest_on_event_callback_error_fail_fast_mode() -> None:
     """Fail-fast mode should raise once callback throws."""
     data = _build_benchmark_data(n=40, symbol="CALLBACK_FAIL")
 
@@ -1760,7 +1760,7 @@ def test_run_backtest_stream_callback_error_fail_fast_mode() -> None:
         raise RuntimeError("callback boom")
 
     with pytest.raises(RuntimeError, match="stream callback failed in fail_fast mode"):
-        akquant.run_backtest_stream(
+        akquant.run_backtest(
             data=data,
             strategy=NoopStrategy,
             symbol="CALLBACK_FAIL",
@@ -1770,11 +1770,11 @@ def test_run_backtest_stream_callback_error_fail_fast_mode() -> None:
         )
 
 
-def test_run_backtest_stream_rejects_invalid_error_mode() -> None:
+def test_run_backtest_on_event_rejects_invalid_error_mode() -> None:
     """Invalid stream error mode should be rejected."""
     data = _build_benchmark_data(n=5, symbol="CALLBACK_MODE")
     with pytest.raises(ValueError):
-        akquant.run_backtest_stream(
+        akquant.run_backtest(
             data=data,
             strategy=NoopStrategy,
             symbol="CALLBACK_MODE",
@@ -1784,11 +1784,11 @@ def test_run_backtest_stream_rejects_invalid_error_mode() -> None:
         )
 
 
-def test_run_backtest_stream_rejects_invalid_stream_mode() -> None:
+def test_run_backtest_on_event_rejects_invalid_stream_mode() -> None:
     """Invalid stream mode should be rejected."""
     data = _build_benchmark_data(n=5, symbol="MODE_BAD")
     with pytest.raises(ValueError):
-        akquant.run_backtest_stream(
+        akquant.run_backtest(
             data=data,
             strategy=NoopStrategy,
             symbol="MODE_BAD",
@@ -1798,7 +1798,7 @@ def test_run_backtest_stream_rejects_invalid_stream_mode() -> None:
         )
 
 
-def test_run_backtest_stream_audit_mode_latency_budget_benchmark() -> None:
+def test_run_backtest_on_event_audit_mode_latency_budget_benchmark() -> None:
     """Audit mode benchmark with fixed callback delays for budget baselining."""
     data = _build_benchmark_data(n=240, symbol="AUDIT_BUDGET")
     delay_ms_options = [0, 1, 5]
@@ -1814,7 +1814,7 @@ def test_run_backtest_stream_audit_mode_latency_budget_benchmark() -> None:
                 time.sleep(delay_ms / 1000.0)
 
         start = time.perf_counter()
-        akquant.run_backtest_stream(
+        akquant.run_backtest(
             data=data,
             strategy=NoopStrategy,
             symbol="AUDIT_BUDGET",

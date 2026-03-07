@@ -66,7 +66,7 @@ def main() -> None:
     backtest_config = BacktestConfig(strategy_config=strategy_config)
 
     events: list[aq.BacktestStreamEvent] = []
-    result = aq.run_backtest_stream(
+    result = aq.run_backtest(
         strategy=MyStreamStrategy,
         data=data,
         initial_cash=5000000,

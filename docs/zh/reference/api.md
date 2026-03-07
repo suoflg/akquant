@@ -66,7 +66,7 @@ def run_backtest(
 **兼容与迁移说明:**
 
 *   推荐逐步将实时 UI / 日志 / 告警接入迁移到 `run_backtest(..., on_event=...)`。
-*   `run_backtest_stream` 继续保留，用于显式表达“必须消费流式事件”的调用语义。
+*   流式场景统一使用 `run_backtest(..., on_event=...)`。
 *   阶段 5 后不再提供运行时参数级回滚开关；如需回滚请使用版本级回滚策略。
 *   阶段 4 观察窗口与推进门槛请参考：[流式统一内核观察清单](../advanced/stream_observability.md)。
 
@@ -76,23 +76,7 @@ def run_backtest(
 *   `run_backtest` 是否仍可不传 `on_event`？可以，不传时仍返回同样的结果对象语义。
 *   线上出现问题如何回退？使用版本级回滚，不再支持 `_engine_mode` 参数级回切。
 
-### `akquant.run_backtest_stream`
-
-流式回测入口。与 `run_backtest` 返回语义一致，但支持在运行期间通过回调接收事件。
-
-```python
-def run_backtest_stream(
-    data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
-    strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
-    on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
-    stream_progress_interval: int = 1,
-    stream_equity_interval: int = 1,
-    stream_batch_size: int = 1,
-    stream_max_buffer: int = 1024,
-    stream_error_mode: Literal["continue", "fail_fast"] = "continue",
-    **kwargs: Any,
-) -> BacktestResult
-```
+### 流式参数与事件 (`run_backtest`)
 
 **关键参数:**
 
