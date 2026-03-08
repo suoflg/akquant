@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 import threading
 import time
-from typing import Any, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 
 from akquant import Bar, DataFeed, Engine, Instrument, Strategy
-from akquant.gateway.ctp import CTPMarketGateway
+from akquant.gateway.factory import create_gateway_bundle
+from akquant.gateway.models import UnifiedOrderRequest
 
 
 class LiveRunner:
@@ -19,7 +20,7 @@ class LiveRunner:
         self,
         strategy_cls: Type[Strategy],
         instruments: List[Instrument],
-        md_front: str,
+        md_front: str = "",
         td_front: Optional[str] = None,
         broker_id: str = "",
         user_id: str = "",
@@ -27,6 +28,9 @@ class LiveRunner:
         app_id: str = "",
         auth_code: str = "",
         use_aggregator: bool = True,
+        broker: str = "ctp",
+        trading_mode: str = "paper",
+        gateway_options: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -52,6 +56,10 @@ class LiveRunner:
         self.app_id = app_id
         self.auth_code = auth_code
         self.use_aggregator = use_aggregator
+        self.broker = broker
+        self.trading_mode = trading_mode
+        self.gateway_options = gateway_options or {}
+        self._init_broker_bridge_state()
 
         self.feed = DataFeed.create_live()  # type: ignore
         self.engine = Engine()
@@ -77,30 +85,46 @@ class LiveRunner:
         for instrument in self.instruments:
             self.engine.add_instrument(instrument)
 
+        if self.trading_mode == "broker_live":
+            self.engine.use_realtime_execution()
+        else:
+            self.engine.use_simulated_execution()
+
         self.engine.use_china_futures_market()
-        # Force continuous session for simulation/paper trading often needed
         self.engine.set_force_session_continuous(True)
 
-        # Start CTP Market Gateway
-        print("[LiveRunner] Starting CTP Market Gateway...")
         symbols = [inst.symbol for inst in self.instruments]
-        md_gateway = CTPMarketGateway(
-            self.feed, self.md_front, symbols, self.use_aggregator
+        gateway_kwargs = self._build_gateway_kwargs()
+        bundle = create_gateway_bundle(
+            broker=self.broker,
+            feed=self.feed,
+            symbols=symbols,
+            use_aggregator=self.use_aggregator,
+            **gateway_kwargs,
         )
-        md_thread = threading.Thread(target=md_gateway.start, daemon=True)
-        md_thread.start()
 
-        # Optional: Start Trader Gateway if credentials provided
-        if self.td_front and self.user_id:
-            print(
-                "[LiveRunner] Trader Gateway credentials provided, but Trader "
-                "Gateway is not fully integrated in this runner yet."
+        print(f"[LiveRunner] Starting {self.broker} market gateway...")
+        self._start_gateway_thread(bundle.market_gateway.start, f"{self.broker}-market")
+
+        if self.trading_mode == "broker_live":
+            if bundle.trader_gateway is None:
+                raise ValueError(
+                    "trading_mode='broker_live' requires a trader gateway configuration"
+                )
+            print(f"[LiveRunner] Starting {self.broker} trader gateway...")
+            self._start_gateway_thread(
+                bundle.trader_gateway.start, f"{self.broker}-trader"
             )
 
         time.sleep(2.0)
 
         # Create Strategy Instance
         strategy_instance = self.strategy_cls()
+        if bundle.trader_gateway is not None:
+            self._bind_broker_callbacks(bundle.trader_gateway, strategy_instance)
+            self._install_broker_order_submitter(
+                bundle.trader_gateway, strategy_instance
+            )
 
         # Apply duration limit if specified
         if duration:
@@ -118,7 +142,372 @@ class LiveRunner:
 
             traceback.print_exc()
         finally:
+            self._stop_broker_dispatcher()
             self._print_summary()
+
+    def _build_gateway_kwargs(self) -> Dict[str, Any]:
+        kwargs = dict(self.gateway_options)
+        if self.md_front:
+            kwargs.setdefault("md_front", self.md_front)
+        if self.td_front:
+            kwargs.setdefault("td_front", self.td_front)
+        if self.broker_id:
+            kwargs.setdefault("broker_id", self.broker_id)
+        if self.user_id:
+            kwargs.setdefault("user_id", self.user_id)
+        if self.password:
+            kwargs.setdefault("password", self.password)
+        if self.app_id:
+            kwargs.setdefault("app_id", self.app_id)
+        if self.auth_code:
+            kwargs.setdefault("auth_code", self.auth_code)
+        return kwargs
+
+    def _start_gateway_thread(self, target: Any, name: str) -> None:
+        thread = threading.Thread(target=target, name=name, daemon=True)
+        thread.start()
+
+    def _init_broker_bridge_state(self) -> None:
+        self._broker_event_lock = threading.Lock()
+        self._broker_events: list[tuple[str, Any]] = []
+        self._broker_event_keys: set[str] = set()
+        self._broker_order_states: dict[str, Any] = {}
+        self._client_to_broker_order_ids: dict[str, str] = {}
+        self._broker_to_client_order_ids: dict[str, str] = {}
+        self._closed_broker_order_ids: set[str] = set()
+        self._broker_trade_keys: set[str] = set()
+        self._broker_report_keys: set[str] = set()
+        self._broker_dispatch_stop: threading.Event | None = None
+        self._broker_dispatch_thread: threading.Thread | None = None
+        self._broker_recovery_stop: threading.Event | None = None
+        self._broker_recovery_thread: threading.Thread | None = None
+        self._broker_recovery_interval_sec = 1.0
+        self._broker_trader_gateway: Any = None
+        self._broker_submit_seq = 0
+        self._broker_submit_lock = threading.Lock()
+
+    def _bind_broker_callbacks(self, trader_gateway: Any, strategy: Strategy) -> None:
+        self._broker_trader_gateway = trader_gateway
+        if hasattr(trader_gateway, "on_order"):
+            trader_gateway.on_order(
+                lambda order: self._queue_broker_event("order", order)
+            )
+        if hasattr(trader_gateway, "on_trade"):
+            trader_gateway.on_trade(
+                lambda trade: self._queue_broker_event("trade", trade)
+            )
+        if hasattr(trader_gateway, "on_execution_report"):
+            trader_gateway.on_execution_report(
+                lambda report: self._queue_broker_event("execution_report", report)
+            )
+        self._start_broker_dispatcher(strategy)
+
+    def _install_broker_order_submitter(
+        self, trader_gateway: Any, strategy: Strategy
+    ) -> None:
+        def _submit_order(
+            symbol: str,
+            side: str,
+            quantity: float,
+            price: float | None = None,
+            client_order_id: str | None = None,
+            order_type: str = "Market",
+            time_in_force: str = "GTC",
+            trigger_price: float | None = None,
+            tag: str | None = None,
+            extra: dict[str, Any] | None = None,
+        ) -> str:
+            _ = trigger_price
+            _ = tag
+            if extra:
+                raise RuntimeError("extra broker fields are not supported")
+            request_client_order_id = client_order_id or self._next_client_order_id()
+            if not self.can_submit_client_order(request_client_order_id):
+                exc = RuntimeError(
+                    f"duplicate active client_order_id: {request_client_order_id}"
+                )
+                self._notify_strategy_error(
+                    strategy,
+                    exc,
+                    "submit_order",
+                    {
+                        "client_order_id": request_client_order_id,
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                    },
+                )
+                raise exc
+            request = UnifiedOrderRequest(
+                client_order_id=request_client_order_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                order_type=order_type,
+                time_in_force=time_in_force,
+            )
+            broker_order_id = str(trader_gateway.place_order(request))
+            self._sync_order_id_mapping(request_client_order_id, broker_order_id)
+            return broker_order_id
+
+        setattr(strategy, "submit_order", _submit_order)
+        setattr(strategy, "can_submit_client_order", self.can_submit_client_order)
+        setattr(strategy, "get_execution_capabilities", self.get_execution_capabilities)
+
+    def _start_broker_dispatcher(self, strategy: Strategy) -> None:
+        self._stop_broker_dispatcher()
+        self._broker_dispatch_stop = threading.Event()
+        self._broker_dispatch_thread = threading.Thread(
+            target=self._broker_dispatch_loop,
+            args=(strategy,),
+            name=f"{self.broker}-broker-dispatch",
+            daemon=True,
+        )
+        self._broker_dispatch_thread.start()
+        self._start_broker_recovery(strategy)
+
+    def _stop_broker_dispatcher(self) -> None:
+        self._stop_broker_recovery()
+        if self._broker_dispatch_stop is not None:
+            self._broker_dispatch_stop.set()
+        if self._broker_dispatch_thread is not None:
+            self._broker_dispatch_thread.join(timeout=1.0)
+        self._broker_dispatch_stop = None
+        self._broker_dispatch_thread = None
+
+    def _start_broker_recovery(self, strategy: Strategy) -> None:
+        self._stop_broker_recovery()
+        self._broker_recovery_stop = threading.Event()
+        self._broker_recovery_thread = threading.Thread(
+            target=self._broker_recovery_loop,
+            args=(strategy,),
+            name=f"{self.broker}-broker-recovery",
+            daemon=True,
+        )
+        self._broker_recovery_thread.start()
+
+    def _stop_broker_recovery(self) -> None:
+        if self._broker_recovery_stop is not None:
+            self._broker_recovery_stop.set()
+        if self._broker_recovery_thread is not None:
+            self._broker_recovery_thread.join(timeout=1.0)
+        self._broker_recovery_stop = None
+        self._broker_recovery_thread = None
+
+    def _queue_broker_event(self, event_name: str, payload: Any) -> None:
+        event_key = self._make_event_key(event_name, payload)
+        with self._broker_event_lock:
+            if event_key in self._broker_event_keys:
+                return
+            self._broker_event_keys.add(event_key)
+            self._broker_events.append((event_name, payload))
+
+    def _broker_dispatch_loop(self, strategy: Strategy) -> None:
+        while (
+            self._broker_dispatch_stop is not None
+            and not self._broker_dispatch_stop.is_set()
+        ):
+            self._drain_broker_events(strategy)
+            time.sleep(0.05)
+        self._drain_broker_events(strategy)
+
+    def _drain_broker_events(self, strategy: Strategy) -> None:
+        with self._broker_event_lock:
+            events = list(self._broker_events)
+            self._broker_events.clear()
+            self._broker_event_keys.clear()
+        for event_name, payload in events:
+            self._update_broker_state(event_name, payload)
+            if event_name == "order":
+                self._safe_strategy_callback(strategy, "on_order", payload)
+            elif event_name == "trade":
+                self._safe_strategy_callback(strategy, "on_trade", payload)
+            elif event_name == "execution_report":
+                self._safe_strategy_callback(strategy, "on_execution_report", payload)
+
+    def _broker_recovery_loop(self, strategy: Strategy) -> None:
+        while (
+            self._broker_recovery_stop is not None
+            and not self._broker_recovery_stop.is_set()
+        ):
+            self._run_broker_recovery_cycle()
+            self._drain_broker_events(strategy)
+            time.sleep(self._broker_recovery_interval_sec)
+
+    def _run_broker_recovery_cycle(self) -> None:
+        gateway = self._broker_trader_gateway
+        if gateway is None:
+            return
+        heartbeat = getattr(gateway, "heartbeat", None)
+        if callable(heartbeat):
+            try:
+                alive = heartbeat()
+            except Exception:
+                alive = False
+            if not alive:
+                connect = getattr(gateway, "connect", None)
+                if callable(connect):
+                    try:
+                        connect()
+                    except Exception:
+                        return
+        sync_open_orders = getattr(gateway, "sync_open_orders", None)
+        if callable(sync_open_orders):
+            try:
+                for order in sync_open_orders():
+                    self._queue_broker_event("order", order)
+            except Exception:
+                pass
+        sync_today_trades = getattr(gateway, "sync_today_trades", None)
+        if callable(sync_today_trades):
+            try:
+                for trade in sync_today_trades():
+                    self._queue_broker_event("trade", trade)
+            except Exception:
+                pass
+
+    def _update_broker_state(self, event_name: str, payload: Any) -> None:
+        if event_name == "order":
+            broker_order_id = str(self._payload_field(payload, "broker_order_id"))
+            client_order_id = str(self._payload_field(payload, "client_order_id"))
+            self._sync_order_id_mapping(client_order_id, broker_order_id)
+            if broker_order_id:
+                self._broker_order_states[broker_order_id] = payload
+                status = self._payload_field(payload, "status")
+                if self._is_terminal_status(status):
+                    self._close_order_mapping(client_order_id, broker_order_id)
+        elif event_name == "trade":
+            trade_key = str(self._payload_field(payload, "trade_id"))
+            broker_order_id = str(self._payload_field(payload, "broker_order_id"))
+            client_order_id = str(self._payload_field(payload, "client_order_id"))
+            if not client_order_id and broker_order_id:
+                client_order_id = self._resolve_client_order_id(broker_order_id)
+            self._sync_order_id_mapping(client_order_id, broker_order_id)
+            if trade_key:
+                self._broker_trade_keys.add(trade_key)
+        elif event_name == "execution_report":
+            broker_order_id = str(self._payload_field(payload, "broker_order_id"))
+            client_order_id = str(self._payload_field(payload, "client_order_id"))
+            self._sync_order_id_mapping(client_order_id, broker_order_id)
+            status = self._payload_field(payload, "status")
+            if self._is_terminal_status(status):
+                self._close_order_mapping(client_order_id, broker_order_id)
+            report_key = (
+                f"{self._payload_field(payload, 'broker_order_id')}-"
+                f"{self._payload_field(payload, 'status')}-"
+                f"{self._payload_field(payload, 'timestamp_ns')}"
+            )
+            if report_key:
+                self._broker_report_keys.add(report_key)
+
+    def _make_event_key(self, event_name: str, payload: Any) -> str:
+        if event_name == "trade":
+            trade_id = str(self._payload_field(payload, "trade_id"))
+            if trade_id:
+                return f"trade:{trade_id}"
+        if event_name == "order":
+            broker_order_id = str(self._payload_field(payload, "broker_order_id"))
+            status = str(self._payload_field(payload, "status"))
+            filled_quantity = str(self._payload_field(payload, "filled_quantity"))
+            timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
+            return f"order:{broker_order_id}:{status}:{filled_quantity}:{timestamp_ns}"
+        if event_name == "execution_report":
+            broker_order_id = str(self._payload_field(payload, "broker_order_id"))
+            status = str(self._payload_field(payload, "status"))
+            timestamp_ns = str(self._payload_field(payload, "timestamp_ns"))
+            return f"execution_report:{broker_order_id}:{status}:{timestamp_ns}"
+        return f"{event_name}:{id(payload)}"
+
+    def _payload_field(self, payload: Any, field: str) -> Any:
+        if isinstance(payload, dict):
+            return payload.get(field, "")
+        return getattr(payload, field, "")
+
+    def _next_client_order_id(self) -> str:
+        with self._broker_submit_lock:
+            self._broker_submit_seq += 1
+            return f"{self.broker}-coid-{self._broker_submit_seq}"
+
+    def _sync_order_id_mapping(
+        self,
+        client_order_id: str,
+        broker_order_id: str,
+    ) -> None:
+        if client_order_id and broker_order_id:
+            self._client_to_broker_order_ids[client_order_id] = broker_order_id
+            self._broker_to_client_order_ids[broker_order_id] = client_order_id
+
+    def _resolve_client_order_id(self, broker_order_id: str) -> str:
+        return self._broker_to_client_order_ids.get(broker_order_id, "")
+
+    def _resolve_broker_order_id(self, client_order_id: str) -> str:
+        return self._client_to_broker_order_ids.get(client_order_id, "")
+
+    def _close_order_mapping(self, client_order_id: str, broker_order_id: str) -> None:
+        if client_order_id:
+            self._client_to_broker_order_ids.pop(client_order_id, None)
+        if broker_order_id:
+            self._broker_to_client_order_ids.pop(broker_order_id, None)
+            self._closed_broker_order_ids.add(broker_order_id)
+
+    def _is_terminal_status(self, status: Any) -> bool:
+        status_text = str(status).strip().lower()
+        return status_text in {"filled", "cancelled", "canceled", "rejected"}
+
+    def can_submit_client_order(self, client_order_id: str) -> bool:
+        """Check whether a client order id can be submitted again."""
+        broker_order_id = self._resolve_broker_order_id(client_order_id)
+        if not broker_order_id:
+            return True
+        if broker_order_id in self._closed_broker_order_ids:
+            return True
+        snapshot = self._broker_order_states.get(broker_order_id)
+        if snapshot is None:
+            return False
+        status = self._payload_field(snapshot, "status")
+        return self._is_terminal_status(status)
+
+    def get_execution_capabilities(self) -> dict[str, Any]:
+        """Return execution capabilities for broker live mode."""
+        return {
+            "broker_live": True,
+            "client_order_id": True,
+            "order_type": True,
+            "time_in_force_str": True,
+            "broker_extra_fields": [],
+        }
+
+    def _notify_strategy_error(
+        self,
+        strategy: Strategy,
+        error: Exception,
+        source: str,
+        payload: Any,
+    ) -> None:
+        on_error = getattr(strategy, "on_error", None)
+        if on_error is None:
+            return
+        try:
+            on_error(error, source, payload)
+        except Exception:
+            pass
+
+    def _safe_strategy_callback(
+        self,
+        strategy: Strategy,
+        callback_name: str,
+        payload: Any,
+    ) -> None:
+        callback = getattr(strategy, callback_name, None)
+        if callback is None:
+            return
+        try:
+            callback(payload)
+        except Exception as exc:
+            on_error = getattr(strategy, "on_error", None)
+            if on_error is not None and callback_name != "on_error":
+                on_error(exc, callback_name, payload)
 
     def _apply_time_limit(self, strategy: Strategy, duration_str: str) -> None:
         """Inject time check into strategy methods."""

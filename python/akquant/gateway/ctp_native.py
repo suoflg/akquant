@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 
 from akquant import Bar, BarAggregator, DataFeed
 
-# Optional dependency
 try:
     from openctp_ctp import thostmduserapi as mdapi  # type: ignore
     from openctp_ctp import thosttraderapi as tdapi  # type: ignore
@@ -18,19 +17,24 @@ try:
     HAS_OPENCTP = True
 except ImportError:
     HAS_OPENCTP = False
-    # Define dummy base classes to avoid NameError during class definition
-    mdapi = object  # type: ignore
-    tdapi = object  # type: ignore
 
-    # Mocking Spi classes for type hinting/inheritance purposes if library is missing
-    # In reality, the classes below won't work without the library
     class MockSpi:
         """Mock SPI class for when openctp-ctp is not installed."""
 
         pass
 
-    mdapi.CThostFtdcMdSpi = MockSpi  # type: ignore
-    tdapi.CThostFtdcTraderSpi = MockSpi  # type: ignore
+    class MockMdApi:
+        """Mock market API namespace."""
+
+        CThostFtdcMdSpi = MockSpi
+
+    class MockTdApi:
+        """Mock trader API namespace."""
+
+        CThostFtdcTraderSpi = MockSpi
+
+    mdapi = MockMdApi  # type: ignore
+    tdapi = MockTdApi  # type: ignore
 
 
 class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
@@ -88,8 +92,6 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             self.api.SubscribePrivateTopic(tdapi.THOST_TERT_QUICK)
             self.api.SubscribePublicTopic(tdapi.THOST_TERT_QUICK)
             self.api.Init()
-
-            # Keep thread alive
             print("[CTP-Trade] API Initialized, joining thread...")
             self.api.Join()
         except Exception as e:
@@ -102,7 +104,6 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         )
         self.connected = True
 
-        # Authenticate
         self.req_id += 1
         req = tdapi.CThostFtdcReqAuthenticateField()
         req.BrokerID = self.broker_id
@@ -126,13 +127,11 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                 f"[CTP-Trade] Authentication failed. ErrorID={pRspInfo.ErrorID}, "
                 f"Msg={pRspInfo.ErrorMsg}"
             )
-            # Even if auth fails, some sim envs might allow login, but usually not.
         else:
             print("[CTP-Trade] Authentication succeed.")
 
         self.authenticated = True
 
-        # Login
         self.req_id += 1
         req = tdapi.CThostFtdcReqUserLoginField()
         req.BrokerID = self.broker_id
@@ -159,7 +158,6 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         )
         self.login_status = True
 
-        # Settlement Confirm
         self.req_id += 1
         req = tdapi.CThostFtdcSettlementInfoConfirmField()
         req.BrokerID = self.broker_id
@@ -225,11 +223,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self.api: Any = None
         self.req_id = 0
         self.connected = False
-
-        # Helper for Tick-as-Bar mode
         self.last_volume: Dict[str, float] = {}
 
-        # Helper for Aggregator mode
         self.aggregator: Optional[BarAggregator]
         if self.use_aggregator:
             self.aggregator = BarAggregator(feed)
@@ -244,8 +239,6 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             self.api.RegisterFront(self.front_url)
             self.api.RegisterSpi(self)
             self.api.Init()
-
-            # Keep the CTP thread alive
             print("[CTP] API Initialized, joining thread...")
             self.api.Join()
         except Exception as e:
@@ -256,7 +249,6 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         print(f"[CTP] OnFrontConnected: Successfully connected to {self.front_url}")
         self.connected = True
 
-        # Login (SimNow market data usually doesn't need specific user/pass)
         req = mdapi.CThostFtdcReqUserLoginField()
         self.req_id += 1
         print(f"[CTP] Requesting User Login (ReqID={self.req_id})...")
@@ -284,10 +276,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             f"BrokerID: {pRspUserLogin.BrokerID}, UserID: {pRspUserLogin.UserID}"
         )
 
-        # Subscribe
         print(f"[CTP] Subscribing to {self.symbols}...")
         self.req_id += 1
-        # CTP API expects list of bytes
         if self.api:
             ret = self.api.SubscribeMarketData(
                 [s.encode("utf-8") for s in self.symbols], len(self.symbols)
@@ -315,41 +305,25 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
 
     def OnRtnDepthMarketData(self, pDepthMarketData: Any) -> None:
         """Process market data tick."""
-        # Received Tick Data
         symbol = pDepthMarketData.InstrumentID
         price = pDepthMarketData.LastPrice
         volume = pDepthMarketData.Volume
-        # update_time = pDepthMarketData.UpdateTime
-        # millis = pDepthMarketData.UpdateMillisec
 
-        # Filter invalid data
         if price > 1e7 or price <= 0:
             return
 
-        # Note: In production logging every tick might be too verbose
-        # print(
-        #     f"[CTP] TICK -> {symbol} | Time: {update_time}.{millis:03d} | "
-        #     f"Price: {price} | Vol: {volume}"
-        # )
-
-        # Use system time for timestamp as CTP time parsing can be complex
         now_ns = time.time_ns()
 
         if self.use_aggregator and self.aggregator:
-            # Use Rust Aggregator
             self.aggregator.on_tick(symbol, price, float(volume), now_ns)
         else:
-            # Manual Tick-as-Bar Logic
-            # Calculate Delta Volume (CTP Volume is cumulative)
             last_vol = self.last_volume.get(symbol, volume)
             delta_vol = volume - last_vol
             self.last_volume[symbol] = volume
 
-            # Avoid negative volume if reset happens (e.g. next trading day)
             if delta_vol < 0:
                 delta_vol = volume
 
-            # Construct akquant.Bar
             bar = Bar(
                 timestamp=now_ns,
                 symbol=symbol,
@@ -361,5 +335,4 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
                 extra={},
             )
 
-            # Push to AkQuant Engine (Thread-safe)
             self.feed.add_bar(bar)  # type: ignore

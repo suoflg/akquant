@@ -331,3 +331,7 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
 *   **[34_multi_strategy_migration_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_migration_demo.py)**:
     *   Demonstrates before/after migration from single strategy to multi-slot execution, including strategy-level limits, reduce-only behavior, and cooldown bars.
     *   Prints `single_owner_ids`, `multi_owner_ids`, `multi_alpha_cooldown_rejections`, and ends with `done_multi_strategy_migration_demo`.
+
+*   **[35_custom_broker_registry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/35_custom_broker_registry_demo.py)**:
+    *   Demonstrates custom broker registry flow: injects a broker `builder` with `register_broker` and creates gateways by name via `create_gateway_bundle`.
+    *   Prints `bundle.metadata` to confirm the custom broker is resolved by factory.

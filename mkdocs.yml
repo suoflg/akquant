@@ -85,6 +85,8 @@ plugins:
             Runtime Config Guide: 运行时配置指南
             Warm Start Guide: 热启动指南
             Multi-Strategy Migration Guide: 多策略迁移指南
+            Custom Broker Registry: 自定义 Broker 注册
+            Custom Broker Production Checklist: 自定义 Broker 生产接入清单
             Timezone Handling: 时区处理
             Testing Guide: 测试指南
             API Reference: API 参考
@@ -137,6 +139,8 @@ plugins:
             LLM Guide: LLM Guide
             Runtime Config Guide: Runtime Config Guide
             Multi-Strategy Migration Guide: Multi-Strategy Migration Guide
+            Custom Broker Registry: Custom Broker Registry
+            Custom Broker Production Checklist: Custom Broker Production Checklist
             Timezone Handling: Timezone Handling
             Testing Guide: Testing Guide
             API Reference: API Reference
@@ -212,6 +216,8 @@ nav:
       - Runtime Config Guide: advanced/runtime_config.md
       - Warm Start Guide: advanced/warm_start.md
       - Multi-Strategy Migration Guide: advanced/multi_strategy_migration.md
+      - Custom Broker Registry: advanced/custom_broker_registry.md
+      - Custom Broker Production Checklist: advanced/custom_broker_production_checklist.md
       - Timezone Handling: advanced/timezone.md
   - API Reference: reference/api.md
   - Architecture & Internals:

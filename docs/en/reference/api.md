@@ -414,6 +414,43 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 *   `use_china_market()`: Enable China market.
 *   `set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)`: Set fee rules.
 
+### `akquant.gateway` Custom Broker Registry
+
+You can plug in a custom broker by name through the registry without editing built-in factory branches.
+
+**Registry APIs:**
+
+*   `register_broker(name, builder)`: Register a broker builder.
+*   `unregister_broker(name)`: Unregister a broker.
+*   `get_broker_builder(name)`: Resolve a broker builder.
+*   `list_registered_brokers()`: List currently registered brokers.
+
+**Builder signature:**
+
+```python
+def builder(
+    feed: DataFeed,
+    symbols: Sequence[str],
+    use_aggregator: bool,
+    **kwargs: Any,
+) -> GatewayBundle:
+    ...
+```
+
+**Example:**
+
+```python
+from akquant import DataFeed
+from akquant.gateway import create_gateway_bundle, register_broker
+
+register_broker("demo", demo_builder)
+bundle = create_gateway_bundle(
+    broker="demo",
+    feed=DataFeed(),
+    symbols=["000001.SZ"],
+)
+```
+
 ## 4. Trading Objects
 
 ### `akquant.Order`
