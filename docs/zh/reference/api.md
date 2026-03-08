@@ -412,6 +412,43 @@ Tick 数据对象。
 *   `set_volume_limit(limit)`: 设置成交量限制 (如 0.1 表示不超过 Bar 成交量的 10%)。
 *   `set_market_sessions(sessions)`: 设置交易时段。
 
+### `akquant.gateway` 自定义 Broker 注册
+
+可通过注册表机制按名称接入自定义 broker，而无需修改内置工厂分支。
+
+**注册表 API:**
+
+*   `register_broker(name, builder)`: 注册 broker 构建函数。
+*   `unregister_broker(name)`: 取消注册 broker。
+*   `get_broker_builder(name)`: 查询 broker 构建函数。
+*   `list_registered_brokers()`: 获取当前已注册 broker 列表。
+
+**Builder 签名:**
+
+```python
+def builder(
+    feed: DataFeed,
+    symbols: Sequence[str],
+    use_aggregator: bool,
+    **kwargs: Any,
+) -> GatewayBundle:
+    ...
+```
+
+**示例:**
+
+```python
+from akquant import DataFeed
+from akquant.gateway import create_gateway_bundle, register_broker
+
+register_broker("demo", demo_builder)
+bundle = create_gateway_bundle(
+    broker="demo",
+    feed=DataFeed(),
+    symbols=["000001.SZ"],
+)
+```
+
 ## 4. 交易对象 (Trading Objects)
 
 ### `akquant.Order`

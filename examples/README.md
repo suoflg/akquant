@@ -36,6 +36,7 @@
 - [23_functional_callbacks_demo.py](./23_functional_callbacks_demo.py): 函数式回调示例。
 - [24_functional_tick_simulation_demo.py](./24_functional_tick_simulation_demo.py): 函数式 Tick 回调示例。
 - [34_multi_strategy_migration_demo.py](./34_multi_strategy_migration_demo.py): 单策略到多策略迁移对照示例。
+- [35_custom_broker_registry_demo.py](./35_custom_broker_registry_demo.py): 自定义 Broker 注册与工厂创建示例。
 
 ## 流式回测与实时报告
 

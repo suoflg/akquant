@@ -1947,3 +1947,73 @@ def test_daily_timer_paths_parameterized(
     assert strategy.timer_count == 1
     assert strategy.events == [expected_event]
     assert strategy.ctx.schedule.call_count == expected_schedule_calls
+
+
+def test_strategy_submit_order_default_behavior() -> None:
+    """Unified submit_order should expose stable default behavior."""
+    strategy = MyStrategy()
+    capabilities = strategy.get_execution_capabilities()
+
+    assert strategy.can_submit_client_order("coid-default")
+    assert capabilities["broker_live"] is False
+    assert capabilities["client_order_id"] is False
+
+    with pytest.raises(
+        RuntimeError, match="client_order_id is not supported in current execution mode"
+    ):
+        strategy.submit_order(
+            symbol="000001.SZ",
+            side="Buy",
+            quantity=10.0,
+            client_order_id="coid-unified",
+        )
+
+
+def test_strategy_buy_sell_delegate_to_submit_order() -> None:
+    """buy/sell should route through unified submit_order method."""
+
+    class _SubmitSpyStrategy(Strategy):
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, float]] = []
+
+        def submit_order(
+            self,
+            symbol: str | None = None,
+            side: str = "Buy",
+            quantity: float | None = None,
+            price: float | None = None,
+            time_in_force: Any = None,
+            trigger_price: float | None = None,
+            tag: str | None = None,
+            client_order_id: str | None = None,
+            order_type: str | None = None,
+            extra: dict[str, Any] | None = None,
+        ) -> str:
+            _ = price
+            _ = time_in_force
+            _ = trigger_price
+            _ = tag
+            _ = client_order_id
+            _ = order_type
+            _ = extra
+            assert symbol is not None
+            assert quantity is not None
+            self.calls.append((side, symbol, quantity))
+            return f"oid-{side}-{symbol}"
+
+    strategy = _SubmitSpyStrategy()
+    buy_order_id = strategy.buy(symbol="AAPL", quantity=2.0)
+    sell_order_id = strategy.sell(symbol="AAPL", quantity=1.0)
+
+    assert buy_order_id == "oid-Buy-AAPL"
+    assert sell_order_id == "oid-Sell-AAPL"
+    assert strategy.calls == [("Buy", "AAPL", 2.0), ("Sell", "AAPL", 1.0)]
+
+
+def test_strategy_no_legacy_broker_aliases() -> None:
+    """Unified API should not expose removed broker alias methods."""
+    strategy = MyStrategy()
+
+    assert not hasattr(strategy, "submit_broker_order")
+    assert not hasattr(strategy, "broker_buy")
+    assert not hasattr(strategy, "broker_sell")

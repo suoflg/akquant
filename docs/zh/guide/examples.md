@@ -331,3 +331,7 @@ class AdjSignal(Strategy):
 *   **[34_multi_strategy_migration_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_migration_demo.py)**:
     *   演示单策略到多策略 slot 的迁移对照：先跑 `strategy_id` 单策略，再跑 `strategies_by_slot` 多策略，并启用策略级限额、仅平仓、冷却 bars。
     *   输出 `single_owner_ids`、`multi_owner_ids`、`multi_alpha_cooldown_rejections` 等摘要，并以 `done_multi_strategy_migration_demo` 作为结束标记。
+
+*   **[35_custom_broker_registry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/35_custom_broker_registry_demo.py)**:
+    *   演示自定义 broker 注册机制：通过 `register_broker` 注入 `builder` 并使用 `create_gateway_bundle` 按名称创建网关。
+    *   输出 `bundle.metadata` 以确认自定义 broker 已被工厂解析。

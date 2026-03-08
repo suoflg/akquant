@@ -102,6 +102,75 @@ def buy(
     tag: Optional[str] = None,
 ) -> str:
     """买入下单."""
+    submit_order_method = getattr(strategy, "submit_order", None)
+    if callable(submit_order_method):
+        return cast(
+            str,
+            submit_order_method(
+                symbol=symbol,
+                side="Buy",
+                quantity=quantity,
+                price=price,
+                time_in_force=time_in_force,
+                trigger_price=trigger_price,
+                tag=tag,
+            ),
+        )
+    return _submit_buy_side(
+        strategy=strategy,
+        symbol=symbol,
+        quantity=quantity,
+        price=price,
+        time_in_force=time_in_force,
+        trigger_price=trigger_price,
+        tag=tag,
+    )
+
+
+def sell(
+    strategy: Any,
+    symbol: Optional[str] = None,
+    quantity: Optional[float] = None,
+    price: Optional[float] = None,
+    time_in_force: Optional[TimeInForce] = None,
+    trigger_price: Optional[float] = None,
+    tag: Optional[str] = None,
+) -> str:
+    """卖出下单."""
+    submit_order_method = getattr(strategy, "submit_order", None)
+    if callable(submit_order_method):
+        return cast(
+            str,
+            submit_order_method(
+                symbol=symbol,
+                side="Sell",
+                quantity=quantity,
+                price=price,
+                time_in_force=time_in_force,
+                trigger_price=trigger_price,
+                tag=tag,
+            ),
+        )
+    return _submit_sell_side(
+        strategy=strategy,
+        symbol=symbol,
+        quantity=quantity,
+        price=price,
+        time_in_force=time_in_force,
+        trigger_price=trigger_price,
+        tag=tag,
+    )
+
+
+def _submit_buy_side(
+    strategy: Any,
+    symbol: Optional[str],
+    quantity: Optional[float],
+    price: Optional[float],
+    time_in_force: Optional[TimeInForce],
+    trigger_price: Optional[float],
+    tag: Optional[str],
+) -> str:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
@@ -126,16 +195,15 @@ def buy(
     return ""
 
 
-def sell(
+def _submit_sell_side(
     strategy: Any,
-    symbol: Optional[str] = None,
-    quantity: Optional[float] = None,
-    price: Optional[float] = None,
-    time_in_force: Optional[TimeInForce] = None,
-    trigger_price: Optional[float] = None,
-    tag: Optional[str] = None,
+    symbol: Optional[str],
+    quantity: Optional[float],
+    price: Optional[float],
+    time_in_force: Optional[TimeInForce],
+    trigger_price: Optional[float],
+    tag: Optional[str],
 ) -> str:
-    """卖出下单."""
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
@@ -156,6 +224,70 @@ def sell(
             ),
         )
     return ""
+
+
+def get_execution_capabilities(strategy: Any) -> Dict[str, Any]:
+    """获取当前执行环境能力描述."""
+    _ = strategy
+    return {
+        "broker_live": False,
+        "client_order_id": False,
+        "order_type": False,
+        "time_in_force_str": False,
+        "broker_extra_fields": [],
+    }
+
+
+def submit_order(
+    strategy: Any,
+    symbol: Optional[str] = None,
+    side: str = "Buy",
+    quantity: Optional[float] = None,
+    price: Optional[float] = None,
+    time_in_force: Optional[TimeInForce | str] = None,
+    trigger_price: Optional[float] = None,
+    tag: Optional[str] = None,
+    client_order_id: Optional[str] = None,
+    order_type: Optional[str] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> str:
+    """统一下单接口."""
+    capabilities = get_execution_capabilities(strategy)
+    if client_order_id and not bool(capabilities.get("client_order_id", False)):
+        raise RuntimeError("client_order_id is not supported in current execution mode")
+    if extra:
+        raise RuntimeError(
+            "extra broker fields are not supported in current execution mode"
+        )
+    if order_type not in (None, "Market"):
+        raise RuntimeError("order_type is not supported in current execution mode")
+    if time_in_force is not None and not isinstance(time_in_force, TimeInForce):
+        raise RuntimeError(
+            "time_in_force string is not supported in current execution mode"
+        )
+
+    side_text = side.strip().lower()
+    if side_text == "buy":
+        return _submit_buy_side(
+            strategy=strategy,
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+        )
+    if side_text == "sell":
+        return _submit_sell_side(
+            strategy=strategy,
+            symbol=symbol,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+        )
+    raise ValueError(f"Unsupported side: {side}")
 
 
 def stop_buy(

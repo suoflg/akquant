@@ -105,6 +105,9 @@ from .strategy_trading_api import (
     get_cash as _get_cash_impl,
 )
 from .strategy_trading_api import (
+    get_execution_capabilities as _get_execution_capabilities_impl,
+)
+from .strategy_trading_api import (
     get_open_orders as _get_open_orders_impl,
 )
 from .strategy_trading_api import (
@@ -145,6 +148,9 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     stop_sell as _stop_sell_impl,
+)
+from .strategy_trading_api import (
+    submit_order as _submit_order_impl,
 )
 
 if TYPE_CHECKING:
@@ -1035,6 +1041,51 @@ class Strategy:
         return _sell_impl(
             self, symbol, quantity, price, time_in_force, trigger_price, tag
         )
+
+    def submit_order(
+        self,
+        symbol: Optional[str] = None,
+        side: str = "Buy",
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        time_in_force: Optional[TimeInForce | str] = None,
+        trigger_price: Optional[float] = None,
+        tag: Optional[str] = None,
+        client_order_id: Optional[str] = None,
+        order_type: Optional[str] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        统一下单接口.
+
+        该接口在回测与实盘模式均可调用，实盘模式下会由 LiveRunner 注入增强能力。
+        """
+        return _submit_order_impl(
+            self,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            time_in_force=time_in_force,
+            trigger_price=trigger_price,
+            tag=tag,
+            client_order_id=client_order_id,
+            order_type=order_type,
+            extra=extra,
+        )
+
+    def can_submit_client_order(self, client_order_id: str) -> bool:
+        """
+        检查 client_order_id 是否可再次提交.
+
+        该方法在 LiveRunner 的 broker_live 模式下会被注入真实实现。
+        """
+        _ = client_order_id
+        return True
+
+    def get_execution_capabilities(self) -> Dict[str, Any]:
+        """获取当前执行能力描述."""
+        return _get_execution_capabilities_impl(self)
 
     def stop_buy(
         self,
