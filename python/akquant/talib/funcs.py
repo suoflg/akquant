@@ -35,13 +35,16 @@ from ..akquant import COS as RustCOS
 from ..akquant import COSH as RustCOSH
 from ..akquant import COVAR as RustCOVAR
 from ..akquant import CUBE as RustCUBE
+from ..akquant import DEG2RAD as RustDEG2RAD
 from ..akquant import DEMA as RustDEMA
 from ..akquant import DIV as RustDIV
 from ..akquant import DX as RustDX
 from ..akquant import EMA as RustEMA
 from ..akquant import EXP as RustEXP
+from ..akquant import EXPM1 as RustEXPM1
 from ..akquant import FLOOR as RustFLOOR
 from ..akquant import HT_TRENDLINE as RustHT_TRENDLINE
+from ..akquant import INV_SQRT as RustINV_SQRT
 from ..akquant import KAMA as RustKAMA
 from ..akquant import LINEARREG as RustLINEARREG
 from ..akquant import LINEARREG_ANGLE as RustLINEARREG_ANGLE
@@ -49,6 +52,7 @@ from ..akquant import LINEARREG_INTERCEPT as RustLINEARREG_INTERCEPT
 from ..akquant import LINEARREG_R2 as RustLINEARREG_R2
 from ..akquant import LINEARREG_SLOPE as RustLINEARREG_SLOPE
 from ..akquant import LN as RustLN
+from ..akquant import LOG1P as RustLOG1P
 from ..akquant import LOG10 as RustLOG10
 from ..akquant import MACD as RustMACD
 from ..akquant import MAMA as RustMAMA
@@ -74,6 +78,7 @@ from ..akquant import PLUS_DI as RustPLUS_DI
 from ..akquant import POW as RustPOW
 from ..akquant import PPO as RustPPO
 from ..akquant import RANGE as RustRANGE
+from ..akquant import RECIP as RustRECIP
 from ..akquant import ROC as RustROC
 from ..akquant import ROCP as RustROCP
 from ..akquant import ROCR as RustROCR
@@ -2138,6 +2143,93 @@ def CUBE(
         out = _run_rust_single_series(close_series, indicator.update)
         return finalize_output(out, as_series=as_series)
     out = cast(pd.Series, np.power(close_series, 3.0))
+    return finalize_output(out, as_series=as_series)
+
+
+def RECIP(
+    close: SeriesLike,
+    *,
+    as_series: bool = False,
+    backend: str = "auto",
+) -> pd.Series | object:
+    """Return reciprocal transform (RECIP)."""
+    backend_key = resolve_backend(backend)
+    close_series = to_series(close, name="close")
+    if backend_key == "rust":
+        indicator = RustRECIP()
+        out = _run_rust_single_series(close_series, indicator.update)
+        return finalize_output(out, as_series=as_series)
+    out = cast(pd.Series, 1.0 / close_series)
+    out = cast(pd.Series, out.where(close_series.abs() > 1e-12, np.nan))
+    return finalize_output(out, as_series=as_series)
+
+
+def INV_SQRT(
+    close: SeriesLike,
+    *,
+    as_series: bool = False,
+    backend: str = "auto",
+) -> pd.Series | object:
+    """Return inverse square-root transform (INV_SQRT)."""
+    backend_key = resolve_backend(backend)
+    close_series = to_series(close, name="close")
+    if backend_key == "rust":
+        indicator = RustINV_SQRT()
+        out = _run_rust_single_series(close_series, indicator.update)
+        return finalize_output(out, as_series=as_series)
+    valid = close_series.where(close_series > 0.0, np.nan)
+    out = cast(pd.Series, 1.0 / np.sqrt(valid))
+    return finalize_output(out, as_series=as_series)
+
+
+def LOG1P(
+    close: SeriesLike,
+    *,
+    as_series: bool = False,
+    backend: str = "auto",
+) -> pd.Series | object:
+    """Return natural logarithm of one plus input (LOG1P)."""
+    backend_key = resolve_backend(backend)
+    close_series = to_series(close, name="close")
+    if backend_key == "rust":
+        indicator = RustLOG1P()
+        out = _run_rust_single_series(close_series, indicator.update)
+        return finalize_output(out, as_series=as_series)
+    out = cast(pd.Series, np.log1p(close_series))
+    return finalize_output(out, as_series=as_series)
+
+
+def EXPM1(
+    close: SeriesLike,
+    *,
+    as_series: bool = False,
+    backend: str = "auto",
+) -> pd.Series | object:
+    """Return exponential minus one transform (EXPM1)."""
+    backend_key = resolve_backend(backend)
+    close_series = to_series(close, name="close")
+    if backend_key == "rust":
+        indicator = RustEXPM1()
+        out = _run_rust_single_series(close_series, indicator.update)
+        return finalize_output(out, as_series=as_series)
+    out = cast(pd.Series, np.expm1(close_series))
+    return finalize_output(out, as_series=as_series)
+
+
+def DEG2RAD(
+    close: SeriesLike,
+    *,
+    as_series: bool = False,
+    backend: str = "auto",
+) -> pd.Series | object:
+    """Return degree-to-radian transform (DEG2RAD)."""
+    backend_key = resolve_backend(backend)
+    close_series = to_series(close, name="close")
+    if backend_key == "rust":
+        indicator = RustDEG2RAD()
+        out = _run_rust_single_series(close_series, indicator.update)
+        return finalize_output(out, as_series=as_series)
+    out = cast(pd.Series, np.deg2rad(close_series))
     return finalize_output(out, as_series=as_series)
 
 

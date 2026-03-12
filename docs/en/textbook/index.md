@@ -23,6 +23,7 @@ You can still browse the full chapter structure in English and jump to the Chine
 - [Chapter 13: Strategy Visualization and Report Analysis](13_visualization.md)
 - [Chapter 14: High-Performance Factor Mining and Expression Engine](14_factor.md)
 - [Chapter 15: Live Trading Systems and Operations](15_live_trading.md)
+- [Chapter 16: AKQuant Indicator System and Practical Usage](16_rust_indicators.md)
 
 Recent updates in the Chinese textbook:
 

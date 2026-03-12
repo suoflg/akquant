@@ -975,3 +975,48 @@ def test_talib_backend_rust_cube_runs() -> None:
     assert isinstance(out, np.ndarray)
     assert out.shape == values.shape
     assert np.isfinite(out).all()
+
+
+def test_talib_backend_rust_recip_runs() -> None:
+    """Rust backend should run for RECIP and return ndarray."""
+    values = np.linspace(1.0, 2.0, 90)
+    out = ta.RECIP(values, backend="rust")
+    assert isinstance(out, np.ndarray)
+    assert out.shape == values.shape
+    assert np.isfinite(out).all()
+
+
+def test_talib_backend_rust_inv_sqrt_runs() -> None:
+    """Rust backend should run for INV_SQRT and return ndarray."""
+    values = np.linspace(0.1, 2.0, 90)
+    out = ta.INV_SQRT(values, backend="rust")
+    assert isinstance(out, np.ndarray)
+    assert out.shape == values.shape
+    assert np.isfinite(out).all()
+
+
+def test_talib_backend_rust_log1p_runs() -> None:
+    """Rust backend should run for LOG1P and return ndarray."""
+    values = np.linspace(0.0, 2.0, 90)
+    out = ta.LOG1P(values, backend="rust")
+    assert isinstance(out, np.ndarray)
+    assert out.shape == values.shape
+    assert np.isfinite(out).all()
+
+
+def test_talib_backend_rust_expm1_runs() -> None:
+    """Rust backend should run for EXPM1 and return ndarray."""
+    values = np.linspace(-1.0, 1.0, 90)
+    out = ta.EXPM1(values, backend="rust")
+    assert isinstance(out, np.ndarray)
+    assert out.shape == values.shape
+    assert np.isfinite(out).all()
+
+
+def test_talib_backend_rust_deg2rad_runs() -> None:
+    """Rust backend should run for DEG2RAD and return ndarray."""
+    values = np.linspace(-180.0, 180.0, 90)
+    out = ta.DEG2RAD(values, backend="rust")
+    assert isinstance(out, np.ndarray)
+    assert out.shape == values.shape
+    assert np.isfinite(out).all()

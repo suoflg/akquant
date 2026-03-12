@@ -2230,6 +2230,76 @@ class CUBE:
         """
         ...
 
+class RECIP:
+    r"""倒数变换指标 (RECIP)."""
+
+    value: typing.Optional[float]
+    def __new__(cls) -> "RECIP": ...
+    def update(self, value: float) -> typing.Optional[float]:
+        r"""
+        更新指标值.
+
+        :param value: 输入值
+        :return: 当前 RECIP 值
+        """
+        ...
+
+class INV_SQRT:
+    r"""逆平方根变换指标 (INV_SQRT)."""
+
+    value: typing.Optional[float]
+    def __new__(cls) -> "INV_SQRT": ...
+    def update(self, value: float) -> typing.Optional[float]:
+        r"""
+        更新指标值.
+
+        :param value: 输入值
+        :return: 当前 INV_SQRT 值
+        """
+        ...
+
+class LOG1P:
+    r"""对数一加变换指标 (LOG1P)."""
+
+    value: typing.Optional[float]
+    def __new__(cls) -> "LOG1P": ...
+    def update(self, value: float) -> typing.Optional[float]:
+        r"""
+        更新指标值.
+
+        :param value: 输入值
+        :return: 当前 LOG1P 值
+        """
+        ...
+
+class EXPM1:
+    r"""指数减一变换指标 (EXPM1)."""
+
+    value: typing.Optional[float]
+    def __new__(cls) -> "EXPM1": ...
+    def update(self, value: float) -> typing.Optional[float]:
+        r"""
+        更新指标值.
+
+        :param value: 输入值
+        :return: 当前 EXPM1 值
+        """
+        ...
+
+class DEG2RAD:
+    r"""角度转弧度变换指标 (DEG2RAD)."""
+
+    value: typing.Optional[float]
+    def __new__(cls) -> "DEG2RAD": ...
+    def update(self, value: float) -> typing.Optional[float]:
+        r"""
+        更新指标值.
+
+        :param value: 输入值
+        :return: 当前 DEG2RAD 值
+        """
+        ...
+
 class T3:
     r"""三重指数平滑指标 (T3)."""
 
