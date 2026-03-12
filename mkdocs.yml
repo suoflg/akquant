@@ -91,6 +91,8 @@ plugins:
             Custom Broker Production Checklist: 自定义 Broker 生产接入清单
             Cross-Section Checklist: 横截面策略清单
             Indicator Playbook: 指标组合实战手册
+            AKQuant Indicator Reference: AKQuant 指标全量说明
+            Indicator Scenario Quickref: 指标场景速查（四象限）
             Stream Observability: 流式可观测性
             Multi-Timeframe Feed API: 多时间框架 Feed API
             Data Feed Adapter Spec: 数据适配层规范
@@ -127,6 +129,7 @@ plugins:
             13_Visualization: 第13章：策略可视化与报表分析
             14_Factor Expression: 第14章：高性能因子挖掘与表达式引擎
             15_Live Trading: 第15章：实盘交易系统与运维
+            16_Indicator System: 第16章：AKQuant 指标全景与工程化使用
         - locale: en
           name: English
           build: true
@@ -158,6 +161,8 @@ plugins:
             Custom Broker Production Checklist: Custom Broker Production Checklist
             Cross-Section Checklist: Cross-Section Checklist
             Indicator Playbook: Indicator Playbook
+            AKQuant Indicator Reference: AKQuant Indicator Reference
+            Indicator Scenario Quickref: Indicator Scenario Quickref
             Stream Observability: Stream Observability
             Multi-Timeframe Feed API: Multi-Timeframe Feed API
             Data Feed Adapter Spec: Data Feed Adapter Spec
@@ -194,6 +199,7 @@ plugins:
             13_Visualization: Chap 13 - Strategy Visualization and Report Analysis
             14_Factor Expression: Chap 14 - High-Performance Factor Mining and Expression Engine
             15_Live Trading: Chap 15 - Live Trading Systems and Operations
+            16_Indicator System: Chap 16 - AKQuant Indicator System and Practical Usage
 
 nav:
   - Home: index.md
@@ -217,6 +223,7 @@ nav:
           - 12_Machine Learning: textbook/12_ml.md
           - 13_Visualization: textbook/13_visualization.md
           - 14_Factor Expression: textbook/14_factor.md
+          - 16_Indicator System: textbook/16_rust_indicators.md
       - Live Trading:
           - 15_Live Trading: textbook/15_live_trading.md
   - Getting Started:
@@ -232,6 +239,8 @@ nav:
       - Strategy Manual: guide/strategy.md
       - Cross-Section Checklist: guide/cross_section_checklist.md
       - Indicator Playbook: guide/talib_indicator_playbook.md
+      - AKQuant Indicator Reference: guide/rust_indicator_reference.md
+      - Indicator Scenario Quickref: guide/indicator_scenario_quickref.md
       - Result Analysis: guide/analysis.md
       - Visualization: guide/visualization.md
       - Optimization Guide: guide/optimization.md

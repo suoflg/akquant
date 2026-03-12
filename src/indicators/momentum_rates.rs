@@ -1,0 +1,233 @@
+use pyo3::prelude::*;
+use pyo3_stub_gen::derive::*;
+use std::collections::VecDeque;
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone)]
+pub struct ROC {
+    period: usize,
+    buffer: VecDeque<f64>,
+    current_value: Option<f64>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ROC {
+    #[new]
+    pub fn new(period: usize) -> Self {
+        ROC {
+            period,
+            buffer: VecDeque::with_capacity(period + 1),
+            current_value: None,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> Option<f64> {
+        self.buffer.push_back(value);
+        if self.buffer.len() > self.period + 1 {
+            self.buffer.pop_front();
+        }
+        if self.buffer.len() < self.period + 1 {
+            self.current_value = None;
+            return None;
+        }
+        let base = *self.buffer.front()?;
+        if base.abs() <= f64::EPSILON {
+            self.current_value = Some(f64::NAN);
+        } else {
+            self.current_value = Some((value - base) / base * 100.0);
+        }
+        self.current_value
+    }
+
+    #[getter]
+    pub fn value(&self) -> Option<f64> {
+        self.current_value
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone)]
+pub struct ROCP {
+    period: usize,
+    buffer: VecDeque<f64>,
+    current_value: Option<f64>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ROCP {
+    #[new]
+    pub fn new(period: usize) -> Self {
+        ROCP {
+            period,
+            buffer: VecDeque::with_capacity(period + 1),
+            current_value: None,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> Option<f64> {
+        self.buffer.push_back(value);
+        if self.buffer.len() > self.period + 1 {
+            self.buffer.pop_front();
+        }
+        if self.buffer.len() < self.period + 1 {
+            self.current_value = None;
+            return None;
+        }
+        let base = *self.buffer.front()?;
+        if base.abs() <= f64::EPSILON {
+            self.current_value = Some(f64::NAN);
+        } else {
+            self.current_value = Some((value - base) / base);
+        }
+        self.current_value
+    }
+
+    #[getter]
+    pub fn value(&self) -> Option<f64> {
+        self.current_value
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone)]
+pub struct ROCR {
+    period: usize,
+    buffer: VecDeque<f64>,
+    current_value: Option<f64>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ROCR {
+    #[new]
+    pub fn new(period: usize) -> Self {
+        ROCR {
+            period,
+            buffer: VecDeque::with_capacity(period + 1),
+            current_value: None,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> Option<f64> {
+        self.buffer.push_back(value);
+        if self.buffer.len() > self.period + 1 {
+            self.buffer.pop_front();
+        }
+        if self.buffer.len() < self.period + 1 {
+            self.current_value = None;
+            return None;
+        }
+        let base = *self.buffer.front()?;
+        if base.abs() <= f64::EPSILON {
+            self.current_value = Some(f64::NAN);
+        } else {
+            self.current_value = Some(value / base);
+        }
+        self.current_value
+    }
+
+    #[getter]
+    pub fn value(&self) -> Option<f64> {
+        self.current_value
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone)]
+pub struct ROCR100 {
+    period: usize,
+    buffer: VecDeque<f64>,
+    current_value: Option<f64>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ROCR100 {
+    #[new]
+    pub fn new(period: usize) -> Self {
+        ROCR100 {
+            period,
+            buffer: VecDeque::with_capacity(period + 1),
+            current_value: None,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> Option<f64> {
+        self.buffer.push_back(value);
+        if self.buffer.len() > self.period + 1 {
+            self.buffer.pop_front();
+        }
+        if self.buffer.len() < self.period + 1 {
+            self.current_value = None;
+            return None;
+        }
+        let base = *self.buffer.front()?;
+        if base.abs() <= f64::EPSILON {
+            self.current_value = Some(f64::NAN);
+        } else {
+            self.current_value = Some((value / base) * 100.0);
+        }
+        self.current_value
+    }
+
+    #[getter]
+    pub fn value(&self) -> Option<f64> {
+        self.current_value
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone)]
+pub struct MOM {
+    period: usize,
+    buffer: VecDeque<f64>,
+    current_value: Option<f64>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl MOM {
+    #[new]
+    pub fn new(period: usize) -> Self {
+        MOM {
+            period,
+            buffer: VecDeque::with_capacity(period + 1),
+            current_value: None,
+        }
+    }
+
+    pub fn update(&mut self, value: f64) -> Option<f64> {
+        self.buffer.push_back(value);
+        if self.buffer.len() > self.period + 1 {
+            self.buffer.pop_front();
+        }
+        if self.buffer.len() < self.period + 1 {
+            self.current_value = None;
+            return None;
+        }
+        let base = *self.buffer.front()?;
+        self.current_value = Some(value - base);
+        self.current_value
+    }
+
+    #[getter]
+    pub fn value(&self) -> Option<f64> {
+        self.current_value
+    }
+}
+
+pub fn register_classes(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<ROC>()?;
+    m.add_class::<ROCP>()?;
+    m.add_class::<ROCR>()?;
+    m.add_class::<ROCR100>()?;
+    m.add_class::<MOM>()?;
+    Ok(())
+}

@@ -1,48 +1,31 @@
-# TA-Lib Top20 Plan
+# AKQuant Indicator Compatibility and Migration Overview
 
-This page is currently maintained in Chinese first.
+This page is maintained in Chinese first.
+English page provides a concise status summary for quick navigation.
 
-- Chinese page: [TA-Lib 迁移优先指标 Top20](../../zh/advanced/talib_top20_plan.md)
-- Related docs:
-  - [Capability Boost Plan](capability_boost_plan.md)
-  - [Examples](../guide/examples.md)
+- Chinese source: [AKQuant 指标兼容与迁移总览（用户版）](../../zh/advanced/talib_top20_plan.md)
+
+## Update Metadata
+
+- Last updated (UTC+8): 2026-03-13 00:00
+- Scope version: plan-baseline-v1
+- Data source scope: current repository trunk and regression tests, mainly `src/indicators.rs`, `python/akquant/talib/funcs.py`, `tests/test_talib_backend.py`, and `tests/test_talib_compat.py`.
 
 ## Current Status
 
-- Top20 indicators are available on both backends (`python` and `rust`).
-- Migration batches A/B/C are completed.
-- Compatibility layer keeps TA-Lib-like signatures and tuple output contracts.
+- `akquant.talib` supports `backend=auto/python/rust`.
+- Top20 migration indicators are fully available on both backends.
+- Extended batches are completed through batch `T`.
+- Total supported indicators: **103**.
 
-## Migration Examples
+## Recommended Migration Flow
 
-```python
-from akquant import talib as ta
+1. Align baseline with `backend="python"`.
+2. Switch to high-performance backend and verify signal consistency.
+3. Check warmup segments and tuple unpacking order for multi-output indicators.
 
-close = df["close"].to_numpy()
-high = df["high"].to_numpy()
-low = df["low"].to_numpy()
-volume = df["volume"].to_numpy()
+## Where to Read Next
 
-mfi = ta.MFI(high, low, close, volume, timeperiod=14, backend="rust")
-obv = ta.OBV(close, volume, backend="rust")
-tema = ta.TEMA(close, timeperiod=20, backend="rust")
-natr = ta.NATR(high, low, close, timeperiod=14, backend="rust")
-sar = ta.SAR(high, low, acceleration=0.02, maximum=0.2, backend="rust")
-```
-
-## Strategy Combinations
-
-```python
-ema_fast = ta.EMA(close, timeperiod=20, backend="rust")
-ema_slow = ta.EMA(close, timeperiod=60, backend="rust")
-adx = ta.ADX(high, low, close, timeperiod=14, backend="rust")
-natr = ta.NATR(high, low, close, timeperiod=14, backend="rust")
-
-trend_up = ema_fast[-1] > ema_slow[-1]
-trend_strong = adx[-1] > 20
-volatility_ok = natr[-1] < 4.0
-```
-
-For detailed warmup notes, parameter aliases, and full mapping table, use the Chinese page as the source of truth:
-- [TA-Lib 迁移优先指标 Top20](../../zh/advanced/talib_top20_plan.md)
-- [指标组合实战手册](../../zh/guide/talib_indicator_playbook.md)
+- [AKQuant Indicator Reference (103)](../guide/rust_indicator_reference.md)
+- [Indicator Scenario Quickref](../guide/indicator_scenario_quickref.md)
+- [Indicator Playbook](../guide/talib_indicator_playbook.md)

@@ -75,6 +75,9 @@
     *   因子表达式的原理与优势
     *   Polars 高性能计算架构
     *   案例：Alpha101 因子实战 ([examples/textbook/ch14_factor.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch14_factor.py))
+*   **[第 16 章：AKQuant 指标全景与工程化使用](16_rust_indicators.md)**
+    *   AKQuant 支持的 103 个指标分类、解释与 warmup 口径
+    *   指标词典与教学脚手架联动（见 [AKQuant 指标全量说明](../guide/rust_indicator_reference.md)）
 
 ### 第五部分：从回测到实盘 (Live Trading)
 
@@ -102,6 +105,7 @@
 | 第 12 章 | [ch12_ml.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch12_ml.py) | [10_ml_walk_forward.py](https://github.com/akfamily/akquant/blob/main/examples/10_ml_walk_forward.py) | [机器学习指南](../advanced/ml.md) |
 | 第 13 章 | [ch13_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch13_visualization.py) | [11_plot_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/11_plot_visualization.py) | [可视化指南](../guide/visualization.md) |
 | 第 14 章 | [ch14_factor.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch14_factor.py) | [16_adj_returns_signal.py](https://github.com/akfamily/akquant/blob/main/examples/16_adj_returns_signal.py) | [因子指南](../guide/factor.md) |
+| 第 16 章 | 暂无独立脚本（以指标词典驱动） | [45_talib_indicator_playbook_demo.py](https://github.com/akfamily/akquant/blob/main/examples/45_talib_indicator_playbook_demo.py) | [AKQuant 指标全量说明](../guide/rust_indicator_reference.md) |
 | 第 15 章 | [ch15_live_trading.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_live_trading.py) | [ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py) | [实盘函数式指南](../advanced/live_functional_quickstart.md) |
 
 ---

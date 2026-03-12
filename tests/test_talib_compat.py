@@ -789,3 +789,43 @@ def test_talib_cube_supports_series_output_with_index() -> None:
     out = ta.CUBE(close, as_series=True)
     assert isinstance(out, pd.Series)
     assert out.index.equals(close.index)
+
+
+def test_talib_recip_has_expected_output_shape() -> None:
+    """RECIP should return ndarray with same shape as input."""
+    _, _, close = _sample_ohlc(size=80)
+    out = ta.RECIP(close.abs() + 1.0)
+    assert isinstance(out, np.ndarray)
+    assert out.shape == close.shape
+
+
+def test_talib_inv_sqrt_has_expected_output_shape() -> None:
+    """INV_SQRT should return ndarray with same shape as input."""
+    _, _, close = _sample_ohlc(size=80)
+    out = ta.INV_SQRT(close.abs() + 0.1)
+    assert isinstance(out, np.ndarray)
+    assert out.shape == close.shape
+
+
+def test_talib_log1p_has_expected_output_shape() -> None:
+    """LOG1P should return ndarray with same shape as input."""
+    _, _, close = _sample_ohlc(size=80)
+    out = ta.LOG1P(close.abs())
+    assert isinstance(out, np.ndarray)
+    assert out.shape == close.shape
+
+
+def test_talib_expm1_has_expected_output_shape() -> None:
+    """EXPM1 should return ndarray with same shape as input."""
+    _, _, close = _sample_ohlc(size=80)
+    out = ta.EXPM1(close)
+    assert isinstance(out, np.ndarray)
+    assert out.shape == close.shape
+
+
+def test_talib_deg2rad_supports_series_output_with_index() -> None:
+    """DEG2RAD as_series should preserve pandas index."""
+    _, _, close = _sample_ohlc(size=80)
+    out = ta.DEG2RAD(close, as_series=True)
+    assert isinstance(out, pd.Series)
+    assert out.index.equals(close.index)
