@@ -1291,6 +1291,9 @@ class BacktestResult:
         filename: str = "akquant_report.html",
         show: bool = False,
         compact_currency: bool = True,
+        market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
+        plot_symbol: Optional[str] = None,
+        include_trade_kline: bool = True,
     ) -> None:
         """
         生成 HTML 策略回测报告 (便捷方法).
@@ -1301,6 +1304,9 @@ class BacktestResult:
         :param filename: 保存的文件名
         :param show: 是否在浏览器中自动打开 (默认 False)
         :param compact_currency: 是否将金额用 K/M/B 紧凑显示 (默认 True)
+        :param market_data: 可选行情数据，用于绘制 K 线买卖点图
+        :param plot_symbol: 可选标的代码，指定 K 线复盘标的
+        :param include_trade_kline: 是否在报告中包含 K 线复盘图
         """
         # 延迟导入，避免循环引用和非必要的 Plotly 依赖
         try:
@@ -1315,4 +1321,7 @@ class BacktestResult:
             filename=filename,
             show=show,
             compact_currency=compact_currency,
+            market_data=market_data,
+            plot_symbol=plot_symbol,
+            include_trade_kline=include_trade_kline,
         )

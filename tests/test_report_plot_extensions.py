@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -56,6 +57,25 @@ def _build_data(symbol: str = "TEST", n: int = 5) -> list[Bar]:
     return data
 
 
+def _build_market_df(symbol: str = "TEST", n: int = 5) -> pd.DataFrame:
+    rows = []
+    for bar in _build_data(symbol=symbol, n=n):
+        rows.append(
+            {
+                "timestamp": pd.Timestamp(bar.timestamp),
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume,
+                "symbol": bar.symbol,
+            }
+        )
+    df = pd.DataFrame(rows)
+    df = df.set_index("timestamp")
+    return cast(pd.DataFrame, df)
+
+
 def _skip_if_no_plotly() -> None:
     """Skip tests if plotly is unavailable."""
     if importlib.util.find_spec("plotly") is None:
@@ -90,6 +110,38 @@ def test_report_contains_new_analysis_sections(tmp_path: Path) -> None:
     assert "暂无按日风控拒单趋势图" in html
     assert "暂无按策略风控拒单趋势图" in html
     assert "暂无按日拒单原因趋势图" in html
+    assert "未提供行情数据，已跳过 K 线复盘图" in html
+
+
+def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
+    """Report HTML should embed K-line trade replay when market data is passed."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RoundTripStrategy,
+        symbol="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+    )
+
+    report_path = tmp_path / "report_with_trade_kline.html"
+    result.report(
+        filename=str(report_path),
+        show=False,
+        market_data=_build_market_df(symbol="TEST"),
+        plot_symbol="TEST",
+    )
+    html = report_path.read_text(encoding="utf-8")
+    assert "交易复盘 (K线买卖点)" in html
+    assert "Strategy Analysis: TEST" in html
+    assert "净盈亏" in html
+    assert "持仓K线数" in html
 
 
 def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
