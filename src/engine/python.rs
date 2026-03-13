@@ -775,6 +775,15 @@ impl Engine {
             .set_option_fee_rules(commission_per_contract);
     }
 
+    fn set_options_fee_rules_by_prefix(
+        &mut self,
+        symbol_prefix: String,
+        commission_per_contract: f64,
+    ) {
+        self.market_manager
+            .set_options_fee_rules_by_prefix(symbol_prefix, commission_per_contract);
+    }
+
     /// 设置加密货币费率规则 (按金额比例)
     ///
     /// :param commission_rate: 佣金率 (如 0.001)

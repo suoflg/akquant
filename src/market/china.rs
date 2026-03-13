@@ -21,6 +21,7 @@ pub struct ChinaMarketConfig {
     pub option: Option<option::OptionConfig>,
     pub sessions: Vec<SessionRange>,
     pub futures_fee_by_prefix: Vec<(String, futures::FuturesConfig)>,
+    pub options_fee_by_prefix: Vec<(String, option::OptionConfig)>,
 }
 
 fn default_sessions() -> Vec<SessionRange> {
@@ -74,6 +75,7 @@ impl Default for ChinaMarketConfig {
             option: None,
             sessions: default_sessions(),
             futures_fee_by_prefix: Vec::new(),
+            options_fee_by_prefix: Vec::new(),
         }
     }
 }
@@ -104,6 +106,23 @@ impl ChinaMarket {
         let mut best_len = 0usize;
         let symbol_upper = symbol.to_uppercase();
         for (prefix, cfg) in &self.config.futures_fee_by_prefix {
+            let normalized = prefix.trim().to_uppercase();
+            if normalized.is_empty() {
+                continue;
+            }
+            if symbol_upper.starts_with(&normalized) && normalized.len() > best_len {
+                best_match = Some(cfg);
+                best_len = normalized.len();
+            }
+        }
+        best_match
+    }
+
+    fn option_config_for_symbol(&self, symbol: &str) -> Option<&option::OptionConfig> {
+        let mut best_match: Option<&option::OptionConfig> = None;
+        let mut best_len = 0usize;
+        let symbol_upper = symbol.to_uppercase();
+        for (prefix, cfg) in &self.config.options_fee_by_prefix {
             let normalized = prefix.trim().to_uppercase();
             if normalized.is_empty() {
                 continue;
@@ -181,7 +200,10 @@ impl MarketModel for ChinaMarket {
                 }
             }
             AssetType::Option => {
-                if let Some(config) = &self.config.option {
+                if let Some(config) = self
+                    .option_config_for_symbol(instrument.symbol())
+                    .or(self.config.option.as_ref())
+                {
                     option::calculate_commission(
                         config,
                         instrument,

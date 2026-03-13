@@ -32,6 +32,7 @@ from ..config import (
     BacktestConfig,
     ChinaFuturesConfig,
     ChinaFuturesInstrumentTemplateConfig,
+    ChinaOptionsConfig,
     RiskConfig,
 )
 from ..data import ParquetDataCatalog
@@ -149,6 +150,48 @@ def _parse_trading_session(value: Any) -> Any:
     if v_lower in mapping and mapping[v_lower] is not None:
         return mapping[v_lower]
     raise ValueError(f"Unsupported trading session: {value}")
+
+
+def _china_futures_session_template(
+    profile: str,
+) -> List[Tuple[str, str, str]]:
+    normalized = str(profile).strip().upper()
+    commodity_day_template: List[Tuple[str, str, str]] = [
+        ("09:00", "10:15", "continuous"),
+        ("10:15", "10:30", "break"),
+        ("10:30", "11:30", "continuous"),
+        ("11:30", "13:30", "break"),
+        ("13:30", "15:00", "continuous"),
+    ]
+    cffex_stock_index_day_template: List[Tuple[str, str, str]] = [
+        ("09:30", "11:30", "continuous"),
+        ("11:30", "13:00", "break"),
+        ("13:00", "15:00", "continuous"),
+    ]
+    cffex_bond_day_template: List[Tuple[str, str, str]] = [
+        ("09:30", "11:30", "continuous"),
+        ("11:30", "13:00", "break"),
+        ("13:00", "15:15", "continuous"),
+    ]
+    if normalized in {"CN_FUTURES_DAY", "CN_FUTURES_COMMODITY_DAY"}:
+        return commodity_day_template
+    if normalized == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY":
+        return cffex_stock_index_day_template
+    if normalized == "CN_FUTURES_CFFEX_BOND_DAY":
+        return cffex_bond_day_template
+    if normalized == "CN_FUTURES_NIGHT_23":
+        return [("21:00", "23:00", "continuous")] + commodity_day_template
+    if normalized == "CN_FUTURES_NIGHT_01":
+        return [
+            ("21:00", "23:59", "continuous"),
+            ("00:00", "01:00", "continuous"),
+        ] + commodity_day_template
+    if normalized == "CN_FUTURES_NIGHT_0230":
+        return [
+            ("21:00", "23:59", "continuous"),
+            ("00:00", "02:30", "continuous"),
+        ] + commodity_day_template
+    raise ValueError(f"Unsupported china futures session profile: {profile}")
 
 
 def _is_data_feed_adapter(value: Any) -> bool:
@@ -1564,16 +1607,22 @@ def run_backtest(
 
     # 4.1 市场规则配置
     china_futures_config: Optional[ChinaFuturesConfig] = None
+    china_options_config: Optional[ChinaOptionsConfig] = None
     has_futures_instruments = False
+    has_options_instruments = False
     has_non_futures_instruments = False
     if config is not None:
         china_futures_config = config.china_futures
+        china_options_config = config.china_options
         if config.instruments_config:
             if isinstance(config.instruments_config, list):
                 for inst in config.instruments_config:
                     asset_name = _parse_asset_type_name(inst.asset_type)
                     if asset_name == "futures":
                         has_futures_instruments = True
+                    elif asset_name == "option":
+                        has_options_instruments = True
+                        has_non_futures_instruments = True
                     else:
                         has_non_futures_instruments = True
             elif isinstance(config.instruments_config, dict):
@@ -1581,13 +1630,19 @@ def run_backtest(
                     asset_name = _parse_asset_type_name(inst.asset_type)
                     if asset_name == "futures":
                         has_futures_instruments = True
+                    elif asset_name == "option":
+                        has_options_instruments = True
+                        has_non_futures_instruments = True
                     else:
                         has_non_futures_instruments = True
-    if not has_futures_instruments:
+    if not has_futures_instruments or not has_options_instruments:
         default_asset_name = _parse_asset_type_name(
             kwargs.get("asset_type", AssetType.Stock)
         )
-        has_futures_instruments = default_asset_name == "futures"
+        if not has_futures_instruments:
+            has_futures_instruments = default_asset_name == "futures"
+        if not has_options_instruments:
+            has_options_instruments = default_asset_name == "option"
     if (
         not has_futures_instruments
         and china_futures_config
@@ -1603,6 +1658,13 @@ def run_backtest(
             engine.use_china_market()
         else:
             engine.use_china_futures_market()
+        if t_plus_one:
+            engine.set_t_plus_one(True)
+    elif china_options_config and has_options_instruments:
+        if china_options_config.use_china_market:
+            engine.use_china_market()
+        else:
+            engine.use_simple_market(commission_rate)
         if t_plus_one:
             engine.set_t_plus_one(True)
     elif t_plus_one:
@@ -1644,7 +1706,10 @@ def run_backtest(
             kwargs.get("fund_min_commission", 0.0),
         )
 
-    if "option_commission" in kwargs:
+    if china_options_config and has_options_instruments:
+        if china_options_config.fee_per_contract is not None:
+            engine.set_option_fee_rules(china_options_config.fee_per_contract)
+    elif "option_commission" in kwargs:
         engine.set_option_fee_rules(kwargs["option_commission"])
 
     if china_futures_config and has_futures_instruments:
@@ -1735,6 +1800,54 @@ def run_backtest(
                 )
             if session_ranges:
                 engine.set_market_sessions(session_ranges)
+        elif china_futures_config.enforce_sessions:
+            session_ranges = []
+            for start, end, session_name in _china_futures_session_template(
+                china_futures_config.session_profile
+            ):
+                session_ranges.append(
+                    (
+                        start,
+                        end,
+                        _parse_trading_session(session_name),
+                    )
+                )
+            if session_ranges:
+                engine.set_market_sessions(session_ranges)
+
+    if china_options_config and has_options_instruments:
+        if china_options_config.fee_by_symbol_prefix:
+            for option_fee_rule in china_options_config.fee_by_symbol_prefix:
+                prefix = option_fee_rule.symbol_prefix.strip().upper()
+                if not prefix:
+                    continue
+                if hasattr(engine, "set_options_fee_rules_by_prefix"):
+                    cast(Any, engine).set_options_fee_rules_by_prefix(
+                        prefix,
+                        float(option_fee_rule.commission_per_contract),
+                    )
+                else:
+                    logger.warning(
+                        "set_options_fee_rules_by_prefix is not available "
+                        "in current engine binary"
+                    )
+                    break
+        if china_options_config.sessions:
+            option_session_ranges: List[Tuple[str, str, TradingSession]] = []
+            for option_session_rule in china_options_config.sessions:
+                option_session_ranges.append(
+                    (
+                        option_session_rule.start,
+                        option_session_rule.end,
+                        _parse_trading_session(option_session_rule.session),
+                    )
+                )
+            if option_session_ranges and not (
+                china_futures_config
+                and has_futures_instruments
+                and china_futures_config.sessions
+            ):
+                engine.set_market_sessions(option_session_ranges)
 
     # Apply Risk Config
 

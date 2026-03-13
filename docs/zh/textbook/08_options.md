@@ -20,6 +20,50 @@ python examples/textbook/ch08_options.py
 2. 输出中可观察到 Greeks 或波动率变化对策略表现的影响。
 3. 修改执行价或到期参数后，结果变化符合期权定价直觉。
 
+## 8.0 AKQuant 中国期权配置速览
+
+`akquant` 提供 `BacktestConfig.china_options` 用于中国期权费率配置：
+
+- `fee_per_contract`: 全局每张合约手续费
+- `fee_by_symbol_prefix`: 按品种前缀覆盖手续费
+- `use_china_market`: 中国市场路由开关
+
+与中国期货配置能力的详细对照可参考 API 文档中的“期货 vs 期权配置能力对照”。
+
+示例：
+
+```python
+from akquant import (
+    BacktestConfig,
+    ChinaOptionsConfig,
+    ChinaOptionsFeeConfig,
+    InstrumentConfig,
+    StrategyConfig,
+)
+
+config = BacktestConfig(
+    strategy_config=StrategyConfig(initial_cash=500_000),
+    instruments_config=[
+        InstrumentConfig(
+            symbol="RB2310-C-3800",
+            asset_type="OPTION",
+            option_type="CALL",
+            strike_price=3800.0,
+            underlying_symbol="RB2310",
+        )
+    ],
+    china_options=ChinaOptionsConfig(
+        fee_per_contract=5.0,
+        fee_by_symbol_prefix=[
+            ChinaOptionsFeeConfig(
+                symbol_prefix="RB",
+                commission_per_contract=8.0,
+            )
+        ],
+    ),
+)
+```
+
 ## 8.1 期权基础与定价理论 (Pricing Theory)
 
 ### 8.1.1 核心要素

@@ -193,6 +193,36 @@ impl MarketManager {
         }
     }
 
+    pub fn set_options_fee_rules_by_prefix(
+        &mut self,
+        symbol_prefix: String,
+        commission_per_contract: f64,
+    ) {
+        if let MarketConfig::China(ref mut c) = self.config {
+            let prefix = symbol_prefix.trim().to_uppercase();
+            if prefix.is_empty() {
+                return;
+            }
+            let mut updated = false;
+            for (existing_prefix, cfg) in &mut c.options_fee_by_prefix {
+                if existing_prefix == &prefix {
+                    cfg.commission_per_contract =
+                        Decimal::from_f64(commission_per_contract).unwrap_or(Decimal::ZERO);
+                    updated = true;
+                    break;
+                }
+            }
+            if !updated {
+                let cfg = option::OptionConfig {
+                    commission_per_contract: Decimal::from_f64(commission_per_contract)
+                        .unwrap_or(Decimal::ZERO),
+                };
+                c.options_fee_by_prefix.push((prefix, cfg));
+            }
+            self.model = self.config.create_model();
+        }
+    }
+
     /// 设置市场交易时段
     ///
     /// :param sessions: 交易时段列表，每个元素为 (开始时间, 结束时间, 时段类型)

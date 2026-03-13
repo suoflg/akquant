@@ -76,6 +76,7 @@ config = BacktestConfig(
 - 模板和前缀规则里的 `commission_rate` 必须大于等于 0
 - `validation_by_symbol_prefix` 每条规则至少设置一个开关
 - 同一列表内前缀重复会报错，并定位到冲突项索引
+- `session_profile` 支持 `CN_FUTURES_DAY`(商品日盘) / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23 / CN_FUTURES_NIGHT_01 / CN_FUTURES_NIGHT_0230`
 
 配置优先级矩阵（从高到低）：
 

@@ -125,11 +125,25 @@ if __name__ == "__main__":
         margin_ratio=0.0,  # 期权买方不收保证金，卖方收 (引擎会自动计算卖方保证金)
     )
 
-    from akquant import BacktestConfig, StrategyConfig
+    from akquant import (
+        BacktestConfig,
+        ChinaOptionsConfig,
+        ChinaOptionsFeeConfig,
+        StrategyConfig,
+    )
 
     config = BacktestConfig(
         strategy_config=StrategyConfig(initial_cash=500_000),
         instruments_config=[rb_fut_config, rb_opt_config],
+        china_options=ChinaOptionsConfig(
+            fee_per_contract=5.0,
+            fee_by_symbol_prefix=[
+                ChinaOptionsFeeConfig(
+                    symbol_prefix="RB",
+                    commission_per_contract=8.0,
+                )
+            ],
+        ),
     )
 
     result = aq.run_backtest(
