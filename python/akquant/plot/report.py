@@ -2,7 +2,7 @@
 
 import base64
 import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Optional, Union, cast
 
 import pandas as pd
 
@@ -14,6 +14,7 @@ from .analysis import (
     plot_yearly_returns,
 )
 from .dashboard import plot_dashboard
+from .strategy import plot_strategy
 from .utils import check_plotly
 
 if TYPE_CHECKING:
@@ -248,7 +249,102 @@ HTML_TEMPLATE = """
             padding: 5px; /* Reduced padding to give more space to chart */
             box-sizing: border-box;
             background: white;
-            overflow: hidden; /* Critical for Plotly resizing */
+            overflow-x: auto;
+            overflow-y: hidden;
+        }}
+
+        .table-scroll {{
+            width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+        }}
+
+        .table {{
+            width: max-content;
+            min-width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 14px;
+        }}
+
+        .table th, .table td {{
+            white-space: nowrap;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border-color);
+            text-align: left;
+        }}
+
+        .table th {{
+            position: sticky;
+            top: 0;
+            background: #f8f9fa;
+            color: var(--primary-color);
+            font-weight: 600;
+            z-index: 1;
+        }}
+
+        .analysis-overview-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }}
+
+        .analysis-card {{
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px 14px;
+        }}
+
+        .analysis-card-label {{
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+            line-height: 1.35;
+        }}
+
+        .analysis-card-value {{
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary-color);
+            line-height: 1.2;
+        }}
+
+        .details-block {{
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: #ffffff;
+            margin-top: 14px;
+        }}
+
+        .details-block > summary {{
+            list-style: none;
+            cursor: pointer;
+            padding: 12px 14px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--primary-color);
+            border-bottom: 1px solid transparent;
+            user-select: none;
+        }}
+
+        .details-block[open] > summary {{
+            border-bottom-color: var(--border-color);
+            background: #f8f9fa;
+        }}
+
+        .details-content {{
+            padding: 10px 12px 12px 12px;
+        }}
+
+        .empty-panel {{
+            border: 1px dashed var(--border-color);
+            border-radius: 8px;
+            background: #fafbfc;
+            padding: 14px 16px;
+            color: var(--text-secondary);
+            line-height: 1.6;
         }}
 
         footer {{
@@ -335,28 +431,28 @@ HTML_TEMPLATE = """
                 </div>
             </div>
         </div>
+        <div class="section-title">交易复盘 (K线买卖点)</div>
+        <div class="chart-container">
+            {strategy_kline_html}
+        </div>
 
         <div class="section-title">组合归因与容量分析 (Attribution & Capacity)</div>
-        <div class="row">
-            <div class="col">
-                <div class="chart-container">
-                    {exposure_summary_html}
-                </div>
-            </div>
-            <div class="col">
-                <div class="chart-container">
-                    {capacity_summary_html}
-                </div>
-            </div>
+        <div class="analysis-overview-grid">
+            {analysis_overview_html}
         </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {attribution_summary_html}
-        </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            <div class="section-title">
-                策略归属聚合 (Strategy Ownership Aggregation)
-            </div>
-        </div>
+        <details class="details-block">
+            <summary>暴露摘要明细 (Exposure Summary)</summary>
+            <div class="details-content">{exposure_summary_html}</div>
+        </details>
+        <details class="details-block">
+            <summary>容量摘要明细 (Capacity Summary)</summary>
+            <div class="details-content">{capacity_summary_html}</div>
+        </details>
+        <details class="details-block" open>
+            <summary>归因明细 (Attribution Details)</summary>
+            <div class="details-content">{attribution_summary_html}</div>
+        </details>
+        <div class="section-title">策略归属聚合 (Strategy Ownership Aggregation)</div>
         <div class="row">
             <div class="col">
                 <div class="chart-container">
@@ -369,24 +465,11 @@ HTML_TEMPLATE = """
                 </div>
             </div>
         </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {risk_by_strategy_html}
-        </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {risk_reject_ratio_html}
-        </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {risk_reason_ratio_html}
-        </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {risk_reject_trend_html}
-        </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {risk_reject_trend_by_strategy_html}
-        </div>
-        <div class="chart-container" style="margin-top: 20px;">
-            {risk_reason_trend_html}
-        </div>
+        <details class="details-block" style="margin-top: 20px;">
+            <summary>策略风控拒单明细 (Risk Rejections by Strategy)</summary>
+            <div class="details-content">{risk_by_strategy_html}</div>
+        </details>
+        {risk_charts_html}
 
         <footer>
             AKQuant Report | Powered by Plotly & AKQuant
@@ -453,7 +536,8 @@ def _format_table(
                 table[col] = table[col].map(_format_currency)
             else:
                 table[col] = table[col].map(lambda x: f"{x:,.6f}")
-    return str(table.to_html(index=False, border=0, classes="table"))
+    table_html = table.to_html(index=False, border=0, classes="table")
+    return f'<div class="table-scroll">{table_html}</div>'
 
 
 def _rename_table_columns(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
@@ -598,9 +682,77 @@ def _build_metrics_html(result: Any) -> str:
     return metrics_html
 
 
-def _build_chart_html_sections(result: Any) -> dict[str, str]:
+def _select_plot_symbol(
+    result: Any,
+    market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]],
+    plot_symbol: Optional[str],
+) -> Optional[str]:
+    if plot_symbol:
+        return str(plot_symbol)
+    trades_df = getattr(result, "trades_df", pd.DataFrame())
+    if (
+        isinstance(trades_df, pd.DataFrame)
+        and not trades_df.empty
+        and "symbol" in trades_df.columns
+    ):
+        counts = trades_df["symbol"].dropna().astype(str).value_counts()
+        if not counts.empty:
+            return str(counts.index[0])
+    if isinstance(market_data, dict):
+        keys = [str(k) for k in market_data.keys()]
+        if keys:
+            return keys[0]
+    if isinstance(market_data, pd.DataFrame) and "symbol" in market_data.columns:
+        symbols = market_data["symbol"].dropna().astype(str)
+        if not symbols.empty:
+            return str(symbols.iloc[0])
+    return None
+
+
+def _extract_symbol_market_data(
+    market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]], symbol: str
+) -> pd.DataFrame:
+    if market_data is None:
+        return pd.DataFrame()
+    if isinstance(market_data, dict):
+        data = market_data.get(symbol, pd.DataFrame()).copy()
+    elif isinstance(market_data, pd.DataFrame):
+        data = market_data.copy()
+        if "symbol" in data.columns:
+            data = data[data["symbol"].astype(str) == symbol].copy()
+    else:
+        return pd.DataFrame()
+    if data.empty:
+        return cast(pd.DataFrame, data)
+    if not isinstance(data.index, pd.DatetimeIndex):
+        for col in ["date", "timestamp", "datetime", "Date", "Timestamp"]:
+            if col in data.columns:
+                data = data.set_index(col)
+                break
+        data.index = pd.to_datetime(data.index, errors="coerce")
+    valid_index_mask = ~data.index.to_series().isna()
+    data = data.loc[valid_index_mask].copy()
+    required_cols = {"open", "high", "low", "close"}
+    if not required_cols.issubset(set(data.columns)):
+        return pd.DataFrame()
+    data = data.sort_index()
+    return cast(pd.DataFrame, data)
+
+
+def _build_chart_html_sections(
+    result: Any,
+    market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
+    plot_symbol: Optional[str] = None,
+    include_trade_kline: bool = True,
+) -> dict[str, str]:
     """Build chart HTML sections from plot figures."""
     config = {"responsive": True}
+    strategy_config = {
+        "responsive": True,
+        "scrollZoom": True,
+        "displayModeBar": True,
+        "doubleClick": "reset",
+    }
 
     fig_dashboard = plot_dashboard(result, show=False, theme="light")
     dashboard_html = (
@@ -641,11 +793,42 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
         if fig_duration
         else "<div>无交易数据</div>"
     )
+    strategy_kline_html = "<div>未提供行情数据，已跳过 K 线复盘图</div>"
+    if not include_trade_kline:
+        strategy_kline_html = "<div>已关闭 K 线复盘图</div>"
+    elif market_data is not None:
+        symbol = _select_plot_symbol(result, market_data, plot_symbol)
+        if symbol:
+            symbol_data = _extract_symbol_market_data(market_data, symbol)
+            if not symbol_data.empty:
+                fig_strategy = plot_strategy(
+                    result=result,
+                    symbol=symbol,
+                    data=symbol_data,
+                    theme="light",
+                    show=False,
+                )
+                if fig_strategy:
+                    strategy_kline_html = fig_strategy.to_html(
+                        full_html=False,
+                        include_plotlyjs=False,
+                        config=strategy_config,
+                    )
+                else:
+                    strategy_kline_html = "<div>未能生成 K 线复盘图</div>"
+            else:
+                strategy_kline_html = "<div>行情数据不完整，无法绘制 K 线复盘图</div>"
     risk_reject_ratio_html = "<div>暂无策略级风控拒单占比图</div>"
     risk_reason_ratio_html = "<div>暂无策略级拒单原因占比图</div>"
     risk_reject_trend_html = "<div>暂无按日风控拒单趋势图</div>"
     risk_reject_trend_by_strategy_html = "<div>暂无按策略风控拒单趋势图</div>"
     risk_reason_trend_html = "<div>暂无按日拒单原因趋势图</div>"
+    has_risk_ratio_chart = False
+    has_risk_reason_ratio_chart = False
+    has_risk_trend_chart = False
+    has_risk_strategy_trend_chart = False
+    has_risk_reason_trend_chart = False
+    total_reject_count = 0.0
     risk_df = (
         result.risk_rejections_by_strategy()
         if hasattr(result, "risk_rejections_by_strategy")
@@ -697,6 +880,7 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
             risk_reject_ratio_html = fig_risk_ratio.to_html(
                 full_html=False, include_plotlyjs=False, config=config
             )
+            has_risk_ratio_chart = True
         reason_columns = [
             ("daily_loss_reject_count", "Daily Loss"),
             ("drawdown_reject_count", "Drawdown"),
@@ -768,6 +952,7 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
                 risk_reason_ratio_html = fig_reason_ratio.to_html(
                     full_html=False, include_plotlyjs=False, config=config
                 )
+                has_risk_reason_ratio_chart = True
     risk_trend_df = (
         result.risk_rejections_trend(freq="D")
         if hasattr(result, "risk_rejections_trend")
@@ -802,6 +987,7 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
             risk_reject_trend_html = fig_risk_trend.to_html(
                 full_html=False, include_plotlyjs=False, config=config
             )
+            has_risk_trend_chart = True
             reason_columns = [
                 ("daily_loss_reject_count", "Daily Loss"),
                 ("drawdown_reject_count", "Drawdown"),
@@ -857,6 +1043,7 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
                 risk_reason_trend_html = fig_reason_trend.to_html(
                     full_html=False, include_plotlyjs=False, config=config
                 )
+                has_risk_reason_trend_chart = True
     trend_by_strategy_df = (
         result.risk_rejections_trend_by_strategy(freq="D")
         if hasattr(result, "risk_rejections_trend_by_strategy")
@@ -906,6 +1093,46 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
             risk_reject_trend_by_strategy_html = fig_risk_strategy_trend.to_html(
                 full_html=False, include_plotlyjs=False, config=config
             )
+            has_risk_strategy_trend_chart = True
+
+    risk_chart_blocks: list[str] = []
+
+    def append_risk_chart_block(chart_html: str) -> None:
+        risk_chart_blocks.append(
+            (
+                '<div class="chart-container" style="margin-top: 20px;">'
+                f"{chart_html}"
+                "</div>"
+            )
+        )
+
+    if has_risk_ratio_chart:
+        append_risk_chart_block(risk_reject_ratio_html)
+    if has_risk_reason_ratio_chart:
+        append_risk_chart_block(risk_reason_ratio_html)
+    if has_risk_trend_chart:
+        append_risk_chart_block(risk_reject_trend_html)
+    if has_risk_strategy_trend_chart:
+        append_risk_chart_block(risk_reject_trend_by_strategy_html)
+    if has_risk_reason_trend_chart:
+        append_risk_chart_block(risk_reason_trend_html)
+
+    if risk_chart_blocks:
+        risk_charts_html = "".join(risk_chart_blocks)
+    else:
+        if risk_df.empty:
+            reason_text = "本次回测未产生策略级风控拒单统计数据。"
+        elif total_reject_count <= 0.0:
+            reason_text = "本次回测风控拒单总数为 0，未触发拒单。"
+        else:
+            reason_text = "本次回测未形成可绘制的风控拒单图表。"
+        risk_charts_html = (
+            '<div class="chart-container" style="margin-top: 20px;">'
+            '<div class="empty-panel">'
+            f"{reason_text}<br>"
+            "建议：可降低风险阈值或增加高波动样本，观察风控拒单分布与趋势。"
+            "</div></div>"
+        )
 
     return {
         "dashboard_html": dashboard_html,
@@ -914,11 +1141,13 @@ def _build_chart_html_sections(result: Any) -> dict[str, str]:
         "rolling_metrics_html": rolling_metrics_html,
         "trades_dist_html": trades_dist_html,
         "pnl_duration_html": pnl_duration_html,
+        "strategy_kline_html": strategy_kline_html,
         "risk_reject_ratio_html": risk_reject_ratio_html,
         "risk_reason_ratio_html": risk_reason_ratio_html,
         "risk_reject_trend_html": risk_reject_trend_html,
         "risk_reject_trend_by_strategy_html": risk_reject_trend_by_strategy_html,
         "risk_reason_trend_html": risk_reason_trend_html,
+        "risk_charts_html": risk_charts_html,
     }
 
 
@@ -926,20 +1155,27 @@ def _build_analysis_table_sections(
     result: Any, compact_currency: bool = True
 ) -> dict[str, str]:
     """Build attribution/exposure/capacity HTML tables."""
+    overview_cards: list[tuple[str, str]] = []
+
+    def add_overview_card(label: str, value: str) -> None:
+        overview_cards.append((label, value))
+
     exposure_df = (
         result.exposure_df() if hasattr(result, "exposure_df") else pd.DataFrame()
     )
     if not exposure_df.empty:
+        latest_net_exposure_pct = float(exposure_df["net_exposure_pct"].iloc[-1])
+        latest_gross_exposure_pct = float(exposure_df["gross_exposure_pct"].iloc[-1])
+        max_leverage = float(exposure_df["leverage"].max())
+        add_overview_card("最新净暴露比", f"{latest_net_exposure_pct * 100:.2f}%")
+        add_overview_card("最新总暴露比", f"{latest_gross_exposure_pct * 100:.2f}%")
+        add_overview_card("最大杠杆", f"{max_leverage:.4f}")
         exposure_view = pd.DataFrame(
             [
                 {
-                    "latest_net_exposure_pct": float(
-                        exposure_df["net_exposure_pct"].iloc[-1]
-                    ),
-                    "latest_gross_exposure_pct": float(
-                        exposure_df["gross_exposure_pct"].iloc[-1]
-                    ),
-                    "max_leverage": float(exposure_df["leverage"].max()),
+                    "latest_net_exposure_pct": latest_net_exposure_pct,
+                    "latest_gross_exposure_pct": latest_gross_exposure_pct,
+                    "max_leverage": max_leverage,
                 }
             ]
         )
@@ -967,13 +1203,21 @@ def _build_analysis_table_sections(
         result.capacity_df() if hasattr(result, "capacity_df") else pd.DataFrame()
     )
     if not capacity_df.empty:
+        total_order_count = float(capacity_df["order_count"].sum())
+        total_filled_value = float(capacity_df["filled_value"].sum())
+        avg_fill_rate_qty = float(capacity_df["fill_rate_qty"].mean())
+        avg_turnover = float(capacity_df["turnover"].mean())
+        add_overview_card("总订单数", f"{total_order_count:,.0f}")
+        add_overview_card("总成交额", _format_currency(total_filled_value))
+        add_overview_card("平均成交率", f"{avg_fill_rate_qty * 100:.2f}%")
+        add_overview_card("平均换手率", f"{avg_turnover * 100:.2f}%")
         capacity_view = pd.DataFrame(
             [
                 {
-                    "total_order_count": float(capacity_df["order_count"].sum()),
-                    "total_filled_value": float(capacity_df["filled_value"].sum()),
-                    "avg_fill_rate_qty": float(capacity_df["fill_rate_qty"].mean()),
-                    "avg_turnover": float(capacity_df["turnover"].mean()),
+                    "total_order_count": total_order_count,
+                    "total_filled_value": total_filled_value,
+                    "avg_fill_rate_qty": avg_fill_rate_qty,
+                    "avg_turnover": avg_turnover,
                 }
             ]
         )
@@ -1005,6 +1249,12 @@ def _build_analysis_table_sections(
         else pd.DataFrame()
     )
     if not attribution_df.empty:
+        total_pnl = float(attribution_df["total_pnl"].sum())
+        total_commission = float(attribution_df["total_commission"].sum())
+        total_trade_count = float(attribution_df["trade_count"].sum())
+        add_overview_card("归因总盈亏", _format_currency(total_pnl))
+        add_overview_card("归因总手续费", _format_currency(total_commission))
+        add_overview_card("归因交易次数", f"{total_trade_count:,.0f}")
         cols = [
             "group",
             "trade_count",
@@ -1151,7 +1401,23 @@ def _build_analysis_table_sections(
     else:
         risk_by_strategy_html = "<div>暂无策略归属风控拒单聚合数据</div>"
 
+    if overview_cards:
+        analysis_overview_html = "".join(
+            [
+                (
+                    '<div class="analysis-card">'
+                    f'<div class="analysis-card-label">{label}</div>'
+                    f'<div class="analysis-card-value">{value}</div>'
+                    "</div>"
+                )
+                for label, value in overview_cards
+            ]
+        )
+    else:
+        analysis_overview_html = "<div>暂无归因与容量摘要数据</div>"
+
     return {
+        "analysis_overview_html": analysis_overview_html,
         "exposure_summary_html": exposure_summary_html,
         "capacity_summary_html": capacity_summary_html,
         "attribution_summary_html": attribution_summary_html,
@@ -1167,6 +1433,9 @@ def plot_report(
     filename: str = "akquant_report.html",
     show: bool = False,
     compact_currency: bool = True,
+    market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
+    plot_symbol: Optional[str] = None,
+    include_trade_kline: bool = True,
 ) -> None:
     """
     生成类似 QuantStats 的整合版 HTML 报告 (中文优化版).
@@ -1187,7 +1456,12 @@ def plot_report(
 
     summary_context = _build_summary_context(result)
     metrics_html = _build_metrics_html(result)
-    chart_sections = _build_chart_html_sections(result)
+    chart_sections = _build_chart_html_sections(
+        result=result,
+        market_data=market_data,
+        plot_symbol=plot_symbol,
+        include_trade_kline=include_trade_kline,
+    )
     analysis_sections = _build_analysis_table_sections(
         result, compact_currency=compact_currency
     )
@@ -1210,6 +1484,7 @@ def plot_report(
         rolling_metrics_html=chart_sections["rolling_metrics_html"],
         trades_dist_html=chart_sections["trades_dist_html"],
         pnl_duration_html=chart_sections["pnl_duration_html"],
+        strategy_kline_html=chart_sections["strategy_kline_html"],
         risk_reject_ratio_html=chart_sections["risk_reject_ratio_html"],
         risk_reason_ratio_html=chart_sections["risk_reason_ratio_html"],
         risk_reject_trend_html=chart_sections["risk_reject_trend_html"],
@@ -1217,12 +1492,14 @@ def plot_report(
             "risk_reject_trend_by_strategy_html"
         ],
         risk_reason_trend_html=chart_sections["risk_reason_trend_html"],
+        analysis_overview_html=analysis_sections["analysis_overview_html"],
         exposure_summary_html=analysis_sections["exposure_summary_html"],
         capacity_summary_html=analysis_sections["capacity_summary_html"],
         attribution_summary_html=analysis_sections["attribution_summary_html"],
         orders_by_strategy_html=analysis_sections["orders_by_strategy_html"],
         executions_by_strategy_html=analysis_sections["executions_by_strategy_html"],
         risk_by_strategy_html=analysis_sections["risk_by_strategy_html"],
+        risk_charts_html=chart_sections["risk_charts_html"],
     )
 
     # 5. Save File

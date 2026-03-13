@@ -6,6 +6,7 @@ This script demonstrates the complete workflow of AKQuant:
 2. Strategy Implementation: A simple trend-following strategy.
 3. Backtesting: Running the backtest engine.
 4. Visualization: Generating professional-grade interactive reports.
+5. Trade Replay: Rendering K-line with buy/sell markers in final report.
 """
 
 import akshare as ak
@@ -98,12 +99,16 @@ if __name__ == "__main__":
         title=f"AKQuant Report - {SYMBOL}",
         filename=report_file,
         show=True,  # Open automatically in browser
+        market_data=df,
+        plot_symbol=SYMBOL,
+        include_trade_kline=True,
     )
     # result.report_quantstats(
     #     benchmark=None, filename=report_file, title="Test Report"
     # )
 
     print(f"  - Report saved to: {report_file}")
+    print("  - Report now includes K-line trade replay with buy/sell markers.")
     print("  - Open this file in your browser to view the report.")
 
     print("\nDemo completed successfully!")
