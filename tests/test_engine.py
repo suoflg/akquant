@@ -2538,9 +2538,151 @@ def test_run_backtest_china_futures_rejects_negative_template_multiplier() -> No
         )
 
 
+def test_run_backtest_china_options_fee_prefix() -> None:
+    """China options prefix fee should override global option commission."""
+    probe = akquant.Engine()
+    if not hasattr(probe, "set_options_fee_rules_by_prefix"):
+        pytest.skip("Engine binary does not expose options prefix fee methods")
+
+    class BuyAndHoldOnceStrategy(akquant.Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self._submitted = False
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            if self._submitted:
+                return
+            self.buy(symbol=bar.symbol, quantity=1.0)
+            self._submitted = True
+
+    symbol = "OPT_TMPL_FEE_01"
+    bars = _build_regression_bars(symbol)
+    base_config = akquant.BacktestConfig(
+        strategy_config=akquant.StrategyConfig(
+            initial_cash=1_000_000.0,
+            commission_rate=0.0,
+            slippage=0.0,
+            min_commission=0.0,
+            stamp_tax_rate=0.0,
+            transfer_fee_rate=0.0,
+        ),
+        instruments_config=[
+            akquant.InstrumentConfig(
+                symbol=symbol,
+                asset_type="OPTION",
+                option_type="CALL",
+                strike_price=2.0,
+                underlying_symbol="510050.SH",
+                multiplier=1.0,
+                tick_size=0.0001,
+                margin_ratio=1.0,
+                lot_size=1,
+            )
+        ],
+        china_options=akquant.ChinaOptionsConfig(
+            fee_per_contract=0.0,
+            fee_by_symbol_prefix=[
+                akquant.ChinaOptionsFeeConfig(
+                    symbol_prefix="OPT",
+                    commission_per_contract=0.0,
+                )
+            ],
+        ),
+    )
+    high_fee_config = akquant.BacktestConfig(
+        strategy_config=akquant.StrategyConfig(
+            initial_cash=1_000_000.0,
+            commission_rate=0.0,
+            slippage=0.0,
+            min_commission=0.0,
+            stamp_tax_rate=0.0,
+            transfer_fee_rate=0.0,
+        ),
+        instruments_config=[
+            akquant.InstrumentConfig(
+                symbol=symbol,
+                asset_type="OPTION",
+                option_type="CALL",
+                strike_price=2.0,
+                underlying_symbol="510050.SH",
+                multiplier=1.0,
+                tick_size=0.0001,
+                margin_ratio=1.0,
+                lot_size=1,
+            )
+        ],
+        china_options=akquant.ChinaOptionsConfig(
+            fee_per_contract=0.0,
+            fee_by_symbol_prefix=[
+                akquant.ChinaOptionsFeeConfig(
+                    symbol_prefix="OPT",
+                    commission_per_contract=12.0,
+                )
+            ],
+        ),
+    )
+    result_base = akquant.run_backtest(
+        data=bars,
+        strategy=BuyAndHoldOnceStrategy,
+        symbol=symbol,
+        show_progress=False,
+        execution_mode="current_close",
+        config=base_config,
+    )
+    result_high_fee = akquant.run_backtest(
+        data=bars,
+        strategy=BuyAndHoldOnceStrategy,
+        symbol=symbol,
+        show_progress=False,
+        execution_mode="current_close",
+        config=high_fee_config,
+    )
+    assert float(result_high_fee.equity_curve.iloc[-1]) < float(
+        result_base.equity_curve.iloc[-1]
+    )
+
+
+def test_china_options_config_rejects_duplicate_prefix() -> None:
+    """Duplicate china options fee prefixes should fail fast."""
+    with pytest.raises(
+        ValueError,
+        match="fee_by_symbol_prefix\\[1\\] duplicates symbol_prefix 'OPT'",
+    ):
+        akquant.ChinaOptionsConfig(
+            fee_by_symbol_prefix=[
+                akquant.ChinaOptionsFeeConfig(
+                    symbol_prefix="OPT",
+                    commission_per_contract=2.0,
+                ),
+                akquant.ChinaOptionsFeeConfig(
+                    symbol_prefix="opt",
+                    commission_per_contract=3.0,
+                ),
+            ]
+        )
+
+
 def test_china_futures_validation_config_requires_at_least_one_switch() -> None:
     """Validation config should fail if both switches are omitted."""
     with pytest.raises(
         ValueError, match="must set enforce_tick_size or enforce_lot_size"
     ):
         akquant.ChinaFuturesValidationConfig(symbol_prefix="RB")
+
+
+def test_china_futures_session_profile_rejects_invalid_value() -> None:
+    """China futures session profile should validate allowed presets."""
+    with pytest.raises(ValueError, match="session_profile must be one of"):
+        akquant.ChinaFuturesConfig(session_profile="CN_FUTURES_UNKNOWN")
+
+
+def test_china_futures_session_profile_accepts_cffex_presets() -> None:
+    """China futures session profile should accept CFFEX day presets."""
+    config_stock = akquant.ChinaFuturesConfig(
+        session_profile="CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
+    )
+    config_bond = akquant.ChinaFuturesConfig(
+        session_profile="CN_FUTURES_CFFEX_BOND_DAY"
+    )
+    assert config_stock.session_profile == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
+    assert config_bond.session_profile == "CN_FUTURES_CFFEX_BOND_DAY"

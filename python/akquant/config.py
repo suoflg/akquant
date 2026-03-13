@@ -199,6 +199,7 @@ class ChinaFuturesConfig:
 
     enforce_sessions: bool = True
     use_china_futures_market: bool = True
+    session_profile: str = "CN_FUTURES_DAY"
     enforce_tick_size: bool = True
     enforce_lot_size: bool = True
     fee_by_symbol_prefix: Optional[List[ChinaFuturesFeeConfig]] = None
@@ -210,6 +211,23 @@ class ChinaFuturesConfig:
 
     def __post_init__(self) -> None:
         """Validate duplicate prefixes across config lists."""
+        valid_session_profiles = {
+            "CN_FUTURES_DAY",
+            "CN_FUTURES_COMMODITY_DAY",
+            "CN_FUTURES_CFFEX_STOCK_INDEX_DAY",
+            "CN_FUTURES_CFFEX_BOND_DAY",
+            "CN_FUTURES_NIGHT_23",
+            "CN_FUTURES_NIGHT_01",
+            "CN_FUTURES_NIGHT_0230",
+        }
+        self.session_profile = self.session_profile.strip().upper()
+        if self.session_profile not in valid_session_profiles:
+            raise ValueError(
+                "session_profile must be one of "
+                "CN_FUTURES_DAY/CN_FUTURES_COMMODITY_DAY/"
+                "CN_FUTURES_CFFEX_STOCK_INDEX_DAY/CN_FUTURES_CFFEX_BOND_DAY/"
+                "CN_FUTURES_NIGHT_23/CN_FUTURES_NIGHT_01/CN_FUTURES_NIGHT_0230"
+            )
         if self.fee_by_symbol_prefix:
             seen_fee: Dict[str, int] = {}
             for idx, fee in enumerate(self.fee_by_symbol_prefix):
@@ -245,6 +263,57 @@ class ChinaFuturesConfig:
                         f"instrument_templates_by_symbol_prefix[{prev_idx}]"
                     )
                 seen_template[template.symbol_prefix] = idx
+
+
+@dataclass
+class ChinaOptionsFeeConfig:
+    """中国期权费率配置."""
+
+    symbol_prefix: str
+    commission_per_contract: float
+
+    def __post_init__(self) -> None:
+        """Validate and normalize option fee config."""
+        self.symbol_prefix = self.symbol_prefix.strip().upper()
+        if not self.symbol_prefix:
+            raise ValueError("symbol_prefix must not be empty")
+        if self.commission_per_contract < 0:
+            raise ValueError("commission_per_contract must be >= 0")
+
+
+@dataclass
+class ChinaOptionsSessionConfig:
+    """中国期权交易时段配置."""
+
+    start: str
+    end: str
+    session: str = "continuous"
+
+
+@dataclass
+class ChinaOptionsConfig:
+    """中国期权增强配置."""
+
+    use_china_market: bool = True
+    fee_per_contract: Optional[float] = None
+    fee_by_symbol_prefix: Optional[List[ChinaOptionsFeeConfig]] = None
+    sessions: Optional[List[ChinaOptionsSessionConfig]] = None
+
+    def __post_init__(self) -> None:
+        """Validate china options config fields."""
+        if self.fee_per_contract is not None and self.fee_per_contract < 0:
+            raise ValueError("fee_per_contract must be >= 0")
+        if self.fee_by_symbol_prefix:
+            seen_fee: Dict[str, int] = {}
+            for idx, fee in enumerate(self.fee_by_symbol_prefix):
+                if fee.symbol_prefix in seen_fee:
+                    prev_idx = seen_fee[fee.symbol_prefix]
+                    raise ValueError(
+                        "fee_by_symbol_prefix"
+                        f"[{idx}] duplicates symbol_prefix '{fee.symbol_prefix}' "
+                        f"already used at fee_by_symbol_prefix[{prev_idx}]"
+                    )
+                seen_fee[fee.symbol_prefix] = idx
 
 
 @dataclass
@@ -423,6 +492,7 @@ class BacktestConfig:
         Union[List[InstrumentConfig], Dict[str, InstrumentConfig]]
     ] = None  # Detailed props (Overrides defaults)
     china_futures: Optional[ChinaFuturesConfig] = None
+    china_options: Optional[ChinaOptionsConfig] = None
 
     benchmark: Optional[str] = None
     timezone: str = "Asia/Shanghai"

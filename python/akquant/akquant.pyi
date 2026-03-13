@@ -625,6 +625,17 @@ class Engine:
         """
         ...
 
+    def set_options_fee_rules_by_prefix(
+        self, symbol_prefix: str, commission_per_contract: float
+    ) -> None:
+        r"""
+        设置期权品种前缀费率规则.
+
+        :param symbol_prefix: 品种前缀 (如 1000ETF_C, IO)
+        :param commission_per_contract: 每张合约佣金
+        """
+        ...
+
     def set_crypto_fee_rules(self, commission_rate: float) -> None:
         r"""
         设置加密货币费率规则 (按金额比例).

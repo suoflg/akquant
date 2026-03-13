@@ -325,6 +325,7 @@ BacktestConfig (回测场景)
 - `fee_by_symbol_prefix`: 品种费率覆盖
 - `validation_by_symbol_prefix`: 品种撮合校验开关覆盖
 - `enforce_sessions`: 是否严格按交易时段控制成交
+- `session_profile`: 中国期货会话模板（`CN_FUTURES_DAY`=`CN_FUTURES_COMMODITY_DAY` / `CN_FUTURES_CFFEX_STOCK_INDEX_DAY` / `CN_FUTURES_CFFEX_BOND_DAY` / `CN_FUTURES_NIGHT_23` / `CN_FUTURES_NIGHT_01` / `CN_FUTURES_NIGHT_0230`）
 
 配置对象采用“构造即校验”：
 
@@ -354,12 +355,39 @@ BacktestConfig (回测场景)
 | 合约参数（乘数/保证金/tick/手数） | `InstrumentConfig` 显式字段 | `instrument_templates_by_symbol_prefix` | `run_backtest` 默认参数 |
 | 品种费率 | `fee_by_symbol_prefix` | 模板 `commission_rate` | `StrategyConfig.commission_rate` |
 | 品种校验开关 | `validation_by_symbol_prefix` | 模板 `enforce_tick_size / enforce_lot_size` | 全局 `ChinaFuturesConfig.enforce_*` |
+| 交易时段 | `china_futures.sessions` 显式配置 | `session_profile` 模板 | ChinaMarket 默认会话 |
 | 市场路由 | `use_china_futures_market=False` 或混合资产回落 | `use_china_futures_market=True` 且纯期货 | `use_simple_market` |
 
 口径说明：
 
 *   同级规则冲突时，以显式规则覆盖模板规则。
 *   撮合校验路径按更具体前缀优先（更长匹配优先）。
+
+中国期权扩展配置位于 `BacktestConfig.china_options`，用于管理中国期权费率：
+
+- `fee_per_contract`: 全局每张合约手续费
+- `fee_by_symbol_prefix`: 按品种前缀覆盖每张合约手续费
+- `use_china_market`: 是否切换到 ChinaMarket
+- `sessions`: 可选时段覆盖（不与期货会话配置冲突时生效）
+
+中国期权扩展推荐使用以下优先级口径：
+
+| 配置项 | 高优先级 | 中优先级 | 默认值 |
+|---|---|---|---|
+| 期权费率（按张） | `fee_by_symbol_prefix` | `fee_per_contract` | `set_option_fee_rules` 默认配置 |
+| 市场路由 | `use_china_market=True` | 混合资产时自动 ChinaMarket | `use_simple_market` |
+
+期货 vs 期权配置能力对照：
+
+| 能力维度 | 中国期货（`china_futures`） | 中国期权（`china_options`） |
+|---|---|---|
+| 路由开关 | `use_china_futures_market` | `use_china_market` |
+| 全局费率 | `StrategyConfig.commission_rate` 或模板费率 | `fee_per_contract` |
+| 前缀费率覆盖 | `fee_by_symbol_prefix` | `fee_by_symbol_prefix` |
+| 合约参数模板 | 支持（乘数/保证金/tick/手数） | 不支持 |
+| 撮合校验开关 | 支持（tick/手数，含前缀覆盖） | 不支持 |
+| 会话覆盖 | 支持（`sessions`） | 支持（`sessions`） |
+| 前缀匹配策略 | 更长前缀优先 | 更长前缀优先 |
 
 股票配置推荐使用以下优先级口径：
 

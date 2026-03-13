@@ -116,4 +116,42 @@ mod tests {
         );
         assert_eq!(commission, Decimal::from_str("35").unwrap());
     }
+
+    #[test]
+    fn test_china_market_options_fee_by_prefix() {
+        let mut config = ChinaMarketConfig {
+            option: Some(option::OptionConfig::default()),
+            ..Default::default()
+        };
+        config.options_fee_by_prefix.push((
+            "OPT".to_string(),
+            option::OptionConfig {
+                commission_per_contract: Decimal::from(12),
+            },
+        ));
+
+        let market = ChinaMarket::from_config(config);
+        use crate::model::instrument::{InstrumentEnum, OptionInstrument};
+        let instr = Instrument {
+            asset_type: AssetType::Option,
+            inner: InstrumentEnum::Option(OptionInstrument {
+                symbol: "OPT_510050_C_202601".to_string(),
+                multiplier: Decimal::from(1),
+                tick_size: Decimal::from_str("0.0001").unwrap(),
+                strike_price: Decimal::from(2),
+                option_type: crate::model::OptionType::Call,
+                expiry_date: 20260131,
+                underlying_symbol: "510050.SH".to_string(),
+                settlement_type: None,
+            }),
+        };
+
+        let commission = market.calculate_commission(
+            &instr,
+            OrderSide::Buy,
+            Decimal::from_str("0.1234").unwrap(),
+            Decimal::from(3),
+        );
+        assert_eq!(commission, Decimal::from(36));
+    }
 }
