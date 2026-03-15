@@ -1,3 +1,4 @@
+use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -36,6 +37,14 @@ impl MIDPOINT {
         let min_v = self.buffer.iter().fold(f64::INFINITY, |a, b| a.min(*b));
         self.current_value = Some((max_v + min_v) / 2.0);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -79,6 +88,14 @@ impl MAX {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -118,6 +135,14 @@ impl MIN {
         let min_v = self.buffer.iter().fold(f64::INFINITY, |a, b| a.min(*b));
         self.current_value = Some(min_v);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -172,6 +197,14 @@ impl MAXINDEX {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -222,6 +255,14 @@ impl MININDEX {
         let start = self.total_count - self.period;
         self.current_value = Some((start + min_idx) as f64);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -282,6 +323,25 @@ impl MINMAXINDEX {
         self.current_value
     }
 
+    pub fn update_many_pair<'py>(
+        &mut self,
+        py: Python<'py>,
+        values: Vec<f64>,
+    ) -> (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>) {
+        let mut first = Vec::with_capacity(values.len());
+        let mut second = Vec::with_capacity(values.len());
+        for value in values {
+            if let Some((f, s)) = self.update(value) {
+                first.push(f);
+                second.push(s);
+            } else {
+                first.push(f64::NAN);
+                second.push(f64::NAN);
+            }
+        }
+        (PyArray1::from_vec(py, first), PyArray1::from_vec(py, second))
+    }
+
     #[getter]
     pub fn value(&self) -> Option<(f64, f64)> {
         self.current_value
@@ -322,6 +382,25 @@ impl MINMAX {
         let min_v = self.buffer.iter().fold(f64::INFINITY, |a, b| a.min(*b));
         self.current_value = Some((min_v, max_v));
         self.current_value
+    }
+
+    pub fn update_many_pair<'py>(
+        &mut self,
+        py: Python<'py>,
+        values: Vec<f64>,
+    ) -> (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>) {
+        let mut first = Vec::with_capacity(values.len());
+        let mut second = Vec::with_capacity(values.len());
+        for value in values {
+            if let Some((f, s)) = self.update(value) {
+                first.push(f);
+                second.push(s);
+            } else {
+                first.push(f64::NAN);
+                second.push(f64::NAN);
+            }
+        }
+        (PyArray1::from_vec(py, first), PyArray1::from_vec(py, second))
     }
 
     #[getter]
@@ -369,6 +448,14 @@ impl SUM {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -410,6 +497,14 @@ impl AVGDEV {
             self.buffer.iter().map(|v| (*v - mean).abs()).sum::<f64>() / self.period as f64;
         self.current_value = Some(avgdev);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -454,6 +549,14 @@ impl RANGE {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -484,6 +587,14 @@ impl LN {
             Some(f64::NAN)
         };
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]

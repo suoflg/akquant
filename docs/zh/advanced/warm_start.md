@@ -143,4 +143,4 @@ run_warm_start("checkpoint.pkl", data_new, ...)
 
 - `run_warm_start` 参数详情：[API 参考](../reference/api.md#akquantrun_warm_start)
 - 恢复阶段运行时覆盖：[Runtime Config 指南](runtime_config.md)
-- 多 slot 连续性与策略级风控映射：[多策略迁移指南](multi_strategy_migration.md)
+- 多 slot 连续性与策略级风控映射：[多策略指南](multi_strategy_guide.md)

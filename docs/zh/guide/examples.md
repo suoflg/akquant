@@ -457,10 +457,10 @@ class AdjSignal(Strategy):
     *   演示回测后的一站式产出：生成交互式报告，并输出 `exposure_df` / `attribution_df` / `capacity_df` 以及按策略归属聚合 `orders_by_strategy` / `executions_by_strategy` 的行数摘要。
     *   输出 `report_html=...`，并以 `done_report_and_analysis_outputs` 作为结束标记。
 
-*   **[34_multi_strategy_migration_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_migration_demo.py)**:
-    *   演示单策略到多策略 slot 的迁移对照，采用集中式 `BacktestConfig(strategy_config=StrategyConfig(...))` 写法。
+*   **[34_multi_strategy_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_demo.py)**:
+    *   演示多策略 slot 组织方式，采用集中式 `BacktestConfig(strategy_config=StrategyConfig(...))` 写法。
     *   覆盖策略级限额、仅平仓、冷却 bars 等配置驱动能力。
-    *   输出 `single_owner_ids`、`multi_owner_ids`、`multi_alpha_cooldown_rejections` 等摘要，并以 `done_multi_strategy_migration_demo` 作为结束标记。
+    *   输出 `single_owner_ids`、`multi_owner_ids`、`multi_alpha_cooldown_rejections` 等摘要，并以 `done_multi_strategy_demo` 作为结束标记。
 
 *   **[35_custom_broker_registry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/35_custom_broker_registry_demo.py)**:
     *   演示自定义 broker 注册机制：通过 `register_broker` 注入 `builder` 并使用 `create_gateway_bundle` 按名称创建网关。

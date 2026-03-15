@@ -1,3 +1,5 @@
+use numpy::PyArray1;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -63,6 +65,14 @@ impl RSI {
         Some(rsi)
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -115,6 +125,23 @@ impl WILLR {
             self.current_value = Some(-100.0 * (highest - close) / range);
         }
         self.current_value
+    }
+
+    pub fn update_many_hlc<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for (high, (low, close)) in highs.into_iter().zip(lows.into_iter().zip(closes.into_iter())) {
+            out.push(self.update(high, low, close).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -185,6 +212,14 @@ impl CMO {
             self.current_value = Some(100.0 * (self.gain_sum - self.loss_sum) / denom);
         }
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]

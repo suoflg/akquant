@@ -18,7 +18,7 @@
 
 | 方向 | 当前状态 | 证据入口 | 下一步 |
 | :--- | :--- | :--- | :--- |
-| 指标兼容与迁移 | 已形成完整体系：Top20 完成，扩展到批次 T，总计 103 指标 | [indicators.rs](https://github.com/akfamily/akquant/blob/main/src/indicators.rs), [talib_top20_plan.md](./talib_top20_plan.md), [rust_indicator_reference.md](../guide/rust_indicator_reference.md) | 持续补充场景模板与教学材料 |
+| 指标兼容与迁移 | 已形成完整体系：指标扩展到批次 T，总计 103 指标 | [indicators.rs](https://github.com/akfamily/akquant/blob/main/src/indicators.rs), [rust_indicator_reference.md](../guide/rust_indicator_reference.md) | 持续补充场景模板与教学材料 |
 | 复杂订单语义 | 策略层助手可用（`OCO/Bracket/Trailing`），类型已覆盖 `StopTrail/StopTrailLimit` | [strategy.py](https://github.com/akfamily/akquant/blob/main/python/akquant/strategy.py), [types.rs](https://github.com/akfamily/akquant/blob/main/src/model/types.rs) | 继续下沉到订单管理层图模型 |
 | 数据适配与多时框 | `DataFeedAdapter`、`CSV/Parquet`、`resample/replay/align` 已可用 | [feed_adapter.py](https://github.com/akfamily/akquant/blob/main/python/akquant/feed_adapter.py), [multi_timeframe_feed_api.md](./multi_timeframe_feed_api.md) | 扩展官方适配器与校验工具 |
 | Broker 扩展 | `ctp/miniqmt/ptrade` + registry 机制已成型 | [factory.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/factory.py), [registry.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/registry.py) | 推进国际 broker 最小闭环 |

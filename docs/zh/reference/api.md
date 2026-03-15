@@ -705,6 +705,7 @@ class RiskConfig:
 *   `metrics_df`: 绩效指标表格 (Sharpe, Drawdown 等)。
 *   `trades_df`: 所有平仓交易记录表格。
 *   `orders_df`: 所有委托记录表格。
+*   `executions_df`: 所有成交流水表格（优先使用 Rust IPC/dict 快速导出）。
 *   `positions_df`: 每日持仓详情。
 *   `equity_curve`: 权益曲线 (List[Tuple[timestamp, value]])。
 *   `trades`: `ClosedTrade` 对象列表。

@@ -1,3 +1,5 @@
+use numpy::PyArray1;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -36,6 +38,22 @@ impl OBV {
         self.prev_close = Some(close);
         self.current_value = Some(self.current_obv);
         self.current_value
+    }
+
+    pub fn update_many_dual<'py>(
+        &mut self,
+        py: Python<'py>,
+        closes: Vec<f64>,
+        volumes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if closes.len() != volumes.len() {
+            return Err(PyValueError::new_err("closes/volumes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(closes.len());
+        for (close, volume) in closes.into_iter().zip(volumes.into_iter()) {
+            out.push(self.update(close, volume).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -118,6 +136,28 @@ impl MFI {
         self.current_value
     }
 
+    pub fn update_many_hlcv<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+        volumes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() || highs.len() != volumes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes/volumes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for ((high, low), (close, volume)) in highs
+            .into_iter()
+            .zip(lows.into_iter())
+            .zip(closes.into_iter().zip(volumes.into_iter()))
+        {
+            out.push(self.update(high, low, close, volume).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -150,6 +190,28 @@ impl BOP {
         };
         self.current_value = Some(value);
         self.current_value
+    }
+
+    pub fn update_many_ohlc<'py>(
+        &mut self,
+        py: Python<'py>,
+        opens: Vec<f64>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if opens.len() != highs.len() || opens.len() != lows.len() || opens.len() != closes.len() {
+            return Err(PyValueError::new_err("opens/highs/lows/closes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(opens.len());
+        for ((open, high), (low, close)) in opens
+            .into_iter()
+            .zip(highs.into_iter())
+            .zip(lows.into_iter().zip(closes.into_iter()))
+        {
+            out.push(self.update(open, high, low, close).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -188,6 +250,28 @@ impl AD {
         self.current_ad += mfv;
         self.current_value = Some(self.current_ad);
         self.current_value
+    }
+
+    pub fn update_many_hlcv<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+        volumes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() || highs.len() != volumes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes/volumes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for ((high, low), (close, volume)) in highs
+            .into_iter()
+            .zip(lows.into_iter())
+            .zip(closes.into_iter().zip(volumes.into_iter()))
+        {
+            out.push(self.update(high, low, close, volume).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -251,6 +335,28 @@ impl ADOSC {
         }
         self.current_value = Some(self.fast_ema? - self.slow_ema?);
         self.current_value
+    }
+
+    pub fn update_many_hlcv<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+        volumes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() || highs.len() != volumes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes/volumes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for ((high, low), (close, volume)) in highs
+            .into_iter()
+            .zip(lows.into_iter())
+            .zip(closes.into_iter().zip(volumes.into_iter()))
+        {
+            out.push(self.update(high, low, close, volume).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
