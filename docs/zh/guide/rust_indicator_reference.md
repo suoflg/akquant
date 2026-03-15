@@ -4,7 +4,9 @@
 
 ## 使用约定
 
-- 所有函数均可直接在 `akquant.talib` 中使用，默认推荐 `backend="auto"`。
+- 所有函数均可直接在 `akquant.talib` 中使用，`backend="auto"` 默认走 `rust`。
+- 需要做历史策略基线对齐时，建议临时显式设置 `backend="python"`。
+- 如需全局覆盖 `auto` 行为，可设置环境变量 `AKQUANT_TALIB_AUTO_BACKEND=python|rust`。
 - 单输出指标返回单序列；多输出指标返回 tuple。
 - 绝大多数窗口类指标在 warmup 区段会返回 `NaN` 或空位，这属于正常行为。
 - 本页统计口径来自 AKQuant 当前指标注册表，当前总计 **103 个指标**。
@@ -293,7 +295,7 @@
 
 ## 相关资料
 
-- [TA-Lib 兼容能力总览](../advanced/talib_top20_plan.md)
+- [能力补强路线图](../advanced/capability_boost_plan.md)
 - [指标组合实战手册](./talib_indicator_playbook.md)
 - [按策略场景选指标速查表（四象限）](./indicator_scenario_quickref.md)
 - [第 16 章：AKQuant 指标全景与工程化使用](../textbook/16_rust_indicators.md)

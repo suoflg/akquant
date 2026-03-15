@@ -13,6 +13,10 @@ This chapter is currently maintained in Chinese first.
 
 ## TA-Lib Backend Usage
 
+- `backend="auto"` defaults to `rust`.
+- For baseline alignment with legacy strategies, explicitly use `backend="python"`.
+- To override `auto` globally, set `AKQUANT_TALIB_AUTO_BACKEND=python|rust`.
+
 ```python
 from akquant import talib as ta
 

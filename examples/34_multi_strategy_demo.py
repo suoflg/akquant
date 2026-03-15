@@ -6,7 +6,7 @@ from akquant import Bar, Strategy
 
 
 def make_bars() -> list[Bar]:
-    """Build deterministic bars for migration demo."""
+    """Build deterministic bars for multi-strategy demo."""
     idx = pd.date_range(start="2024-02-01", periods=8, freq="D")
     prices = [100.0, 99.0, 98.0, 97.0, 96.0, 97.0, 98.0, 99.0]
     bars: list[Bar] = []
@@ -19,14 +19,14 @@ def make_bars() -> list[Bar]:
                 low=price - 1.0,
                 close=price,
                 volume=1000.0,
-                symbol="MIGRATE",
+                symbol="MULTI",
             )
         )
     return bars
 
 
 class AlphaStrategy(Strategy):
-    """Primary strategy used in migration demo."""
+    """Primary strategy used in the multi-strategy demo."""
 
     def on_bar(self, bar: Bar) -> None:
         """Submit deterministic buy orders."""
@@ -34,7 +34,7 @@ class AlphaStrategy(Strategy):
 
 
 class BetaStrategy(Strategy):
-    """Secondary strategy used in multi-slot migration demo."""
+    """Secondary strategy used in the multi-strategy demo."""
 
     def on_bar(self, bar: Bar) -> None:
         """Submit small buy or close orders."""
@@ -60,7 +60,7 @@ def run_single_strategy() -> Any:
     return aq.run_backtest(
         data=make_bars(),
         strategy=AlphaStrategy,
-        symbol="MIGRATE",
+        symbol="MULTI",
         config=config,
         execution_mode="current_close",
         lot_size=1,
@@ -87,7 +87,7 @@ def run_multi_strategy() -> Any:
     return aq.run_backtest(
         data=make_bars(),
         strategy=AlphaStrategy,
-        symbol="MIGRATE",
+        symbol="MULTI",
         config=config,
         execution_mode="current_close",
         lot_size=1,
@@ -96,11 +96,11 @@ def run_multi_strategy() -> Any:
 
 
 def main() -> None:
-    """Print migration-oriented before/after summaries."""
+    """Print single-slot and multi-slot summary outputs."""
     probe = aq.Engine()
     if not hasattr(probe, "set_strategy_risk_cooldown_bars"):
-        print("migration_demo_skipped=engine_missing_strategy_cooldown")
-        print("done_multi_strategy_migration_demo")
+        print("multi_strategy_demo_skipped=engine_missing_strategy_cooldown")
+        print("done_multi_strategy_demo")
         return
 
     single_result = run_single_strategy()
@@ -152,7 +152,7 @@ def main() -> None:
     print(f"multi_alpha_size_rejections={size_rejections}")
     print(f"multi_alpha_cooldown_rejections={cooldown_rejections}")
     print(f"multi_beta_orders={beta_orders}")
-    print("done_multi_strategy_migration_demo")
+    print("done_multi_strategy_demo")
 
 
 if __name__ == "__main__":

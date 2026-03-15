@@ -224,7 +224,7 @@ For more examples, please refer to the `examples/` directory.
 
 *   Phase-5 migration FAQ (quickstart): [Phase-5 Migration FAQ](start/quickstart.md)
 *   Full compatibility notes (API reference): [Compatibility & Migration Notes](reference/api.md)
-*   Multi-strategy migration checklist (advanced): [Multi-Strategy Migration Guide](advanced/multi_strategy_migration.md)
+*   Multi-strategy checklist (advanced): [Multi-Strategy Guide](advanced/multi_strategy_guide.md)
 *   Dynamic strategy loading guide (advanced): [Runtime Config Guide](advanced/runtime_config.md)
 *   Dynamic strategy loading example (examples): [44_strategy_source_loader_demo.py](https://github.com/akfamily/akquant/blob/main/examples/44_strategy_source_loader_demo.py)
 *   Dynamic strategy loading textbook chapter (examples/textbook): [ch15_strategy_loader.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch15_strategy_loader.py)

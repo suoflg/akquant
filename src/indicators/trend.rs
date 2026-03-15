@@ -1,3 +1,5 @@
+use numpy::PyArray1;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -67,6 +69,23 @@ impl CCI {
             self.current_value = Some((typical_price - sma) / (self.c * mean_deviation));
         }
         self.current_value
+    }
+
+    pub fn update_many_hlc<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for (high, (low, close)) in highs.into_iter().zip(lows.into_iter().zip(closes.into_iter())) {
+            out.push(self.update(high, low, close).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]

@@ -645,6 +645,7 @@ Backtest result object.
 *   `metrics_df`: Performance metrics DataFrame.
 *   `trades_df`: Trade history DataFrame.
 *   `orders_df`: Order history DataFrame.
+*   `executions_df`: Execution fills DataFrame (prefers Rust IPC/dict fast export path).
 *   `positions_df`: Daily position details.
 *   `equity_curve`: Equity curve.
 *   `cash_curve`: Cash curve.

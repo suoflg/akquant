@@ -134,4 +134,4 @@ run_warm_start("checkpoint.pkl", data_new, ...)
 
 - API reference for `run_warm_start`: [API Reference](../reference/api.md#akquantrun_warm_start)
 - Runtime behavior overrides during resume: [Runtime Config Guide](runtime_config.md)
-- Multi-slot continuity and strategy-level risk mapping: [Multi-Strategy Migration Guide](multi_strategy_migration.md)
+- Multi-slot continuity and strategy-level risk mapping: [Multi-Strategy Guide](multi_strategy_guide.md)

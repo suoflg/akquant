@@ -3,9 +3,20 @@ import pytest
 from akquant import talib as ta
 
 
-def test_talib_backend_auto_uses_python_path() -> None:
-    """Auto backend should execute successfully without TA-Lib dependency."""
+def test_talib_backend_auto_uses_rust_path() -> None:
+    """Auto backend should execute successfully on default rust path."""
     close = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=float)
+    roc = ta.ROC(close, timeperiod=3, backend="auto")
+    assert isinstance(roc, np.ndarray)
+    assert roc.shape == close.shape
+
+
+def test_talib_backend_auto_can_fallback_to_python_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto backend should support env override to python."""
+    close = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=float)
+    monkeypatch.setenv("AKQUANT_TALIB_AUTO_BACKEND", "python")
     roc = ta.ROC(close, timeperiod=3, backend="auto")
     assert isinstance(roc, np.ndarray)
     assert roc.shape == close.shape
