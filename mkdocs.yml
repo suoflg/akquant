@@ -84,7 +84,7 @@ plugins:
             LLM Guide: LLM 辅助
             Runtime Config Guide: 运行时配置指南
             Warm Start Guide: 热启动指南
-            Multi-Strategy Migration Guide: 多策略迁移指南
+            Multi-Strategy Guide: 多策略指南
             Live Functional Quickstart: Live 函数式策略上手
             Strategy Style Decision Guide: 策略风格决策指南
             Custom Broker Registry: 自定义 Broker 注册
@@ -98,7 +98,6 @@ plugins:
             Data Feed Adapter Spec: 数据适配层规范
             Broker Capability Matrix: Broker 能力矩阵
             Analyzer Plugin Spec: Analyzer 插件规范
-            TA-Lib Top20 Plan: TA-Lib Top20 迁移计划
             Capability Boost Plan: 能力补强路线图
             Timezone Handling: 时区处理
             Testing Guide: 测试指南
@@ -153,7 +152,7 @@ plugins:
             LLM Guide: LLM Guide
             Runtime Config Guide: Runtime Config Guide
             Warm Start Guide: Warm Start Guide
-            Multi-Strategy Migration Guide: Multi-Strategy Migration Guide
+            Multi-Strategy Guide: Multi-Strategy Guide
             Live Functional Quickstart: Live Functional Quickstart
             Strategy Style Decision Guide: Strategy Style Decision Guide
             Custom Broker Registry: Custom Broker Registry
@@ -167,7 +166,6 @@ plugins:
             Data Feed Adapter Spec: Data Feed Adapter Spec
             Broker Capability Matrix: Broker Capability Matrix
             Analyzer Plugin Spec: Analyzer Plugin Spec
-            TA-Lib Top20 Plan: TA-Lib Top20 Plan
             Capability Boost Plan: Capability Boost Plan
             Timezone Handling: Timezone Handling
             Testing Guide: Testing Guide
@@ -249,7 +247,7 @@ nav:
       - LLM Guide: advanced/llm.md
       - Runtime Config Guide: advanced/runtime_config.md
       - Warm Start Guide: advanced/warm_start.md
-      - Multi-Strategy Migration Guide: advanced/multi_strategy_migration.md
+      - Multi-Strategy Guide: advanced/multi_strategy_guide.md
       - Live Functional Quickstart: advanced/live_functional_quickstart.md
       - Strategy Style Decision Guide: advanced/strategy_style_decision.md
       - Custom Broker Registry: advanced/custom_broker_registry.md
@@ -259,7 +257,6 @@ nav:
       - Data Feed Adapter Spec: advanced/data_feed_adapter_spec.md
       - Broker Capability Matrix: advanced/broker_capability_matrix.md
       - Analyzer Plugin Spec: advanced/analyzer_plugin_spec.md
-      - TA-Lib Top20 Plan: advanced/talib_top20_plan.md
       - Capability Boost Plan: advanced/capability_boost_plan.md
       - Timezone Handling: advanced/timezone.md
   - API Reference: reference/api.md

@@ -126,10 +126,28 @@ def _rolling_mean(series: pd.Series, period: int) -> pd.Series:
     return cast(pd.Series, series.rolling(period).mean())
 
 
+def _batch_call(
+    update_fn: Callable[..., object], method_name: str, *arrays: np.ndarray
+) -> object | None:
+    owner = getattr(update_fn, "__self__", None)
+    if owner is None:
+        return None
+    method = getattr(owner, method_name, None)
+    if method is None or not callable(method):
+        return None
+    return cast(object, method(*arrays))
+
+
 def _run_rust_single_series(
     values: pd.Series,
     update_fn: Callable[[float], float | None],
 ) -> pd.Series:
+    values_arr = values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(update_fn, "update_many", values_arr)
+    if batch_out is not None:
+        arr = np.asarray(batch_out, dtype=float)
+        if arr.shape[0] == values_arr.shape[0]:
+            return pd.Series(arr, index=values.index, dtype=float)
     arr = np.full(len(values), np.nan, dtype=float)
     for idx, value in enumerate(values):
         out = update_fn(float(value))
@@ -144,6 +162,16 @@ def _run_rust_hlc_series(
     close_values: pd.Series,
     update_fn: Callable[[float, float, float], float | None],
 ) -> pd.Series:
+    highs_arr = high_values.to_numpy(dtype=float, copy=False)
+    lows_arr = low_values.to_numpy(dtype=float, copy=False)
+    closes_arr = close_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(
+        update_fn, "update_many_hlc", highs_arr, lows_arr, closes_arr
+    )
+    if batch_out is not None:
+        arr = np.asarray(batch_out, dtype=float)
+        if arr.shape[0] == closes_arr.shape[0]:
+            return pd.Series(arr, index=close_values.index, dtype=float)
     arr = np.full(len(close_values), np.nan, dtype=float)
     for idx, (high_v, low_v, close_v) in enumerate(
         zip(high_values, low_values, close_values)
@@ -160,6 +188,23 @@ def _run_rust_hlc_pair_series(
     close_values: pd.Series,
     update_fn: Callable[[float, float, float], tuple[float, float] | None],
 ) -> tuple[pd.Series, pd.Series]:
+    highs_arr = high_values.to_numpy(dtype=float, copy=False)
+    lows_arr = low_values.to_numpy(dtype=float, copy=False)
+    closes_arr = close_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(
+        update_fn, "update_many_hlc_pair", highs_arr, lows_arr, closes_arr
+    )
+    if isinstance(batch_out, (tuple, list)) and len(batch_out) == 2:
+        first_arr = np.asarray(batch_out[0], dtype=float)
+        second_arr = np.asarray(batch_out[1], dtype=float)
+        if (
+            first_arr.shape[0] == closes_arr.shape[0]
+            and second_arr.shape[0] == closes_arr.shape[0]
+        ):
+            return (
+                pd.Series(first_arr, index=close_values.index, dtype=float),
+                pd.Series(second_arr, index=close_values.index, dtype=float),
+            )
     first = np.full(len(close_values), np.nan, dtype=float)
     second = np.full(len(close_values), np.nan, dtype=float)
     for idx, (high_v, low_v, close_v) in enumerate(
@@ -179,6 +224,13 @@ def _run_rust_dual_series(
     second_values: pd.Series,
     update_fn: Callable[[float, float], float | None],
 ) -> pd.Series:
+    first_arr = first_values.to_numpy(dtype=float, copy=False)
+    second_arr = second_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(update_fn, "update_many_dual", first_arr, second_arr)
+    if batch_out is not None:
+        arr = np.asarray(batch_out, dtype=float)
+        if arr.shape[0] == first_arr.shape[0]:
+            return pd.Series(arr, index=first_values.index, dtype=float)
     arr = np.full(len(first_values), np.nan, dtype=float)
     for idx, (first_v, second_v) in enumerate(zip(first_values, second_values)):
         out = update_fn(float(first_v), float(second_v))
@@ -194,6 +246,17 @@ def _run_rust_hlcv_series(
     volume_values: pd.Series,
     update_fn: Callable[[float, float, float, float], float | None],
 ) -> pd.Series:
+    highs_arr = high_values.to_numpy(dtype=float, copy=False)
+    lows_arr = low_values.to_numpy(dtype=float, copy=False)
+    closes_arr = close_values.to_numpy(dtype=float, copy=False)
+    volumes_arr = volume_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(
+        update_fn, "update_many_hlcv", highs_arr, lows_arr, closes_arr, volumes_arr
+    )
+    if batch_out is not None:
+        arr = np.asarray(batch_out, dtype=float)
+        if arr.shape[0] == closes_arr.shape[0]:
+            return pd.Series(arr, index=close_values.index, dtype=float)
     arr = np.full(len(close_values), np.nan, dtype=float)
     for idx, (high_v, low_v, close_v, volume_v) in enumerate(
         zip(high_values, low_values, close_values, volume_values)
@@ -209,6 +272,13 @@ def _run_rust_hl_series(
     low_values: pd.Series,
     update_fn: Callable[[float, float], float | None],
 ) -> pd.Series:
+    highs_arr = high_values.to_numpy(dtype=float, copy=False)
+    lows_arr = low_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(update_fn, "update_many_hl", highs_arr, lows_arr)
+    if batch_out is not None:
+        arr = np.asarray(batch_out, dtype=float)
+        if arr.shape[0] == highs_arr.shape[0]:
+            return pd.Series(arr, index=high_values.index, dtype=float)
     arr = np.full(len(high_values), np.nan, dtype=float)
     for idx, (high_v, low_v) in enumerate(zip(high_values, low_values)):
         out = update_fn(float(high_v), float(low_v))
@@ -222,6 +292,20 @@ def _run_rust_hl_pair_series(
     low_values: pd.Series,
     update_fn: Callable[[float, float], tuple[float, float] | None],
 ) -> tuple[pd.Series, pd.Series]:
+    highs_arr = high_values.to_numpy(dtype=float, copy=False)
+    lows_arr = low_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(update_fn, "update_many_hl_pair", highs_arr, lows_arr)
+    if isinstance(batch_out, (tuple, list)) and len(batch_out) == 2:
+        first_arr = np.asarray(batch_out[0], dtype=float)
+        second_arr = np.asarray(batch_out[1], dtype=float)
+        if (
+            first_arr.shape[0] == highs_arr.shape[0]
+            and second_arr.shape[0] == highs_arr.shape[0]
+        ):
+            return (
+                pd.Series(first_arr, index=high_values.index, dtype=float),
+                pd.Series(second_arr, index=high_values.index, dtype=float),
+            )
     first = np.full(len(high_values), np.nan, dtype=float)
     second = np.full(len(high_values), np.nan, dtype=float)
     for idx, (high_v, low_v) in enumerate(zip(high_values, low_values)):
@@ -241,6 +325,17 @@ def _run_rust_ohlc_series(
     close_values: pd.Series,
     update_fn: Callable[[float, float, float, float], float | None],
 ) -> pd.Series:
+    opens_arr = open_values.to_numpy(dtype=float, copy=False)
+    highs_arr = high_values.to_numpy(dtype=float, copy=False)
+    lows_arr = low_values.to_numpy(dtype=float, copy=False)
+    closes_arr = close_values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(
+        update_fn, "update_many_ohlc", opens_arr, highs_arr, lows_arr, closes_arr
+    )
+    if batch_out is not None:
+        arr = np.asarray(batch_out, dtype=float)
+        if arr.shape[0] == closes_arr.shape[0]:
+            return pd.Series(arr, index=close_values.index, dtype=float)
     arr = np.full(len(close_values), np.nan, dtype=float)
     for idx, (open_v, high_v, low_v, close_v) in enumerate(
         zip(open_values, high_values, low_values, close_values)
@@ -249,6 +344,35 @@ def _run_rust_ohlc_series(
         if out is not None:
             arr[idx] = float(out)
     return pd.Series(arr, index=close_values.index, dtype=float)
+
+
+def _run_rust_single_pair_series(
+    values: pd.Series,
+    update_fn: Callable[[float], tuple[float, float] | None],
+) -> tuple[pd.Series, pd.Series]:
+    values_arr = values.to_numpy(dtype=float, copy=False)
+    batch_out = _batch_call(update_fn, "update_many_pair", values_arr)
+    if isinstance(batch_out, (tuple, list)) and len(batch_out) == 2:
+        first_arr = np.asarray(batch_out[0], dtype=float)
+        second_arr = np.asarray(batch_out[1], dtype=float)
+        if (
+            first_arr.shape[0] == values_arr.shape[0]
+            and second_arr.shape[0] == values_arr.shape[0]
+        ):
+            return (
+                pd.Series(first_arr, index=values.index, dtype=float),
+                pd.Series(second_arr, index=values.index, dtype=float),
+            )
+    first = np.full(len(values), np.nan, dtype=float)
+    second = np.full(len(values), np.nan, dtype=float)
+    for idx, value in enumerate(values):
+        out = update_fn(float(value))
+        if out is not None:
+            first[idx], second[idx] = float(out[0]), float(out[1])
+    return (
+        pd.Series(first, index=values.index, dtype=float),
+        pd.Series(second, index=values.index, dtype=float),
+    )
 
 
 def ROC(
@@ -1462,14 +1586,7 @@ def MINMAXINDEX(
     close_series = to_series(close, name="close")
     if backend_key == "rust":
         indicator = RustMINMAXINDEX(use_period)
-        min_arr = np.full(len(close_series), np.nan, dtype=float)
-        max_arr = np.full(len(close_series), np.nan, dtype=float)
-        for idx, value in enumerate(close_series):
-            out = indicator.update(float(value))
-            if out is not None:
-                min_arr[idx], max_arr[idx] = float(out[0]), float(out[1])
-        min_s = pd.Series(min_arr, index=close_series.index, dtype=float)
-        max_s = pd.Series(max_arr, index=close_series.index, dtype=float)
+        min_s, max_s = _run_rust_single_pair_series(close_series, indicator.update)
         return (
             finalize_output(min_s, as_series=as_series),
             finalize_output(max_s, as_series=as_series),
@@ -1514,14 +1631,7 @@ def MINMAX(
     close_series = to_series(close, name="close")
     if backend_key == "rust":
         indicator = RustMINMAX(use_period)
-        min_arr = np.full(len(close_series), np.nan, dtype=float)
-        max_arr = np.full(len(close_series), np.nan, dtype=float)
-        for idx, value in enumerate(close_series):
-            out = indicator.update(float(value))
-            if out is not None:
-                min_arr[idx], max_arr[idx] = float(out[0]), float(out[1])
-        min_s = pd.Series(min_arr, index=close_series.index, dtype=float)
-        max_s = pd.Series(max_arr, index=close_series.index, dtype=float)
+        min_s, max_s = _run_rust_single_pair_series(close_series, indicator.update)
         return (
             finalize_output(min_s, as_series=as_series),
             finalize_output(max_s, as_series=as_series),
@@ -2022,13 +2132,24 @@ def CLIP(
     max_series = to_series(max_value, name="max_value")
     if backend_key == "rust":
         indicator = RustCLIP()
-        arr = np.full(len(series), np.nan, dtype=float)
-        for idx, (value, min_v, max_v) in enumerate(
-            zip(series, min_series, max_series)
-        ):
-            out_val = indicator.update(float(value), float(min_v), float(max_v))
-            if out_val is not None:
-                arr[idx] = float(out_val)
+        values_arr = series.to_numpy(dtype=float, copy=False)
+        min_arr = min_series.to_numpy(dtype=float, copy=False)
+        max_arr = max_series.to_numpy(dtype=float, copy=False)
+        batch_out = _batch_call(
+            indicator.update, "update_many_clip", values_arr, min_arr, max_arr
+        )
+        if batch_out is not None:
+            arr = np.asarray(batch_out, dtype=float)
+            if arr.shape[0] != len(series):
+                arr = np.full(len(series), np.nan, dtype=float)
+        else:
+            arr = np.full(len(series), np.nan, dtype=float)
+            for idx, (value, min_v, max_v) in enumerate(
+                zip(series, min_series, max_series)
+            ):
+                out_val = indicator.update(float(value), float(min_v), float(max_v))
+                if out_val is not None:
+                    arr[idx] = float(out_val)
         out_series = pd.Series(arr, index=series.index, dtype=float)
         return finalize_output(out_series, as_series=as_series)
     lo = cast(pd.Series, np.minimum(min_series, max_series))
@@ -2274,14 +2395,9 @@ def ATR(
     close_series = to_series(close, name="close")
     if backend_key == "rust":
         indicator = RustATR(use_period)
-        arr = np.full(len(close_series), np.nan, dtype=float)
-        for idx, (high_v, low_v, close_v) in enumerate(
-            zip(high_series, low_series, close_series)
-        ):
-            out_val = indicator.update(float(high_v), float(low_v), float(close_v))
-            if out_val is not None:
-                arr[idx] = float(out_val)
-        out_series = pd.Series(arr, index=close_series.index, dtype=float)
+        out_series = _run_rust_hlc_series(
+            high_series, low_series, close_series, indicator.update
+        )
         return finalize_output(out_series, as_series=as_series)
     tr_components = pd.concat(
         [
@@ -2476,17 +2592,30 @@ def MACD(
         raise ValueError("slowperiod must be > fastperiod")
     if backend_key == "rust":
         indicator = RustMACD(fast_p, slow_p, signal_p)
+        close_arr = close_series.to_numpy(dtype=float, copy=False)
+        batch_out = _batch_call(indicator.update, "update_many", close_arr)
         dif = np.full(len(close_series), np.nan, dtype=float)
         dea = np.full(len(close_series), np.nan, dtype=float)
         hist = np.full(len(close_series), np.nan, dtype=float)
-        for idx, value in enumerate(close_series):
-            out = indicator.update(float(value))
-            if out is not None:
-                dif[idx], dea[idx], hist[idx] = (
-                    float(out[0]),
-                    float(out[1]),
-                    float(out[2]),
-                )
+        if isinstance(batch_out, (tuple, list)) and len(batch_out) == 3:
+            dif_arr = np.asarray(batch_out[0], dtype=float)
+            dea_arr = np.asarray(batch_out[1], dtype=float)
+            hist_arr = np.asarray(batch_out[2], dtype=float)
+            if (
+                dif_arr.shape[0] == len(close_series)
+                and dea_arr.shape[0] == len(close_series)
+                and hist_arr.shape[0] == len(close_series)
+            ):
+                dif, dea, hist = dif_arr, dea_arr, hist_arr
+        else:
+            for idx, value in enumerate(close_series):
+                out = indicator.update(float(value))
+                if out is not None:
+                    dif[idx], dea[idx], hist[idx] = (
+                        float(out[0]),
+                        float(out[1]),
+                        float(out[2]),
+                    )
         dif_s = pd.Series(dif, index=close_series.index, dtype=float)
         dea_s = pd.Series(dea, index=close_series.index, dtype=float)
         hist_s = pd.Series(hist, index=close_series.index, dtype=float)
@@ -2537,14 +2666,7 @@ def MAMA(
     close_series = to_series(close, name="close")
     if backend_key == "rust":
         indicator = RustMAMA(float(fastlimit), float(slowlimit))
-        mama_arr = np.full(len(close_series), np.nan, dtype=float)
-        fama_arr = np.full(len(close_series), np.nan, dtype=float)
-        for idx, value in enumerate(close_series):
-            out = indicator.update(float(value))
-            if out is not None:
-                mama_arr[idx], fama_arr[idx] = float(out[0]), float(out[1])
-        mama_s = pd.Series(mama_arr, index=close_series.index, dtype=float)
-        fama_s = pd.Series(fama_arr, index=close_series.index, dtype=float)
+        mama_s, fama_s = _run_rust_single_pair_series(close_series, indicator.update)
         return (
             finalize_output(mama_s, as_series=as_series),
             finalize_output(fama_s, as_series=as_series),
@@ -2606,17 +2728,30 @@ def BBANDS(
         if abs(nbdevup - nbdevdn) > 1e-12:
             raise ValueError("rust backend currently requires nbdevup == nbdevdn")
         indicator = RustBollingerBands(use_period, float(nbdevup))
+        close_arr = close_series.to_numpy(dtype=float, copy=False)
+        batch_out = _batch_call(indicator.update, "update_many", close_arr)
         upper = np.full(len(close_series), np.nan, dtype=float)
         middle = np.full(len(close_series), np.nan, dtype=float)
         lower = np.full(len(close_series), np.nan, dtype=float)
-        for idx, value in enumerate(close_series):
-            out = indicator.update(float(value))
-            if out is not None:
-                upper[idx], middle[idx], lower[idx] = (
-                    float(out[0]),
-                    float(out[1]),
-                    float(out[2]),
-                )
+        if isinstance(batch_out, (tuple, list)) and len(batch_out) == 3:
+            upper_arr = np.asarray(batch_out[0], dtype=float)
+            middle_arr = np.asarray(batch_out[1], dtype=float)
+            lower_arr = np.asarray(batch_out[2], dtype=float)
+            if (
+                upper_arr.shape[0] == len(close_series)
+                and middle_arr.shape[0] == len(close_series)
+                and lower_arr.shape[0] == len(close_series)
+            ):
+                upper, middle, lower = upper_arr, middle_arr, lower_arr
+        else:
+            for idx, value in enumerate(close_series):
+                out = indicator.update(float(value))
+                if out is not None:
+                    upper[idx], middle[idx], lower[idx] = (
+                        float(out[0]),
+                        float(out[1]),
+                        float(out[2]),
+                    )
         upper_s = pd.Series(upper, index=close_series.index, dtype=float)
         middle_s = pd.Series(middle, index=close_series.index, dtype=float)
         lower_s = pd.Series(lower, index=close_series.index, dtype=float)

@@ -1,3 +1,5 @@
+use numpy::PyArray1;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -47,6 +49,36 @@ impl BollingerBands {
         } else {
             None
         }
+    }
+
+    pub fn update_many<'py>(
+        &mut self,
+        py: Python<'py>,
+        values: Vec<f64>,
+    ) -> (
+        Bound<'py, PyArray1<f64>>,
+        Bound<'py, PyArray1<f64>>,
+        Bound<'py, PyArray1<f64>>,
+    ) {
+        let mut upper = Vec::with_capacity(values.len());
+        let mut middle = Vec::with_capacity(values.len());
+        let mut lower = Vec::with_capacity(values.len());
+        for value in values {
+            if let Some((u, m, l)) = self.update(value) {
+                upper.push(u);
+                middle.push(m);
+                lower.push(l);
+            } else {
+                upper.push(f64::NAN);
+                middle.push(f64::NAN);
+                lower.push(f64::NAN);
+            }
+        }
+        (
+            PyArray1::from_vec(py, upper),
+            PyArray1::from_vec(py, middle),
+            PyArray1::from_vec(py, lower),
+        )
     }
 
     #[getter]
@@ -113,6 +145,23 @@ impl ATR {
         Some(self.smoothed_tr)
     }
 
+    pub fn update_many_hlc<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for (high, (low, close)) in highs.into_iter().zip(lows.into_iter().zip(closes.into_iter())) {
+            out.push(self.update(high, low, close).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         if self.count >= self.period {
@@ -150,6 +199,23 @@ impl NATR {
             self.current_value = Some(100.0 * atr / close);
         }
         self.current_value
+    }
+
+    pub fn update_many_hlc<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for (high, (low, close)) in highs.into_iter().zip(lows.into_iter().zip(closes.into_iter())) {
+            out.push(self.update(high, low, close).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -190,6 +256,23 @@ impl TRANGE {
         self.prev_close = Some(close);
         self.current_value = Some(tr);
         self.current_value
+    }
+
+    pub fn update_many_hlc<'py>(
+        &mut self,
+        py: Python<'py>,
+        highs: Vec<f64>,
+        lows: Vec<f64>,
+        closes: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if highs.len() != lows.len() || highs.len() != closes.len() {
+            return Err(PyValueError::new_err("highs/lows/closes length mismatch"));
+        }
+        let mut out = Vec::with_capacity(highs.len());
+        for (high, (low, close)) in highs.into_iter().zip(lows.into_iter().zip(closes.into_iter())) {
+            out.push(self.update(high, low, close).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -245,6 +328,14 @@ impl STDDEV {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -296,6 +387,14 @@ impl VAR {
         let variance = (self.sum_sq / self.period as f64 - mean * mean).max(0.0);
         self.current_value = Some(variance * self.nbdev * self.nbdev);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]

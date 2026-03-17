@@ -215,6 +215,10 @@ def on_bar(self, bar):
 
 当策略从 TA-Lib 迁移时，建议先保持函数签名不变，再通过 `backend` 参数切换执行后端。
 
+- `backend="auto"` 默认走 `rust`。
+- 需要与历史策略逐步对齐时，建议显式使用 `backend="python"`。
+- 如需全局覆盖 `auto`，可设置环境变量 `AKQUANT_TALIB_AUTO_BACKEND=python|rust`。
+
 ```python
 from akquant import talib as ta
 
@@ -275,7 +279,7 @@ if np.isnan(last_signal):
 在工程实践中，推荐流程是：
 
 1. 先用 `backend="python"` 与原策略对齐结果；
-2. 再切换 `backend="rust"` 做性能提速；
+2. 对齐完成后切 `backend="auto"`（默认 `rust`）或显式 `backend="rust"` 做性能提速；
 3. 用固定数据集回归验证 warmup 与输出形态（单值或 tuple）一致。
 4. 对支持 `period` 别名的指标优先沿用旧参数命名，降低迁移成本。
 

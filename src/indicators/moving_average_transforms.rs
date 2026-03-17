@@ -1,3 +1,5 @@
+use numpy::PyArray1;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 
@@ -24,6 +26,14 @@ macro_rules! define_unary_indicator {
             pub fn update(&mut self, value: f64) -> Option<f64> {
                 self.current_value = Some(($calc)(value));
                 self.current_value
+            }
+
+            pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+                let mut out = Vec::with_capacity(values.len());
+                for value in values {
+                    out.push(self.update(value).unwrap_or(f64::NAN));
+                }
+                PyArray1::from_vec(py, out)
             }
 
             #[getter]
@@ -56,6 +66,22 @@ macro_rules! define_binary_indicator {
             pub fn update(&mut self, left: f64, right: f64) -> Option<f64> {
                 self.current_value = Some(($calc)(left, right));
                 self.current_value
+            }
+
+            pub fn update_many_dual<'py>(
+                &mut self,
+                py: Python<'py>,
+                lefts: Vec<f64>,
+                rights: Vec<f64>,
+            ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+                if lefts.len() != rights.len() {
+                    return Err(PyValueError::new_err("lefts/rights length mismatch"));
+                }
+                let mut out = Vec::with_capacity(lefts.len());
+                for (left, right) in lefts.into_iter().zip(rights.into_iter()) {
+                    out.push(self.update(left, right).unwrap_or(f64::NAN));
+                }
+                Ok(PyArray1::from_vec(py, out))
             }
 
             #[getter]
@@ -166,6 +192,26 @@ impl CLIP {
         let hi = min_value.max(max_value);
         self.current_value = Some(value.clamp(lo, hi));
         self.current_value
+    }
+
+    pub fn update_many_clip<'py>(
+        &mut self,
+        py: Python<'py>,
+        values: Vec<f64>,
+        min_values: Vec<f64>,
+        max_values: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if values.len() != min_values.len() || values.len() != max_values.len() {
+            return Err(PyValueError::new_err("values/min_values/max_values length mismatch"));
+        }
+        let mut out = Vec::with_capacity(values.len());
+        for (value, (min_value, max_value)) in values
+            .into_iter()
+            .zip(min_values.into_iter().zip(max_values.into_iter()))
+        {
+            out.push(self.update(value, min_value, max_value).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]

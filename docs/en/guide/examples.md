@@ -456,10 +456,10 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
     *   Demonstrates post-backtest one-stop outputs: generates an interactive report and prints row-count summaries of `exposure_df` / `attribution_df` / `capacity_df` and strategy-level summaries via `orders_by_strategy` / `executions_by_strategy`.
     *   Prints `report_html=...` and ends with `done_report_and_analysis_outputs`.
 
-*   **[34_multi_strategy_migration_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_migration_demo.py)**:
-    *   Demonstrates before/after migration from single strategy to multi-slot execution, using centralized `BacktestConfig(strategy_config=StrategyConfig(...))`.
+*   **[34_multi_strategy_demo.py](https://github.com/akfamily/akquant/blob/main/examples/34_multi_strategy_demo.py)**:
+    *   Demonstrates multi-slot strategy organization using centralized `BacktestConfig(strategy_config=StrategyConfig(...))`.
     *   Covers strategy-level limits, reduce-only behavior, and cooldown bars under the config-driven style.
-    *   Prints `single_owner_ids`, `multi_owner_ids`, `multi_alpha_cooldown_rejections`, and ends with `done_multi_strategy_migration_demo`.
+    *   Prints `single_owner_ids`, `multi_owner_ids`, `multi_alpha_cooldown_rejections`, and ends with `done_multi_strategy_demo`.
 
 *   **[35_custom_broker_registry_demo.py](https://github.com/akfamily/akquant/blob/main/examples/35_custom_broker_registry_demo.py)**:
     *   Demonstrates custom broker registry flow: injects a broker `builder` with `register_broker` and creates gateways by name via `create_gateway_bundle`.

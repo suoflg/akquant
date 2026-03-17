@@ -1,3 +1,4 @@
+use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -32,6 +33,37 @@ impl MACD {
         let signal_line = self.signal_ema.update(macd_line)?;
         let histogram = macd_line - signal_line;
         Some((macd_line, signal_line, histogram))
+    }
+
+    pub fn update_many<'py>(
+        &mut self,
+        py: Python<'py>,
+        values: Vec<f64>,
+    ) -> (
+        Bound<'py, PyArray1<f64>>,
+        Bound<'py, PyArray1<f64>>,
+        Bound<'py, PyArray1<f64>>,
+    ) {
+        let mut macd = Vec::with_capacity(values.len());
+        let mut signal = Vec::with_capacity(values.len());
+        let mut hist = Vec::with_capacity(values.len());
+        for value in values {
+            let out = self.update(value);
+            if let Some((m, s, h)) = out {
+                macd.push(m);
+                signal.push(s);
+                hist.push(h);
+            } else {
+                macd.push(f64::NAN);
+                signal.push(f64::NAN);
+                hist.push(f64::NAN);
+            }
+        }
+        (
+            PyArray1::from_vec(py, macd),
+            PyArray1::from_vec(py, signal),
+            PyArray1::from_vec(py, hist),
+        )
     }
 
     #[getter]
@@ -71,6 +103,14 @@ impl DEMA {
         let ema2 = self.ema2.update(ema1)?;
         self.current_value = Some(2.0 * ema1 - ema2);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -122,6 +162,14 @@ impl TRIX {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -157,6 +205,14 @@ impl TEMA {
         let ema3 = self.ema3.update(ema2)?;
         self.current_value = Some(3.0 * ema1 - 3.0 * ema2 + ema3);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -220,6 +276,14 @@ impl KAMA {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -261,6 +325,14 @@ impl APO {
         }
         self.current_value = Some(fast - slow);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -308,6 +380,14 @@ impl PPO {
             self.current_value = Some(100.0 * (fast - slow) / slow);
         }
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -364,6 +444,14 @@ impl T3 {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -411,6 +499,14 @@ impl HT_TRENDLINE {
             .sum::<f64>();
         self.current_value = Some(weighted_sum / denom);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -464,6 +560,25 @@ impl MAMA {
         self.fama = Some(next_fama);
         self.current_value = Some((next_mama, next_fama));
         self.current_value
+    }
+
+    pub fn update_many_pair<'py>(
+        &mut self,
+        py: Python<'py>,
+        values: Vec<f64>,
+    ) -> (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>) {
+        let mut first = Vec::with_capacity(values.len());
+        let mut second = Vec::with_capacity(values.len());
+        for value in values {
+            if let Some((f, s)) = self.update(value) {
+                first.push(f);
+                second.push(s);
+            } else {
+                first.push(f64::NAN);
+                second.push(f64::NAN);
+            }
+        }
+        (PyArray1::from_vec(py, first), PyArray1::from_vec(py, second))
     }
 
     #[getter]

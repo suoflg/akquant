@@ -597,27 +597,50 @@ class BacktestResult:
         if not executions:
             return pd.DataFrame()
 
-        rows: list[dict[str, Any]] = []
-        fallback_owner_strategy_id = getattr(self, "_owner_strategy_id", None)
-        for t in executions:
-            rows.append(
-                {
-                    "id": t.id,
-                    "order_id": t.order_id,
-                    "symbol": t.symbol,
-                    "side": str(t.side).lower(),
-                    "quantity": float(t.quantity),
-                    "price": float(t.price),
-                    "commission": float(t.commission),
-                    "timestamp": t.timestamp,
-                    "bar_index": t.bar_index,
-                    "owner_strategy_id": getattr(
-                        t, "owner_strategy_id", fallback_owner_strategy_id
-                    ),
-                }
-            )
+        df = pd.DataFrame()
+        if hasattr(self._raw, "get_executions_ipc"):
+            try:
+                import importlib
+                import io
 
-        df = pd.DataFrame(rows)
+                pa = importlib.import_module("pyarrow")
+                ipc_bytes = self._raw.get_executions_ipc()
+                if ipc_bytes and len(ipc_bytes) > 0:
+                    reader = pa.ipc.open_stream(io.BytesIO(ipc_bytes))
+                    df = reader.read_pandas()
+            except (ImportError, Exception):
+                pass
+
+        if df.empty and hasattr(self._raw, "get_executions_dict"):
+            try:
+                data_dict = self._raw.get_executions_dict()
+                if data_dict:
+                    df = pd.DataFrame(data_dict)
+            except Exception:
+                pass
+
+        if df.empty:
+            rows: list[dict[str, Any]] = []
+            fallback_owner_strategy_id = getattr(self, "_owner_strategy_id", None)
+            for t in executions:
+                rows.append(
+                    {
+                        "id": t.id,
+                        "order_id": t.order_id,
+                        "symbol": t.symbol,
+                        "side": str(t.side).lower(),
+                        "quantity": float(t.quantity),
+                        "price": float(t.price),
+                        "commission": float(t.commission),
+                        "timestamp": t.timestamp,
+                        "bar_index": t.bar_index,
+                        "owner_strategy_id": getattr(
+                            t, "owner_strategy_id", fallback_owner_strategy_id
+                        ),
+                    }
+                )
+            df = pd.DataFrame(rows)
+
         if "timestamp" in df.columns and pd.api.types.is_numeric_dtype(df["timestamp"]):
             df["timestamp"] = pd.to_datetime(
                 df["timestamp"], unit="ns", utc=True

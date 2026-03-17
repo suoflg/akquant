@@ -1,3 +1,4 @@
+use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -36,6 +37,14 @@ impl SMA {
         } else {
             None
         }
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -87,6 +96,14 @@ impl EMA {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -133,6 +150,14 @@ impl WMA {
         self.value()
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         if self.buffer.len() < self.period {
@@ -172,6 +197,14 @@ impl TRIMA {
             self.buffer.pop_front();
         }
         self.value()
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]

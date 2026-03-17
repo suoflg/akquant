@@ -433,7 +433,7 @@ mod tests {
             tag: String::new(),
             reject_reason: String::new(),
         };
-        let bytes = rmp_serde::to_vec(&legacy).expect("serialize legacy order");
+        let bytes = rmp_serde::to_vec_named(&legacy).expect("serialize legacy order");
         let order: Order =
             rmp_serde::from_slice(&bytes).expect("deserialize order from legacy payload");
         assert!(order.owner_strategy_id.is_none());
@@ -457,7 +457,7 @@ mod tests {
             timestamp: 1,
             bar_index: 0,
         };
-        let bytes = rmp_serde::to_vec(&legacy).expect("serialize legacy trade");
+        let bytes = rmp_serde::to_vec_named(&legacy).expect("serialize legacy trade");
         let trade: Trade =
             rmp_serde::from_slice(&bytes).expect("deserialize trade from legacy payload");
         assert!(trade.owner_strategy_id.is_none());

@@ -4,6 +4,7 @@ refs/
 __pycache__/
 *.so
 *.dylib
+*.dSYM/
 *.pyd
 .env
 .venv

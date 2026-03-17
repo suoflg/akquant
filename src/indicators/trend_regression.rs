@@ -1,3 +1,5 @@
+use numpy::PyArray1;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 use std::collections::VecDeque;
@@ -51,6 +53,14 @@ impl LINEARREG {
         let intercept = (sum_y - slope * sum_x) / n;
         self.current_value = Some(intercept + slope * (n - 1.0));
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -107,6 +117,14 @@ impl LINEARREG_SLOPE {
         }
         self.current_value = Some((n * sum_xy - sum_x * sum_y) / denom);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -166,6 +184,14 @@ impl LINEARREG_INTERCEPT {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -223,6 +249,14 @@ impl LINEARREG_ANGLE {
         self.current_value
     }
 
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -278,6 +312,14 @@ impl TSF {
         let intercept = (sum_y - slope * sum_x) / n;
         self.current_value = Some(intercept + slope * n);
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]
@@ -343,6 +385,22 @@ impl CORREL {
         self.current_value
     }
 
+    pub fn update_many_dual<'py>(
+        &mut self,
+        py: Python<'py>,
+        xs: Vec<f64>,
+        ys: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if xs.len() != ys.len() {
+            return Err(PyValueError::new_err("xs/ys length mismatch"));
+        }
+        let mut out = Vec::with_capacity(xs.len());
+        for (x, y) in xs.into_iter().zip(ys.into_iter()) {
+            out.push(self.update(x, y).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -403,6 +461,22 @@ impl BETA {
         self.current_value
     }
 
+    pub fn update_many_dual<'py>(
+        &mut self,
+        py: Python<'py>,
+        xs: Vec<f64>,
+        ys: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if xs.len() != ys.len() {
+            return Err(PyValueError::new_err("xs/ys length mismatch"));
+        }
+        let mut out = Vec::with_capacity(xs.len());
+        for (x, y) in xs.into_iter().zip(ys.into_iter()) {
+            out.push(self.update(x, y).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
+    }
+
     #[getter]
     pub fn value(&self) -> Option<f64> {
         self.current_value
@@ -454,6 +528,22 @@ impl COVAR {
             / self.period as f64;
         self.current_value = Some(cov);
         self.current_value
+    }
+
+    pub fn update_many_dual<'py>(
+        &mut self,
+        py: Python<'py>,
+        xs: Vec<f64>,
+        ys: Vec<f64>,
+    ) -> PyResult<Bound<'py, PyArray1<f64>>> {
+        if xs.len() != ys.len() {
+            return Err(PyValueError::new_err("xs/ys length mismatch"));
+        }
+        let mut out = Vec::with_capacity(xs.len());
+        for (x, y) in xs.into_iter().zip(ys.into_iter()) {
+            out.push(self.update(x, y).unwrap_or(f64::NAN));
+        }
+        Ok(PyArray1::from_vec(py, out))
     }
 
     #[getter]
@@ -517,6 +607,14 @@ impl LINEARREG_R2 {
             self.current_value = Some(r * r);
         }
         self.current_value
+    }
+
+    pub fn update_many<'py>(&mut self, py: Python<'py>, values: Vec<f64>) -> Bound<'py, PyArray1<f64>> {
+        let mut out = Vec::with_capacity(values.len());
+        for value in values {
+            out.push(self.update(value).unwrap_or(f64::NAN));
+        }
+        PyArray1::from_vec(py, out)
     }
 
     #[getter]

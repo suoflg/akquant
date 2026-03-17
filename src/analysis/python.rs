@@ -205,6 +205,99 @@ impl BacktestResult {
         Ok(PyBytes::new(py, &buf).into())
     }
 
+    pub fn get_executions_ipc(&self, py: Python) -> PyResult<Py<PyBytes>> {
+        if self.executions.is_empty() {
+            return Ok(PyBytes::new(py, &[]).into());
+        }
+
+        let executions = &self.executions;
+        let s_id = Series::new(
+            "id".into(),
+            executions.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+        );
+        let s_order_id = Series::new(
+            "order_id".into(),
+            executions
+                .iter()
+                .map(|t| t.order_id.clone())
+                .collect::<Vec<_>>(),
+        );
+        let s_symbol = Series::new(
+            "symbol".into(),
+            executions
+                .iter()
+                .map(|t| t.symbol.clone())
+                .collect::<Vec<_>>(),
+        );
+        let s_side = Series::new(
+            "side".into(),
+            executions
+                .iter()
+                .map(|t| format!("{:?}", t.side).to_lowercase())
+                .collect::<Vec<_>>(),
+        );
+        let s_quantity = Series::new(
+            "quantity".into(),
+            executions
+                .iter()
+                .map(|t| t.quantity.to_f64().unwrap_or(0.0))
+                .collect::<Vec<_>>(),
+        );
+        let s_price = Series::new(
+            "price".into(),
+            executions
+                .iter()
+                .map(|t| t.price.to_f64().unwrap_or(0.0))
+                .collect::<Vec<_>>(),
+        );
+        let s_commission = Series::new(
+            "commission".into(),
+            executions
+                .iter()
+                .map(|t| t.commission.to_f64().unwrap_or(0.0))
+                .collect::<Vec<_>>(),
+        );
+        let s_timestamp = Series::new(
+            "timestamp".into(),
+            executions.iter().map(|t| t.timestamp).collect::<Vec<_>>(),
+        );
+        let s_bar_index = Series::new(
+            "bar_index".into(),
+            executions
+                .iter()
+                .map(|t| t.bar_index as u64)
+                .collect::<Vec<_>>(),
+        );
+        let s_owner_strategy_id = Series::new(
+            "owner_strategy_id".into(),
+            executions
+                .iter()
+                .map(|t| t.owner_strategy_id.clone())
+                .collect::<Vec<_>>(),
+        );
+
+        let mut df = DataFrame::new(vec![
+            s_id.into(),
+            s_order_id.into(),
+            s_symbol.into(),
+            s_side.into(),
+            s_quantity.into(),
+            s_price.into(),
+            s_commission.into(),
+            s_timestamp.into(),
+            s_bar_index.into(),
+            s_owner_strategy_id.into(),
+        ])
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        let mut buf = Vec::new();
+        IpcWriter::new(&mut buf)
+            .finish(&mut df)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        Ok(PyBytes::new(py, &buf).into())
+    }
+
     /// Get trades as a dictionary of columns for fast DataFrame creation.
     pub fn get_trades_dict(&self, py: Python) -> PyResult<Py<PyAny>> {
         let n = self.trades.len();
@@ -271,6 +364,46 @@ impl BacktestResult {
         dict.set_item("entry_portfolio_value", entry_portfolio_values)?;
         dict.set_item("max_drawdown_pct", max_drawdown_pcts)?;
 
+        Ok(dict.into())
+    }
+
+    pub fn get_executions_dict(&self, py: Python) -> PyResult<Py<PyAny>> {
+        let n = self.executions.len();
+        let mut ids = Vec::with_capacity(n);
+        let mut order_ids = Vec::with_capacity(n);
+        let mut symbols = Vec::with_capacity(n);
+        let mut sides = Vec::with_capacity(n);
+        let mut quantities = Vec::with_capacity(n);
+        let mut prices = Vec::with_capacity(n);
+        let mut commissions = Vec::with_capacity(n);
+        let mut timestamps = Vec::with_capacity(n);
+        let mut bar_indexes = Vec::with_capacity(n);
+        let mut owner_strategy_ids = Vec::with_capacity(n);
+
+        for t in &self.executions {
+            ids.push(t.id.clone());
+            order_ids.push(t.order_id.clone());
+            symbols.push(t.symbol.clone());
+            sides.push(format!("{:?}", t.side).to_lowercase());
+            quantities.push(t.quantity.to_f64().unwrap_or(0.0));
+            prices.push(t.price.to_f64().unwrap_or(0.0));
+            commissions.push(t.commission.to_f64().unwrap_or(0.0));
+            timestamps.push(t.timestamp);
+            bar_indexes.push(t.bar_index);
+            owner_strategy_ids.push(t.owner_strategy_id.clone());
+        }
+
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("id", ids)?;
+        dict.set_item("order_id", order_ids)?;
+        dict.set_item("symbol", symbols)?;
+        dict.set_item("side", sides)?;
+        dict.set_item("quantity", quantities)?;
+        dict.set_item("price", prices)?;
+        dict.set_item("commission", commissions)?;
+        dict.set_item("timestamp", timestamps)?;
+        dict.set_item("bar_index", bar_indexes)?;
+        dict.set_item("owner_strategy_id", owner_strategy_ids)?;
         Ok(dict.into())
     }
 
