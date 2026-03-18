@@ -133,6 +133,7 @@ result = aq.run_backtest(
 
 *   推荐逐步将实时 UI / 日志 / 告警接入迁移到 `run_backtest(..., on_event=...)`。
 *   流式场景统一使用 `run_backtest(..., on_event=...)`。
+*   在 PyCharm 中若未开启终端仿真，原生进度条可能不可见；可开启 `Emulate terminal in output console` 或改用 `on_event` 的 `progress` 事件输出文本进度。
 *   阶段 5 后不再提供运行时参数级回滚开关；如需回滚请使用版本级回滚策略。
 *   阶段 4 观察窗口与推进门槛请参考：[流式统一内核观察清单](../advanced/stream_observability.md)。
 
@@ -140,6 +141,7 @@ result = aq.run_backtest(
 
 *   `run_backtest` 是否改名？不改名，调用方式保持不变。
 *   `run_backtest` 是否仍可不传 `on_event`？可以，不传时仍返回同样的结果对象语义。
+*   PyCharm 看不到进度条怎么办？先确认 `show_progress=True`，并在 Run 配置中开启 `Emulate terminal in output console`；若仍不可见，使用 `on_event` 消费 `progress` 事件打印文本进度。
 *   线上出现问题如何回退？使用版本级回滚，不再支持 `_engine_mode` 参数级回切。
 
 ### 流式参数与事件 (`run_backtest`)
