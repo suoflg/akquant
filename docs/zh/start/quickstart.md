@@ -346,6 +346,42 @@ print("event_stats:", result.get_event_stats())
   - `"continue"`：回调报错后继续回测，并在 `finished.payload` 给出错误统计
   - `"fail_fast"`：回调报错后立即终止并抛出异常
 
+### 4.1 PyCharm 下进度条不显示的排查与解决
+
+在 PyCharm 的 Run 窗口中，如果未开启终端仿真，`stderr` 可能不是 TTY，导致原生进度条不可见。
+
+推荐按以下顺序处理：
+
+1. 在 `Run/Debug Configurations` 中勾选 `Emulate terminal in output console`。
+2. 确认回测参数中未关闭进度条（即 `show_progress=True`）。
+3. 若你更希望跨 IDE 稳定显示进度，建议使用 `on_event` 消费 `progress` 事件。
+
+示例（不依赖原生进度条）：
+
+```python
+from akquant import run_backtest
+
+progress_events = 0
+
+
+def on_event(event):
+    global progress_events
+    if event.get("event_type") == "progress":
+        progress_events += 1
+        if progress_events % 10 == 0:
+            print(f"[progress] events={progress_events}", flush=True)
+
+
+result = run_backtest(
+    data=df,
+    strategy=MyStrategy,
+    symbol="sh600000",
+    on_event=on_event,
+    show_progress=False,
+    stream_progress_interval=5,
+)
+```
+
 流式事件公共字段：
 
 - `run_id`: 本次流式回测 ID
@@ -360,5 +396,6 @@ print("event_stats:", result.get_event_stats())
 
 - `run_backtest` 是否改名？不改名，调用方式保持不变。
 - `run_backtest` 是否还能不传 `on_event`？可以，不传时仍返回同样的结果对象语义。
+- PyCharm 看不到进度条怎么办？开启 `Emulate terminal in output console`，或使用 `on_event + progress` 事件输出文本进度。
 - 如何回滚？阶段 5 后不再支持 `_engine_mode` 参数级回滚，建议使用版本级回滚。
 - 首页导航入口：见 [文档首页的阶段 5 迁移入口](../index.md)。
