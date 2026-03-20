@@ -11,6 +11,7 @@ pub struct MatchContext<'a> {
     pub slippage: &'a dyn SlippageModel,
     pub volume_limit_pct: Decimal,
     pub bar_index: usize,
+    pub last_price: Option<Decimal>,
 }
 
 /// 撮合器接口

@@ -497,6 +497,15 @@ class Engine:
         """
         ...
 
+    def set_timer_execution_policy(self, policy: str) -> None:
+        r"""
+        设置定时器下单撮合策略.
+
+        :param policy: "same_cycle" 表示在当前 timer 事件撮合;
+                       "next_event" 表示延后到下一条行情事件撮合.
+        """
+        ...
+
     def use_simple_market(self, commission_rate: float) -> None:
         r"""
         启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金).

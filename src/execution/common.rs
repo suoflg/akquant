@@ -94,6 +94,7 @@ impl CommonMatcher {
             match event {
                 Event::Bar(b) => order.updated_at = b.timestamp,
                 Event::Tick(t) => order.updated_at = t.timestamp,
+                Event::Timer(t) => order.updated_at = t.timestamp,
                 _ => {}
             }
             return Some(Event::ExecutionReport(order.clone(), None));
@@ -381,6 +382,80 @@ impl CommonMatcher {
                         };
                         return Some(Event::ExecutionReport(order.clone(), Some(trade)));
                     }
+                }
+            }
+            Event::Timer(timer) => {
+                if execution_mode != ExecutionMode::CurrentClose {
+                    return None;
+                }
+                let Some(reference_price) = ctx.last_price else {
+                    return None;
+                };
+
+                if matches!(
+                    order.order_type,
+                    OrderType::StopTrail | OrderType::StopTrailLimit
+                ) {
+                    Self::update_trailing_trigger_with_tick(order, reference_price);
+                }
+
+                if let Some(trigger_price) = order.trigger_price {
+                    let triggered = match order.side {
+                        OrderSide::Buy => reference_price >= trigger_price,
+                        OrderSide::Sell => reference_price <= trigger_price,
+                    };
+                    if !triggered {
+                        return None;
+                    }
+                    order.trigger_price = None;
+                    Self::promote_triggered_order_type(order);
+                }
+
+                let mut execute_price = None;
+                match order.order_type {
+                    OrderType::Market => execute_price = Some(reference_price),
+                    OrderType::Limit => {
+                        if let Some(limit) = order.price {
+                            let can_execute = match order.side {
+                                OrderSide::Buy => reference_price <= limit,
+                                OrderSide::Sell => reference_price >= limit,
+                            };
+                            if can_execute {
+                                execute_price = Some(reference_price);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                if let Some(price) = execute_price {
+                    let final_price = slippage.calculate_price(price, order.quantity, order.side);
+                    let trade_qty = order.quantity - order.filled_quantity;
+                    if trade_qty > Decimal::ZERO {
+                        order.status = OrderStatus::Filled;
+                        order.updated_at = timer.timestamp;
+                        order.filled_quantity += trade_qty;
+                        order.average_filled_price = Some(final_price);
+                        let trade = Trade {
+                            id: Uuid::new_v4().to_string(),
+                            order_id: order.id.clone(),
+                            symbol: order.symbol.clone(),
+                            side: order.side,
+                            quantity: trade_qty,
+                            price: final_price,
+                            commission: Decimal::ZERO,
+                            timestamp: timer.timestamp,
+                            bar_index,
+                            owner_strategy_id: order.owner_strategy_id.clone(),
+                        };
+                        return Some(Event::ExecutionReport(order.clone(), Some(trade)));
+                    }
+                } else if order.time_in_force == TimeInForce::IOC
+                    || order.time_in_force == TimeInForce::FOK
+                {
+                    order.status = OrderStatus::Cancelled;
+                    order.updated_at = timer.timestamp;
+                    return Some(Event::ExecutionReport(order.clone(), None));
                 }
             }
             _ => {}

@@ -208,6 +208,7 @@ impl ExecutionClient for SimulatedExecutionClient {
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
                             bar_index: ctx.bar_index,
+                            last_price: ctx.last_prices.get(&order.symbol).copied(),
                         };
                         let report_opt = matcher.match_order(order, &match_ctx);
 

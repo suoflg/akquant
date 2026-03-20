@@ -101,6 +101,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
+            last_price: None,
         };
         let res = matcher.match_order(&mut order, &ctx);
 
@@ -139,6 +140,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
+            last_price: None,
         };
         let res = matcher.match_order(&mut order, &ctx);
 
@@ -170,6 +172,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
+            last_price: None,
         };
         let first_res = matcher.match_order(&mut order, &first_ctx);
         assert!(first_res.is_none());
@@ -194,6 +197,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 1,
+            last_price: None,
         };
         let second_res = matcher.match_order(&mut order, &second_ctx);
         assert!(second_res.is_some());
@@ -225,6 +229,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
+            last_price: None,
         };
         let first_res = matcher.match_order(&mut order, &first_ctx);
         assert!(first_res.is_none());
@@ -239,6 +244,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 1,
+            last_price: None,
         };
         let second_res = matcher.match_order(&mut order, &second_ctx);
         assert!(second_res.is_none());
@@ -253,6 +259,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 2,
+            last_price: None,
         };
         let third_res = matcher.match_order(&mut order, &third_ctx);
         assert!(third_res.is_some());

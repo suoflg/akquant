@@ -56,6 +56,7 @@ pub struct Engine {
     pub(crate) clock: Clock,
     pub(crate) timers: BinaryHeap<Timer>, // Min-Heap via Timer's Ord implementation
     pub(crate) force_session_continuous: bool,
+    pub(crate) timer_execution_policy: String,
     #[pyo3(get, set)]
     pub risk_manager: RiskManager,
     pub(crate) timezone_offset: i32,
@@ -126,6 +127,10 @@ pub(crate) struct PendingStreamEvent {
 
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
+    pub(crate) fn timer_same_cycle_enabled(&self) -> bool {
+        self.timer_execution_policy == "same_cycle"
+    }
+
     pub(crate) fn normalized_order_strategy_id(order: &Order) -> Option<String> {
         order
             .owner_strategy_id

@@ -230,6 +230,7 @@ mod tests {
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
+            last_price: None,
         }
     }
 
