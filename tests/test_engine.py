@@ -133,6 +133,104 @@ class ContinuousSmallBuyStrategy(akquant.Strategy):
         self.buy(symbol=bar.symbol, quantity=5)
 
 
+class TimerCurrentCloseStrategy(akquant.Strategy):
+    """Submit order from timer and capture timer/trade timestamps."""
+
+    def __init__(self) -> None:
+        """Initialize capture state."""
+        super().__init__()
+        self.timer_timestamp: int | None = None
+        self.trade_timestamp: int | None = None
+        self.trade_price: float | None = None
+        self.symbol_ref: str = "TIMER_BUG"
+        self.timer_trigger: pd.Timestamp = pd.Timestamp(
+            "2023-01-02 10:00:01", tz="Asia/Shanghai"
+        )
+
+    def on_start(self) -> None:
+        """Register a timer between first and second bar."""
+        self.schedule(self.timer_trigger, "timer_buy")
+
+    def on_timer(self, payload: str) -> None:
+        """Submit market buy on timer event."""
+        if payload != "timer_buy":
+            return
+        if self.ctx is None:
+            return
+        self.timer_timestamp = int(self.ctx.current_time)
+        self.buy(symbol=self.symbol_ref, quantity=1)
+
+    def on_trade(self, trade: akquant.Trade) -> None:
+        """Capture trade timestamp and price."""
+        self.trade_timestamp = int(trade.timestamp)
+        self.trade_price = float(trade.price)
+
+
+class BarOnlyCaptureStrategy(akquant.Strategy):
+    """Capture on_bar order fill timestamp and price."""
+
+    def __init__(self) -> None:
+        """Initialize capture state."""
+        super().__init__()
+        self.submitted = False
+        self.trade_timestamp: int | None = None
+        self.trade_price: float | None = None
+
+    def on_bar(self, bar: akquant.Bar) -> None:
+        """Submit one market order on first bar."""
+        if self.submitted:
+            return
+        self.buy(symbol=bar.symbol, quantity=1)
+        self.submitted = True
+
+    def on_trade(self, trade: akquant.Trade) -> None:
+        """Capture first trade timestamp and price."""
+        self.trade_timestamp = int(trade.timestamp)
+        self.trade_price = float(trade.price)
+
+
+class MixedBarTimerCaptureStrategy(akquant.Strategy):
+    """Submit one order on bar and one order on timer, then capture fills."""
+
+    def __init__(self) -> None:
+        """Initialize capture state."""
+        super().__init__()
+        self.bar_submitted = False
+        self.timer_submitted = False
+        self.trade_timestamps: list[int] = []
+        self.trade_prices: list[float] = []
+        self.symbol_ref: str = "TIMER_BUG"
+        self.timer_timestamp: int | None = None
+        self.timer_trigger: pd.Timestamp = pd.Timestamp(
+            "2023-01-02 10:00:01", tz="Asia/Shanghai"
+        )
+
+    def on_start(self) -> None:
+        """Register timer trigger between two bars."""
+        self.schedule(self.timer_trigger, "timer_buy")
+
+    def on_bar(self, bar: akquant.Bar) -> None:
+        """Submit bar-side order once."""
+        if self.bar_submitted:
+            return
+        self.buy(symbol=bar.symbol, quantity=1)
+        self.bar_submitted = True
+
+    def on_timer(self, payload: str) -> None:
+        """Submit timer-side order once."""
+        if payload != "timer_buy" or self.timer_submitted:
+            return
+        if self.ctx is not None:
+            self.timer_timestamp = int(self.ctx.current_time)
+        self.buy(symbol=self.symbol_ref, quantity=1)
+        self.timer_submitted = True
+
+    def on_trade(self, trade: akquant.Trade) -> None:
+        """Capture all trade timestamps and prices."""
+        self.trade_timestamps.append(int(trade.timestamp))
+        self.trade_prices.append(float(trade.price))
+
+
 def _ns(dt: datetime) -> int:
     """
     Convert a datetime to nanoseconds since epoch.
@@ -209,6 +307,164 @@ def _build_benchmark_data(n: int, symbol: str) -> pd.DataFrame:
             "symbol": symbol,
         }
     )
+
+
+def test_current_close_timer_order_should_fill_at_timer_timestamp() -> None:
+    """CurrentClose should fill timer order at timer timestamp, not next bar."""
+    symbol = "TIMER_BUG"
+    bars = [
+        akquant.Bar(
+            pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai").value,
+            10.0,
+            10.0,
+            10.0,
+            10.0,
+            1000.0,
+            symbol,
+        ),
+        akquant.Bar(
+            pd.Timestamp("2023-01-02 10:01:00", tz="Asia/Shanghai").value,
+            11.0,
+            11.0,
+            11.0,
+            11.0,
+            1000.0,
+            symbol,
+        ),
+    ]
+    strategy = TimerCurrentCloseStrategy()
+    strategy.symbol_ref = symbol
+
+    _ = akquant.run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbol=symbol,
+        execution_mode="current_close",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        show_progress=False,
+    )
+
+    assert strategy.timer_timestamp is not None
+    assert strategy.trade_timestamp is not None
+    assert strategy.trade_timestamp == strategy.timer_timestamp
+    assert strategy.trade_price == pytest.approx(10.0)
+
+
+def test_current_close_timer_order_next_event_policy_fills_on_next_bar() -> None:
+    """Timer orders should not fill at timer timestamp when policy is next_event."""
+    symbol = "TIMER_BUG"
+    first_ts = pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai").value
+    second_ts = pd.Timestamp("2023-01-02 10:01:00", tz="Asia/Shanghai").value
+    third_ts = pd.Timestamp("2023-01-02 10:02:00", tz="Asia/Shanghai").value
+    bars = [
+        akquant.Bar(first_ts, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
+        akquant.Bar(second_ts, 11.0, 11.0, 11.0, 11.0, 1000.0, symbol),
+        akquant.Bar(third_ts, 12.0, 12.0, 12.0, 12.0, 1000.0, symbol),
+    ]
+    strategy = TimerCurrentCloseStrategy()
+    strategy.symbol_ref = symbol
+    strategy.timer_trigger = pd.Timestamp("2023-01-02 10:01:30", tz="Asia/Shanghai")
+
+    _ = akquant.run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbol=symbol,
+        execution_mode="current_close",
+        timer_execution_policy="next_event",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        show_progress=False,
+    )
+
+    assert strategy.timer_timestamp is not None
+    if strategy.trade_timestamp is not None:
+        assert strategy.trade_timestamp > strategy.timer_timestamp
+    assert strategy.trade_timestamp != strategy.timer_timestamp
+
+
+def test_current_close_bar_fill_unchanged_with_next_event_timer_policy() -> None:
+    """Bar orders should still fill on current bar under current_close."""
+    symbol = "TIMER_BUG"
+    first_ts = pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai").value
+    bars = [
+        akquant.Bar(first_ts, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
+        akquant.Bar(
+            pd.Timestamp("2023-01-02 10:01:00", tz="Asia/Shanghai").value,
+            11.0,
+            11.0,
+            11.0,
+            11.0,
+            1000.0,
+            symbol,
+        ),
+    ]
+    strategy = BarOnlyCaptureStrategy()
+
+    _ = akquant.run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbol=symbol,
+        execution_mode="current_close",
+        timer_execution_policy="next_event",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        show_progress=False,
+    )
+
+    assert strategy.trade_timestamp == first_ts
+    assert strategy.trade_price == pytest.approx(10.0)
+
+
+def test_current_close_mixed_bar_timer_next_event_policy() -> None:
+    """Mixed bar/timer orders should respect policy boundaries."""
+    symbol = "TIMER_BUG"
+    first_ts = pd.Timestamp("2023-01-02 10:00:00", tz="Asia/Shanghai").value
+    second_ts = pd.Timestamp("2023-01-02 10:01:00", tz="Asia/Shanghai").value
+    third_ts = pd.Timestamp("2023-01-02 10:02:00", tz="Asia/Shanghai").value
+    bars = [
+        akquant.Bar(first_ts, 10.0, 10.0, 10.0, 10.0, 1000.0, symbol),
+        akquant.Bar(second_ts, 11.0, 11.0, 11.0, 11.0, 1000.0, symbol),
+        akquant.Bar(third_ts, 12.0, 12.0, 12.0, 12.0, 1000.0, symbol),
+    ]
+    strategy = MixedBarTimerCaptureStrategy()
+    strategy.symbol_ref = symbol
+    strategy.timer_trigger = pd.Timestamp("2023-01-02 10:01:30", tz="Asia/Shanghai")
+
+    _ = akquant.run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbol=symbol,
+        execution_mode="current_close",
+        timer_execution_policy="next_event",
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        show_progress=False,
+    )
+
+    assert strategy.timer_submitted
+    assert strategy.timer_timestamp is not None
+    assert strategy.trade_timestamps
+    assert strategy.trade_timestamps[0] == first_ts
+    assert strategy.trade_timestamps[0] < strategy.timer_timestamp
+    for ts in strategy.trade_timestamps:
+        assert ts != strategy.timer_timestamp
 
 
 def test_run_backtest_accepts_data_feed_adapter() -> None:

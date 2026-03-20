@@ -480,6 +480,7 @@ impl Engine {
             clock: Clock::new(),
             timers: BinaryHeap::new(),
             force_session_continuous: false,
+            timer_execution_policy: "same_cycle".to_string(),
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
@@ -687,6 +688,24 @@ impl Engine {
     /// :type mode: ExecutionMode
     fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;
+    }
+
+    /// 设置定时器下单撮合策略.
+    ///
+    /// :param policy: "same_cycle" 表示在当前 timer 事件撮合;
+    ///                "next_event" 表示延后到下一条行情事件撮合.
+    fn set_timer_execution_policy(&mut self, policy: &str) -> PyResult<()> {
+        let normalized = policy.trim().to_lowercase();
+        match normalized.as_str() {
+            "same_cycle" | "next_event" => {
+                self.timer_execution_policy = normalized;
+                Ok(())
+            }
+            _ => Err(PyValueError::new_err(format!(
+                "Unknown timer execution policy '{}', expected one of: same_cycle, next_event",
+                policy
+            ))),
+        }
     }
 
     /// 启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金)

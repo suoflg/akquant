@@ -643,6 +643,7 @@ def run_backtest(
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     broker_profile: Optional[str] = None,
+    timer_execution_policy: str = "same_cycle",
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -676,6 +677,9 @@ def run_backtest(
     :param slippage: 滑点 (默认 0.0)
     :param volume_limit_pct: 成交量限制比例 (默认 0.25)
     :param execution_mode: 执行模式 (ExecutionMode.NextOpen 或 "next_open")
+    :param timer_execution_policy: 定时器下单撮合策略:
+        "same_cycle" 表示在当前 timer 事件撮合（CurrentClose 模式）；
+        "next_event" 表示延后到下一条行情事件撮合。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
     :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
@@ -1813,6 +1817,13 @@ def run_backtest(
         engine.set_execution_mode(mode)
     else:
         engine.set_execution_mode(execution_mode)
+    timer_policy = str(timer_execution_policy).strip().lower()
+    if timer_policy not in {"same_cycle", "next_event"}:
+        raise ValueError(
+            "timer_execution_policy must be one of: same_cycle, next_event"
+        )
+    if hasattr(engine, "set_timer_execution_policy"):
+        cast(Any, engine).set_timer_execution_policy(timer_policy)
 
     # 4.1 市场规则配置
     china_futures_config: Optional[ChinaFuturesConfig] = None

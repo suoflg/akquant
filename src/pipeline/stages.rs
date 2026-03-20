@@ -670,7 +670,10 @@ impl Processor for ExecutionProcessor {
 
         if let Some(event) = engine.current_event.clone() {
             match event {
-                Event::Bar(_) | Event::Tick(_) => {
+                Event::Bar(_) | Event::Tick(_) | Event::Timer(_) => {
+                    if matches!(event, Event::Timer(_)) && !engine.timer_same_cycle_enabled() {
+                        return Ok(ProcessorResult::Next);
+                    }
                     // Create Context
                     let ctx = EngineContext {
                         instruments: &engine.instruments,

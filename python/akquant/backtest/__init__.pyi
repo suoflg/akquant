@@ -93,6 +93,7 @@ def run_backtest(
     risk_budget_reset_daily: bool = ...,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
     broker_profile: Optional[str] = ...,
+    timer_execution_policy: Literal["same_cycle", "next_event"] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
