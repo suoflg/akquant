@@ -31,18 +31,21 @@
 本项目混合了 Rust 和 Python，请按以下步骤配置环境：
 
 1.  **安装 Rust**: [官网下载](https://www.rust-lang.org/tools/install)
-2.  **创建 Python 虚拟环境 (推荐 Conda)**:
+2.  **创建 Python 虚拟环境 (推荐 uv)**:
     ```bash
-    conda create -n akquant python=3.10
-    conda activate akquant
+    uv venv --python 3.10
+    # Windows:
+    .venv\Scripts\activate
+    # macOS / Linux:
+    source .venv/bin/activate
     ```
 3.  **安装依赖与编译**:
     ```bash
     # 安装开发依赖
-    pip install -e ".[dev,ml,plot]"
+    uv pip install -e ".[dev,ml,plot]"
 
     # 编译 Rust 扩展 (开发模式)
-    maturin develop
+    uv run maturin develop
     ```
 
 ### 3. 开始开发 (Coding)
@@ -67,12 +70,12 @@
     *   确保添加了类型注解 (Type Hints)。
     *   如果是 Python 代码，请运行检查：
         ```bash
-        ruff check .
-        mypy .
+        uv run ruff check .
+        uv run mypy .
         ```
     *   推荐在提交前统一执行：
         ```bash
-        pre-commit run --all-files
+        uv run pre-commit run --all-files
         ```
         说明：
         *   仓库中的 mypy hook 已配置为以项目根目录运行并读取 `pyproject.toml`，用于避免 `__init__.py` 与 `__init__.pyi` 的重复模块报错。
@@ -102,10 +105,10 @@
 
 1.  **运行常规单元测试**:
     ```bash
-    pytest
+    uv run pytest
     ```
 
-    Rust 核心测试（推荐使用项目脚本，自动处理 macOS + conda 的动态库路径）：
+    Rust 核心测试（推荐使用项目脚本，自动处理 macOS + uv 环境动态库路径）：
     ```bash
     ./scripts/cargo-test.sh -q
     ```
@@ -113,26 +116,26 @@
 2.  **运行黄金测试 (Golden Tests)**:
     黄金测试用于捕捉核心算法变更导致的非预期行为（如 PnL 计算、撮合逻辑差异）。
     ```bash
-    pytest tests/golden/test_golden.py
+    uv run pytest tests/golden/test_golden.py
     ```
     *   如果测试失败，请检查差异是否符合预期。
     *   如果是**预期内的算法改进**（例如修复了撮合 bug 导致成交价格变动），你需要更新基线：
         ```bash
-        python tests/golden/runner.py --generate-baseline
+        uv run python tests/golden/runner.py --generate-baseline
         ```
         并在 PR 中说明导致基线变更的原因。
 
 3.  **代码风格检查**:
     ```bash
-    ruff check .
-    mypy .
-    python scripts/check_docs_links.py
-    python scripts/check_docs_api_examples.py
+    uv run ruff check .
+    uv run mypy .
+    uv run python scripts/check_docs_links.py
+    uv run python scripts/check_docs_api_examples.py
     ```
     如需仅检查本次变更文档，可使用：
     ```bash
-    python scripts/check_docs_links.py --changed-only --from-rev origin/main --to-rev HEAD
-    python scripts/check_docs_api_examples.py --changed-only --from-rev origin/main --to-rev HEAD
+    uv run python scripts/check_docs_links.py --changed-only --from-rev origin/main --to-rev HEAD
+    uv run python scripts/check_docs_api_examples.py --changed-only --from-rev origin/main --to-rev HEAD
     ```
 
 ---
@@ -141,10 +144,10 @@
 
 在提交 PR 之前，请检查：
 
-- [ ] 代码可以通过 `maturin develop` 编译成功。
-- [ ] 运行了 `ruff check .` 和 `mypy .` 没有报错。
-- [ ] 运行了 `python scripts/check_docs_links.py` 且通过。
-- [ ] 运行了 `python scripts/check_docs_api_examples.py` 且通过。
+- [ ] 代码可以通过 `uv run maturin develop` 编译成功。
+- [ ] 运行了 `uv run ruff check .` 和 `uv run mypy .` 没有报错。
+- [ ] 运行了 `uv run python scripts/check_docs_links.py` 且通过。
+- [ ] 运行了 `uv run python scripts/check_docs_api_examples.py` 且通过。
 - [ ] 如果是新功能，是否添加了简单的测试或示例？
 - [ ] 文档是否已更新？
 
