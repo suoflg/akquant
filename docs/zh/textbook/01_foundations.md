@@ -126,24 +126,25 @@ $$ E(R_p) = R_f + \beta_p (E(R_m) - R_f) + \alpha_p $$
 
 为了进行量化研究，我们需要搭建一套高效的开发环境。本教材推荐使用 **Python + Rust** 的混合架构。
 
-### 1.5.1 Python 环境 (Miniconda)
+### 1.5.1 Python 环境 (uv)
 
-Python 是量化领域最主流的语言，拥有丰富的生态库（Pandas, NumPy, Scikit-learn）。我们推荐使用 [Miniconda](https://docs.conda.io/en/latest/miniconda.html) 来管理 Python 环境。
+Python 是量化领域最主流的语言，拥有丰富的生态库（Pandas, NumPy, Scikit-learn）。我们推荐使用 [uv](https://github.com/astral-sh/uv) 来管理 Python 环境。
 
 > **国内镜像加速**：
-> 1. **下载加速**：推荐从清华大学开源软件镜像站下载安装包：[https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/](https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/)
-> 2. **配置 Conda 源**：安装完成后，在终端执行以下命令以加速包的下载：
+> 1. **安装 uv**：参考官方安装说明：https://github.com/astral-sh/uv
+> 2. **配置镜像源**：安装完成后，在终端执行以下命令以加速包的下载：
 > ```bash
-> conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
-> conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
-> conda config --set show_channel_urls yes
+> uv pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 > ```
 
-安装完成后，打开终端（Windows 用户请打开 **Anaconda Powershell Prompt**，macOS/Linux 用户请打开 **Terminal**），创建一个新的环境：
+安装完成后，打开终端（Windows 用户请打开 **PowerShell**，macOS/Linux 用户请打开 **Terminal**），创建一个新的环境：
 
 ```bash
-conda create -n ak_env python=3.14
-conda activate ak_env
+uv venv --python 3.14
+# Windows:
+.venv\Scripts\activate
+# macOS / Linux:
+source .venv/bin/activate
 ```
 
 ### 1.5.2 安装 AKQuant
@@ -157,10 +158,10 @@ conda activate ak_env
 3.  **全资产覆盖**：原生支持 **股票 (Stock)**、**期货 (Futures)**、**期权 (Options)** 及 **基金 (Fund)** 等多种金融资产，并针对 A 股的 T+1 制度和涨跌停机制做了深度适配。
 4.  **回测实盘一体化**：坚持 "Code Once, Run Anywhere" 理念。同一套策略代码，既可以在历史数据上回测，也可以直接切换到 CTP / MiniQMT / PTrade 等实盘接口进行交易。
 
-在激活的 conda 环境中，运行以下命令安装（建议使用清华源加速）：
+在激活的 uv 虚拟环境中，运行以下命令安装（建议使用清华源加速）：
 
 ```bash
-pip install akquant akshare pandas matplotlib -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install akquant akshare pandas matplotlib --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
 *   `AKQuant`: **高性能事件驱动量化框架**。作为本课程的核心，它提供了回测引擎、订单管理、风控模块等全套基础设施，让用户只需专注于编写策略逻辑 (`Strategy`)。
@@ -313,4 +314,4 @@ calmar_ratio                            -0.250393
 1. 数据拉取失败：先检查网络和数据源可用性，再重试脚本。
 2. 依赖缺失报错：按安装文档补齐环境后重新运行。
 3. 指标解读混淆：优先关注 `total_return_pct` 与 `max_drawdown_pct` 两项基线指标。
-4. 命令不可用（如 `conda` / `python` / `ruff` / `mypy`）：优先确认已激活本地 conda 环境（如 `ak_env`），并检查 `C:\Users\xxx\miniconda3\Scripts\conda.exe` 路径是否可用。
+4. 命令不可用（如 `uv` / `python` / `ruff` / `mypy`）：优先确认已激活本地 uv 虚拟环境（如 `.venv`），并检查 `uv --version` 与 `python --version` 输出是否正常。

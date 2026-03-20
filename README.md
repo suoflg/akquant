@@ -278,20 +278,20 @@ AKQuant 采用严格的测试流程以确保回测引擎的准确性：
 
 运行测试：
 ```bash
-# 1. 激活本地 conda 环境
-conda activate <env_name>
+# 1. 使用 uv 环境运行命令
+uv sync
 
 # 2. 构建并绑定 Rust 扩展
-maturin develop
+uv run maturin develop
 
 # 3. 运行所有测试
-pytest
+uv run pytest
 
-# 4. 运行 Rust 核心测试（自动处理 macOS + conda 动态库路径）
+# 4. 运行 Rust 核心测试（自动处理 macOS + uv 环境动态库路径）
 ./scripts/cargo-test.sh -q
 
 # 5. 仅运行黄金测试
-pytest tests/golden/test_golden.py
+uv run pytest tests/golden/test_golden.py
 ```
 
 ## Citation
