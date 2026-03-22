@@ -17,6 +17,7 @@ from akquant import (
 )
 from akquant.akquant import Bar, OrderStatus, StrategyContext, Tick, TimeInForce
 from akquant.backtest import FunctionalStrategy
+from akquant.config import RiskConfig
 from akquant.strategy import Strategy, StrategyRuntimeConfig
 
 
@@ -470,6 +471,120 @@ def test_get_trades_refreshes_during_backtest() -> None:
     assert strategy is not None
     assert len(result.trades) >= 1
     assert len(strategy.get_trades()) >= 1
+
+
+class RejectEventBacktestStrategy(Strategy):
+    """Strategy used to validate on_reject callback in run_backtest."""
+
+    def __init__(self) -> None:
+        """Initialize reject capture state."""
+        self.reject_events: list[tuple[str, str]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        """Submit oversized orders on first two bars to trigger risk rejects."""
+        if self._bar_count == 1:
+            self.sell(symbol=bar.symbol, quantity=100)
+        elif self._bar_count == 2:
+            self.buy(symbol=bar.symbol, quantity=10000)
+        elif self._bar_count == 3:
+            self.buy(symbol=bar.symbol, quantity=10)
+
+    def on_reject(self, order: Any) -> None:
+        """Capture rejected order id and reason."""
+        self.reject_events.append((str(order.id), str(order.reject_reason)))
+
+
+def test_run_backtest_emits_on_reject_for_risk_rejected_orders() -> None:
+    """run_backtest should trigger on_reject for risk rejected orders."""
+    bars = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=5, freq="D"),
+            "open": [100.0, 101.0, 102.0, 103.0, 104.0],
+            "high": [100.5, 101.5, 102.5, 103.5, 104.5],
+            "low": [99.5, 100.5, 101.5, 102.5, 103.5],
+            "close": [100.0, 100.2, 100.3, 100.4, 100.5],
+            "volume": [1000.0, 1000.0, 1000.0, 1000.0, 1000.0],
+            "symbol": ["STOCK", "STOCK", "STOCK", "STOCK", "STOCK"],
+        }
+    )
+    config = BacktestConfig(
+        strategy_config=StrategyConfig(
+            risk=RiskConfig(safety_margin=0.0001, max_order_value=5000.0)
+        )
+    )
+
+    result = run_backtest(
+        data=bars,
+        strategy=RejectEventBacktestStrategy,
+        symbols=["STOCK"],
+        initial_cash=10000.0,
+        config=config,
+        show_progress=False,
+    )
+    strategy = cast(RejectEventBacktestStrategy, result.strategy)
+    assert strategy is not None
+    assert len(strategy.reject_events) == 2
+    assert all("Risk:" in reason for _, reason in strategy.reject_events)
+
+    rejected_df = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "rejected"
+    ]
+    assert len(rejected_df) == 2
+
+
+class RejectOnceBacktestStrategy(Strategy):
+    """Strategy used to validate single-fire semantics of on_reject."""
+
+    def __init__(self) -> None:
+        """Initialize captured callbacks."""
+        self.reject_order_ids: list[str] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        """Submit only one oversized order so one order id is rejected."""
+        if self._bar_count == 1:
+            self.buy(symbol=bar.symbol, quantity=10000)
+
+    def on_reject(self, order: Any) -> None:
+        """Capture rejected order id."""
+        self.reject_order_ids.append(str(order.id))
+
+
+def test_run_backtest_on_reject_fires_once_per_order_id() -> None:
+    """on_reject should fire once for the same rejected order id."""
+    bars = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-02-01", periods=6, freq="D"),
+            "open": [100.0, 100.2, 100.3, 100.4, 100.5, 100.6],
+            "high": [100.5, 100.7, 100.8, 100.9, 101.0, 101.1],
+            "low": [99.5, 99.7, 99.8, 99.9, 100.0, 100.1],
+            "close": [100.0, 100.1, 100.2, 100.3, 100.4, 100.5],
+            "volume": [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0],
+            "symbol": ["STOCK", "STOCK", "STOCK", "STOCK", "STOCK", "STOCK"],
+        }
+    )
+    config = BacktestConfig(
+        strategy_config=StrategyConfig(
+            risk=RiskConfig(safety_margin=0.0001, max_order_value=5000.0)
+        )
+    )
+
+    result = run_backtest(
+        data=bars,
+        strategy=RejectOnceBacktestStrategy,
+        symbols=["STOCK"],
+        initial_cash=10000.0,
+        config=config,
+        show_progress=False,
+    )
+    strategy = cast(RejectOnceBacktestStrategy, result.strategy)
+    assert strategy is not None
+    assert len(strategy.reject_order_ids) == 1
+    assert len(set(strategy.reject_order_ids)) == 1
+
+    rejected_df = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "rejected"
+    ]
+    assert len(rejected_df) == 1
 
 
 class SequenceStrategy(Strategy):
@@ -2215,6 +2330,41 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     )
     assert after_count == before_count + 1
     assert rebalance_after_count == rebalance_count + 1
+
+
+def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
+    """Reject callback should be emitted from recent_rejected_orders snapshots."""
+    strategy = FrameworkHooksStrategy()
+    ctx = MagicMock(spec=StrategyContext)
+    ctx.get_position.return_value = 0.0
+    ctx.canceled_order_ids = []
+    ctx.active_orders = []
+    ctx.recent_trades = []
+    ctx.positions = {}
+    ctx.available_positions = {}
+    ctx.cash = 1000.0
+    ctx.session = "normal"
+    ctx.current_time = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
+    ctx.recent_rejected_orders = [
+        SimpleNamespace(
+            id="rej_from_snapshot",
+            status=OrderStatus.Rejected,
+            filled_quantity=0.0,
+            average_filled_price=None,
+        )
+    ]
+
+    tick = Tick(timestamp=ctx.current_time, price=100.0, volume=1.0, symbol="AAPL")
+    strategy._on_tick_event(tick, ctx)
+
+    assert "order:rej_from_snapshot" in strategy.events
+    assert "reject:rej_from_snapshot" in strategy.events
+    assert strategy.events.index("order:rej_from_snapshot") < strategy.events.index(
+        "reject:rej_from_snapshot"
+    )
+    assert strategy.events.index("reject:rej_from_snapshot") < strategy.events.index(
+        "tick"
+    )
 
 
 def test_daily_rebalance_fallback_when_session_missing() -> None:

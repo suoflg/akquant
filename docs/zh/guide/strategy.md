@@ -49,6 +49,7 @@
 说明：
 
 * `on_reject` 对同一订单 id 只触发一次。
+* 回测中已终态拒单会通过上下文快照 `recent_rejected_orders` 在下一次事件分发时补发，避免因清理活跃订单导致漏触发。
 * `before_trading` 在本地交易日首次进入 Normal 会话时触发一次。
 * `on_daily_rebalance` 与 `before_trading` 同一阶段触发，每个交易日最多触发一次。
 * `after_trading` 在离开 Normal 会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `after_trading`。

@@ -145,6 +145,13 @@ impl Processor for ChannelProcessor {
                             .into_iter()
                             .find(|o| o.id == report_order_id);
                         if let Some(order_snapshot) = updated_order {
+                            if order_snapshot.status == OrderStatus::Rejected {
+                                engine
+                                    .state
+                                    .order_manager
+                                    .current_step_rejected_orders
+                                    .push(order_snapshot.clone());
+                            }
                             let mut order_payload = HashMap::new();
                             order_payload.insert("order_id", order_snapshot.id.clone());
                             order_payload.insert("status", format!("{:?}", order_snapshot.status));
@@ -580,6 +587,11 @@ impl Processor for StrategyProcessor {
             let slot_count = engine.strategy_slots.len();
             let active_orders = Arc::new(engine.state.order_manager.active_orders.clone());
             let step_trades = engine.state.order_manager.current_step_trades.clone();
+            let step_rejected_orders = engine
+                .state
+                .order_manager
+                .current_step_rejected_orders
+                .clone();
 
             for slot_index in 0..slot_count {
                 let slot_strategy = engine
@@ -596,6 +608,7 @@ impl Processor for StrategyProcessor {
                             slot_index,
                             active_orders.clone(),
                             step_trades.clone(),
+                            step_rejected_orders.clone(),
                         )?;
                         flush_pending_engine_oco_groups(engine, slot_bound)?;
                         flush_pending_engine_bracket_plans(engine, slot_bound)?;
@@ -607,6 +620,7 @@ impl Processor for StrategyProcessor {
                             slot_index,
                             active_orders.clone(),
                             step_trades.clone(),
+                            step_rejected_orders.clone(),
                         )?;
                         flush_pending_engine_oco_groups(engine, strategy)?;
                         flush_pending_engine_bracket_plans(engine, strategy)?;
@@ -624,6 +638,11 @@ impl Processor for StrategyProcessor {
                 }
             }
             engine.state.order_manager.current_step_trades.clear();
+            engine
+                .state
+                .order_manager
+                .current_step_rejected_orders
+                .clear();
         }
         Ok(ProcessorResult::Next)
     }
