@@ -3507,3 +3507,42 @@ def test_china_futures_session_profile_accepts_cffex_presets() -> None:
     )
     assert config_stock.session_profile == "CN_FUTURES_CFFEX_STOCK_INDEX_DAY"
     assert config_bond.session_profile == "CN_FUTURES_CFFEX_BOND_DAY"
+
+
+def test_run_grid_search_parallel_normalizes_execution_mode_enum() -> None:
+    """Parallel grid search should accept ExecutionMode enum via normalization."""
+    data = _build_benchmark_data(n=40, symbol="OPT_EXEC_MODE_ENUM")
+
+    results = akquant.run_grid_search(
+        strategy=NoopStrategy,
+        param_grid={"dummy": [1, 2]},
+        data=data,
+        symbol="OPT_EXEC_MODE_ENUM",
+        execution_mode=akquant.ExecutionMode.CurrentClose,
+        max_workers=2,
+        return_df=True,
+        show_progress=False,
+    )
+
+    assert isinstance(results, pd.DataFrame)
+    assert len(results) == 2
+
+
+def test_run_grid_search_parallel_fail_fast_for_unpickleable_callback() -> None:
+    """Parallel grid search should fail fast with clear error for lambda callback."""
+    data = _build_benchmark_data(n=40, symbol="OPT_PICKLE_FAILFAST")
+
+    with pytest.raises(
+        TypeError,
+        match="kwargs\\['on_event'\\] failed",
+    ):
+        akquant.run_grid_search(
+            strategy=NoopStrategy,
+            param_grid={"dummy": [1, 2]},
+            data=data,
+            symbol="OPT_PICKLE_FAILFAST",
+            max_workers=2,
+            return_df=True,
+            show_progress=False,
+            on_event=lambda _event: None,
+        )
