@@ -7,6 +7,7 @@
 import itertools
 import json
 import multiprocessing
+import pickle
 import threading
 import time
 from dataclasses import dataclass
@@ -170,6 +171,90 @@ class JSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+def _normalize_execution_mode_for_parallel(value: Any) -> Any:
+    """
+    Normalize execution_mode into a pickle-safe representation for multiprocessing.
+
+    :param value: 原始 execution_mode 参数值
+    :return: 归一化后的 execution_mode
+    """
+    if isinstance(value, str):
+        return value
+
+    mode_name = getattr(value, "name", None)
+    if isinstance(mode_name, str):
+        mode_key = mode_name
+    else:
+        mode_text = str(value).strip()
+        mode_key = mode_text.split(".", 1)[-1] if "." in mode_text else mode_text
+
+    mode_map = {
+        "NextOpen": "next_open",
+        "CurrentClose": "current_close",
+        "NextAverage": "next_average",
+        "NextHighLowMid": "next_high_low_mid",
+        "next_open": "next_open",
+        "current_close": "current_close",
+        "next_average": "next_average",
+        "next_high_low_mid": "next_high_low_mid",
+    }
+    return mode_map.get(mode_key, value)
+
+
+def _assert_parallel_pickleable(
+    strategy: Type[Strategy],
+    backtest_kwargs: Mapping[str, Any],
+    warmup_calc: Optional[Any],
+) -> None:
+    """
+    Validate critical multiprocessing inputs are pickle-serializable.
+
+    :param strategy: 策略类
+    :param backtest_kwargs: run_backtest kwargs (不包含 data)
+    :param warmup_calc: 动态预热函数
+    :raises TypeError: 当关键输入无法序列化时抛出
+    """
+    strategy_module = getattr(strategy, "__module__", "")
+    if strategy_module == "__main__":
+        raise TypeError(
+            "Parallel optimization requires strategy class importable from module, "
+            "but got strategy defined in __main__. "
+            "Please move strategy class to a module file."
+        )
+
+    checks: List[tuple[str, Any]] = [("strategy", strategy)]
+    if warmup_calc is not None:
+        checks.append(("warmup_calc", warmup_calc))
+
+    sensitive_keys = (
+        "execution_mode",
+        "fill_policy",
+        "on_event",
+        "initialize",
+        "on_start",
+        "on_stop",
+        "on_tick",
+        "on_order",
+        "on_trade",
+        "on_timer",
+    )
+    for key in sensitive_keys:
+        if key in backtest_kwargs:
+            checks.append((f"kwargs['{key}']", backtest_kwargs[key]))
+
+    for label, obj in checks:
+        try:
+            pickle.dumps(obj)
+        except Exception as e:
+            raise TypeError(
+                "run_grid_search with max_workers>1 requires pickle-serializable "
+                f"arguments, but {label} failed: {e}. "
+                "Tips: use execution_mode='current_close' string instead of "
+                "ExecutionMode enum object, avoid lambda/local callbacks, and ensure "
+                "strategy class is defined in importable module."
+            ) from e
+
+
 def _save_result_to_db(
     db_path: str, strategy_name: str, result: OptimizationResult
 ) -> None:
@@ -241,6 +326,12 @@ def run_grid_search(
     :param kwargs: 传递给 run_backtest 的其他参数 (symbol, cash, etc.)
     :return: 优化结果 (DataFrame 或 List[OptimizationResult])
     """
+    backtest_kwargs = dict(kwargs)
+    if "execution_mode" in backtest_kwargs:
+        backtest_kwargs["execution_mode"] = _normalize_execution_mode_for_parallel(
+            backtest_kwargs["execution_mode"]
+        )
+
     # 1. 生成参数组合
     keys = param_grid.keys()
     values = param_grid.values()
@@ -357,7 +448,7 @@ def run_grid_search(
                 {
                     "strategy_cls": strategy,
                     "params": params,
-                    "backtest_kwargs": {"data": data, **kwargs},
+                    "backtest_kwargs": {"data": data, **backtest_kwargs},
                     "warmup_calc": warmup_calc,
                     "timeout": timeout,
                 }
@@ -381,6 +472,7 @@ def run_grid_search(
             # 如果设置了 timeout，且未指定 max_tasks_per_child，建议设为 1 以清理线程
             if timeout is not None and max_tasks_per_child is None:
                 max_tasks_per_child = 1
+            _assert_parallel_pickleable(strategy, backtest_kwargs, warmup_calc)
 
             with multiprocessing.Pool(
                 processes=max_workers, maxtasksperchild=max_tasks_per_child
