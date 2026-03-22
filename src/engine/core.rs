@@ -534,6 +534,7 @@ impl Engine {
         slot_index: usize,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
+        step_rejected_orders: Vec<Order>,
     ) -> PyResult<Py<StrategyContext>> {
         self.ensure_strategy_context_capacity();
         if let Some(existing_ctx) = self
@@ -554,6 +555,7 @@ impl Engine {
                         active_orders,
                         closed_trades: self.state.order_manager.trade_tracker.closed_trades.clone(),
                         recent_trades: step_trades,
+                        recent_rejected_orders: step_rejected_orders,
                     });
                 }
                 Ok::<_, PyErr>(py_ctx)
@@ -564,7 +566,8 @@ impl Engine {
             .strategy_slots
             .get(slot_index)
             .map(|slot| slot.strategy_id.clone());
-        let ctx = self.create_context(active_orders, step_trades, strategy_id);
+        let ctx =
+            self.create_context(active_orders, step_trades, step_rejected_orders, strategy_id);
         let (py_ctx, persistent_ref) = Python::attach(|py| {
             let py_ctx = Py::new(py, ctx).unwrap();
             Ok::<_, PyErr>((py_ctx.clone_ref(py), py_ctx.clone_ref(py)))
@@ -836,6 +839,7 @@ impl Engine {
         &self,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
+        step_rejected_orders: Vec<Order>,
         strategy_id: Option<String>,
     ) -> StrategyContext {
         // Create a temporary context for the strategy to use
@@ -848,6 +852,7 @@ impl Engine {
             active_orders,
             closed_trades: self.state.order_manager.trade_tracker.closed_trades.clone(),
             recent_trades: step_trades,
+            recent_rejected_orders: step_rejected_orders,
             history_buffer: Some(self.history_buffer.clone()),
             event_tx: Some(self.event_manager.sender()),
             risk_config: self.risk_manager.config.clone(),
@@ -888,13 +893,19 @@ impl Engine {
         slot_index: usize,
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
+        step_rejected_orders: Vec<Order>,
     ) -> PyResult<(Vec<Order>, Vec<Timer>, Vec<String>)> {
         self.active_strategy_slot = slot_index;
         match event {
             Event::Bar(b) => {
                 self.last_prices.insert(b.symbol.clone(), b.close);
                 let py_ctx =
-                    self.get_or_create_strategy_context(slot_index, active_orders, step_trades)?;
+                    self.get_or_create_strategy_context(
+                        slot_index,
+                        active_orders,
+                        step_trades,
+                        step_rejected_orders,
+                    )?;
 
                 let args = Python::attach(|py| {
                     let bar = b.clone();
@@ -925,7 +936,12 @@ impl Engine {
             Event::Tick(t) => {
                 self.last_prices.insert(t.symbol.clone(), t.price);
                 let py_ctx =
-                    self.get_or_create_strategy_context(slot_index, active_orders, step_trades)?;
+                    self.get_or_create_strategy_context(
+                        slot_index,
+                        active_orders,
+                        step_trades,
+                        step_rejected_orders,
+                    )?;
 
                 let args = Python::attach(|py| {
                     let tick = t.clone();
@@ -954,7 +970,12 @@ impl Engine {
             }
             Event::Timer(timer) => {
                 let py_ctx =
-                    self.get_or_create_strategy_context(slot_index, active_orders, step_trades)?;
+                    self.get_or_create_strategy_context(
+                        slot_index,
+                        active_orders,
+                        step_trades,
+                        step_rejected_orders,
+                    )?;
 
                 let args = Python::attach(|py| {
                     let payload = timer.payload.as_str();

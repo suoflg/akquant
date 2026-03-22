@@ -26,6 +26,14 @@ def check_order_events(strategy: Any) -> None:
                 _emit_order_callback(strategy, order)
                 del strategy._known_orders[oid]
 
+    if hasattr(strategy.ctx, "recent_rejected_orders"):
+        for order in strategy.ctx.recent_rejected_orders:
+            oid = getattr(order, "id", "")
+            if not oid:
+                continue
+            strategy._known_orders[oid] = order
+            _emit_order_callback(strategy, order)
+
     current_active_ids: set[str] = set()
     if hasattr(strategy.ctx, "active_orders"):
         for order in strategy.ctx.active_orders:

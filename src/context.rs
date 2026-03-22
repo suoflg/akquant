@@ -42,6 +42,7 @@ pub struct ContextInit {
     pub active_orders: Arc<Vec<Order>>,
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub recent_trades: Vec<Trade>,
+    pub recent_rejected_orders: Vec<Order>,
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     pub event_tx: Option<Sender<Event>>,
     pub risk_config: RiskConfig,
@@ -57,6 +58,7 @@ pub struct ContextUpdate {
     pub active_orders: Arc<Vec<Order>>,
     pub closed_trades: Arc<Vec<ClosedTrade>>,
     pub recent_trades: Vec<Trade>,
+    pub recent_rejected_orders: Vec<Order>,
 }
 
 impl StrategyContext {
@@ -88,6 +90,7 @@ impl StrategyContext {
         }
 
         self.recent_trades = update.recent_trades;
+        self.recent_rejected_orders = update.recent_rejected_orders;
 
         // Reset accumulators
         self.orders.clear();
@@ -144,6 +147,9 @@ pub struct StrategyContext {
     // Recent trades generated in the last step
     #[pyo3(get)]
     pub recent_trades: Vec<Trade>,
+    // Recent rejected orders generated in the last step
+    #[pyo3(get)]
+    pub recent_rejected_orders: Vec<Order>,
     // History Buffer (Shared with Engine)
     pub history_buffer: Option<Arc<RwLock<HistoryBuffer>>>,
     // Event Channel (Optional, for async order submission)
@@ -172,6 +178,7 @@ impl StrategyContext {
             current_time: init.current_time,
             closed_trades: init.closed_trades,
             recent_trades: init.recent_trades,
+            recent_rejected_orders: init.recent_rejected_orders,
             history_buffer: init.history_buffer,
             event_tx: init.event_tx,
             risk_config: init.risk_config,
@@ -233,6 +240,7 @@ impl StrategyContext {
             current_time: current_time.unwrap_or(0),
             closed_trades: Arc::new(closed_trades.unwrap_or_default()),
             recent_trades: recent_trades.unwrap_or_default(),
+            recent_rejected_orders: Vec::new(),
             history_buffer: None,
             event_tx: None,
             risk_config: risk_config.unwrap_or_default(),
