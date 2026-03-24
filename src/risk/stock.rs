@@ -1,5 +1,5 @@
 use crate::error::AkQuantError;
-use crate::model::{Order, OrderSide};
+use crate::model::{Order, OrderSide, OrderStatus};
 use rust_decimal::Decimal;
 
 use super::rule::{RiskCheckContext, RiskRule};
@@ -26,6 +26,11 @@ impl RiskRule for StockAvailablePositionRule {
                 .active_orders
                 .iter()
                 .filter(|o| o.symbol == order.symbol && o.side == OrderSide::Sell)
+                .filter(|o| {
+                    o.status == OrderStatus::New
+                        || o.status == OrderStatus::Submitted
+                        || o.status == OrderStatus::PartiallyFilled
+                })
                 .map(|o| o.quantity - o.filled_quantity)
                 .sum();
 
@@ -41,5 +46,174 @@ impl RiskRule for StockAvailablePositionRule {
 
     fn clone_box(&self) -> Box<dyn RiskRule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::instrument::{InstrumentEnum, StockInstrument};
+    use crate::model::{AssetType, Instrument, OrderRole, OrderType, TimeInForce};
+    use crate::portfolio::Portfolio;
+    use crate::risk::RiskConfig;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn make_order(id: &str, symbol: &str, side: OrderSide, qty: Decimal, status: OrderStatus) -> Order {
+        Order {
+            id: id.to_string(),
+            symbol: symbol.to_string(),
+            side,
+            order_type: OrderType::Limit,
+            quantity: qty,
+            price: Some(Decimal::from(10)),
+            time_in_force: TimeInForce::IOC,
+            trigger_price: None,
+            trail_offset: None,
+            trail_reference_price: None,
+            graph_id: None,
+            parent_order_id: None,
+            order_role: OrderRole::Standalone,
+            status,
+            filled_quantity: Decimal::ZERO,
+            average_filled_price: None,
+            created_at: 0,
+            updated_at: 0,
+            commission: Decimal::ZERO,
+            tag: String::new(),
+            reject_reason: String::new(),
+            owner_strategy_id: None,
+        }
+    }
+
+    fn make_context<'a>(
+        portfolio: &'a Portfolio,
+        instrument: &'a Instrument,
+        instruments: &'a HashMap<String, Instrument>,
+        active_orders: &'a [Order],
+        current_prices: &'a HashMap<String, Decimal>,
+        config: &'a RiskConfig,
+    ) -> super::super::rule::RiskCheckContext<'a> {
+        super::super::rule::RiskCheckContext {
+            portfolio,
+            instrument,
+            instruments,
+            active_orders,
+            current_prices,
+            current_time: 0,
+            config,
+        }
+    }
+
+    #[test]
+    fn test_cancelled_ioc_sell_not_counted_as_pending() {
+        let symbol = "sz300274".to_string();
+        let mut available_positions = HashMap::new();
+        available_positions.insert(symbol.clone(), Decimal::from(68900));
+
+        let portfolio = Portfolio {
+            cash: Decimal::from(1_000_000),
+            positions: Arc::new(HashMap::new()),
+            available_positions: Arc::new(available_positions),
+        };
+
+        let instrument = Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: symbol.clone(),
+                lot_size: Decimal::from(100),
+                tick_size: Decimal::new(1, 2),
+                expiry_date: None,
+            }),
+        };
+
+        let mut instruments = HashMap::new();
+        instruments.insert(symbol.clone(), instrument.clone());
+        let current_prices = HashMap::new();
+        let config = RiskConfig::new();
+
+        let cancelled_ioc = make_order(
+            "o1",
+            &symbol,
+            OrderSide::Sell,
+            Decimal::from(68900),
+            OrderStatus::Cancelled,
+        );
+        let active_orders = vec![cancelled_ioc];
+        let ctx = make_context(
+            &portfolio,
+            &instrument,
+            &instruments,
+            &active_orders,
+            &current_prices,
+            &config,
+        );
+
+        let new_sell = make_order(
+            "o2",
+            &symbol,
+            OrderSide::Sell,
+            Decimal::from(68900),
+            OrderStatus::New,
+        );
+        let rule = StockAvailablePositionRule;
+        let result = rule.check(&new_sell, &ctx);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_submitted_sell_still_counted_as_pending() {
+        let symbol = "sz300274".to_string();
+        let mut available_positions = HashMap::new();
+        available_positions.insert(symbol.clone(), Decimal::from(68900));
+
+        let portfolio = Portfolio {
+            cash: Decimal::from(1_000_000),
+            positions: Arc::new(HashMap::new()),
+            available_positions: Arc::new(available_positions),
+        };
+
+        let instrument = Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: symbol.clone(),
+                lot_size: Decimal::from(100),
+                tick_size: Decimal::new(1, 2),
+                expiry_date: None,
+            }),
+        };
+
+        let mut instruments = HashMap::new();
+        instruments.insert(symbol.clone(), instrument.clone());
+        let current_prices = HashMap::new();
+        let config = RiskConfig::new();
+
+        let submitted_sell = make_order(
+            "o1",
+            &symbol,
+            OrderSide::Sell,
+            Decimal::from(68900),
+            OrderStatus::Submitted,
+        );
+        let active_orders = vec![submitted_sell];
+        let ctx = make_context(
+            &portfolio,
+            &instrument,
+            &instruments,
+            &active_orders,
+            &current_prices,
+            &config,
+        );
+
+        let new_sell = make_order(
+            "o2",
+            &symbol,
+            OrderSide::Sell,
+            Decimal::from(100),
+            OrderStatus::New,
+        );
+        let rule = StockAvailablePositionRule;
+        let result = rule.check(&new_sell, &ctx);
+        assert!(result.is_err());
     }
 }
