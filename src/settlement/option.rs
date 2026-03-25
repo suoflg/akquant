@@ -102,6 +102,7 @@ mod tests {
             inner: InstrumentEnum::Option(OptionInstrument {
                 symbol: symbol.to_string(),
                 multiplier: dec!(100),
+                margin_ratio: dec!(0.2),
                 tick_size: dec!(0.01),
                 option_type,
                 strike_price: strike,

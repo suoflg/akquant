@@ -139,6 +139,7 @@ mod tests {
             inner: InstrumentEnum::Option(OptionInstrument {
                 symbol: "OPT_510050_C_202601".to_string(),
                 multiplier: Decimal::from(1),
+                margin_ratio: Decimal::from_str("0.2").unwrap(),
                 tick_size: Decimal::from_str("0.0001").unwrap(),
                 strike_price: Decimal::from(2),
                 option_type: crate::model::OptionType::Call,

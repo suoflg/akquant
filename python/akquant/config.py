@@ -405,6 +405,7 @@ class RiskConfig:
 
     **Order & Position Limits:**
     :param active: Master switch to enable/disable risk checks. Default True.
+    :param check_cash: Enable cash/margin sufficiency checks. Default True.
     :param safety_margin: Cash buffer to reserve (e.g., 0.0001 to avoid precision
                           issues).
     :param max_order_size: Max quantity per order.
@@ -424,6 +425,7 @@ class RiskConfig:
     """
 
     active: bool = True
+    check_cash: bool = True
     safety_margin: float = 0.0001
     max_order_size: Optional[float] = None
     max_order_value: Optional[float] = None

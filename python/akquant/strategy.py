@@ -1295,8 +1295,8 @@ class Strategy:
                 - cash: 可用资金
                 - equity: 总权益 (现金 + 持仓市值)
                 - market_value: 持仓总市值 (equity - cash)
-                - frozen_cash: (预留) 冻结资金, 暂为 0.0
-                - margin: (预留) 占用保证金, 暂为 0.0
+                - frozen_cash: 当前未完成订单预占资金
+                - margin: 当前仓位占用保证金
         """
         return _get_account_impl(self)
 

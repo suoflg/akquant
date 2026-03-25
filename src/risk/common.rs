@@ -1,5 +1,5 @@
 use crate::error::AkQuantError;
-use crate::model::{AssetType, Order, OrderSide};
+use crate::model::{Order, OrderSide};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 
@@ -134,75 +134,81 @@ impl RiskRule for CashMarginRule {
     }
 
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        if ctx.config.check_cash && order.side == OrderSide::Buy {
-            let mut required_margin = Decimal::ZERO;
-            let mut price_found = false;
-
-            // Get instrument info for multiplier and margin_ratio
-            let multiplier = ctx.instrument.multiplier();
-            let margin_ratio = ctx.instrument.margin_ratio();
-
-            // Determine price for current order
-            if let Some(p) = order.price {
-                required_margin = p * order.quantity * multiplier * margin_ratio;
-                price_found = true;
+        if ctx.config.check_cash {
+            let order_price = if let Some(p) = order.price {
+                p
             } else if let Some(p) = ctx.current_prices.get(&order.symbol) {
-                required_margin = *p * order.quantity * multiplier * margin_ratio;
-                price_found = true;
+                *p
+            } else {
+                return Ok(());
+            };
+
+            let mut prices_for_order = ctx.current_prices.clone();
+            prices_for_order.insert(order.symbol.clone(), order_price);
+
+            let mut projected_portfolio = ctx.portfolio.clone();
+            let base_used = projected_portfolio
+                .calculate_used_margin(&prices_for_order, ctx.instruments);
+            {
+                let positions = std::sync::Arc::make_mut(&mut projected_portfolio.positions);
+                let entry = positions
+                    .entry(order.symbol.clone())
+                    .or_insert(Decimal::ZERO);
+                match order.side {
+                    OrderSide::Buy => *entry += order.quantity,
+                    OrderSide::Sell => *entry -= order.quantity,
+                }
+            }
+            let next_used = projected_portfolio
+                .calculate_used_margin(&prices_for_order, ctx.instruments);
+            let required_margin = (next_used - base_used).max(Decimal::ZERO);
+
+            if required_margin.is_zero() {
+                return Ok(());
             }
 
-            if price_found {
-                // Check Active Buy Orders for committed margin
-                let mut committed_margin = Decimal::ZERO;
-                let mut pending_sell_release = Decimal::ZERO;
-                for o in ctx.active_orders {
-                    if o.side == OrderSide::Buy && o.status == crate::model::OrderStatus::New {
-                        let (o_mult, o_margin_ratio) =
-                            if let Some(instr) = ctx.instruments.get(&o.symbol) {
-                                (instr.multiplier(), instr.margin_ratio())
-                            } else {
-                                (Decimal::ONE, Decimal::ONE)
-                            };
+            let mut committed_margin = Decimal::ZERO;
+            for o in ctx.active_orders {
+                if o.status != crate::model::OrderStatus::New {
+                    continue;
+                }
+                let active_price = if let Some(p) = o.price {
+                    p
+                } else if let Some(p) = ctx.current_prices.get(&o.symbol) {
+                    *p
+                } else {
+                    continue;
+                };
+                let mut prices_for_active = ctx.current_prices.clone();
+                prices_for_active.insert(o.symbol.clone(), active_price);
 
-                        if let Some(p) = o.price {
-                            committed_margin += p * o.quantity * o_mult * o_margin_ratio;
-                        } else if let Some(p) = ctx.current_prices.get(&o.symbol) {
-                            committed_margin += *p * o.quantity * o_mult * o_margin_ratio;
-                        }
-                    } else if o.side == OrderSide::Sell
-                        && o.status == crate::model::OrderStatus::New
-                        && let Some(instr) = ctx.instruments.get(&o.symbol)
-                        && matches!(instr.asset_type, AssetType::Stock | AssetType::Fund)
-                    {
-                        if let Some(p) = o.price {
-                            pending_sell_release += p * o.quantity;
-                        } else if let Some(p) = ctx.current_prices.get(&o.symbol) {
-                            pending_sell_release += *p * o.quantity;
-                        }
+                let before_used = projected_portfolio
+                    .calculate_used_margin(&prices_for_active, ctx.instruments);
+                {
+                    let positions = std::sync::Arc::make_mut(&mut projected_portfolio.positions);
+                    let entry = positions.entry(o.symbol.clone()).or_insert(Decimal::ZERO);
+                    match o.side {
+                        OrderSide::Buy => *entry += o.quantity,
+                        OrderSide::Sell => *entry -= o.quantity,
                     }
                 }
+                let after_used = projected_portfolio
+                    .calculate_used_margin(&prices_for_active, ctx.instruments);
+                committed_margin += (after_used - before_used).max(Decimal::ZERO);
+            }
 
-                // Calculate Free Margin
-                let free_margin = ctx
-                    .portfolio
-                    .calculate_free_margin(ctx.current_prices, ctx.instruments);
+            let free_margin = ctx
+                .portfolio
+                .calculate_free_margin(ctx.current_prices, ctx.instruments);
+            let safety_margin = ctx.config.safety_margin;
+            let safety_factor = Decimal::from_f64(1.0 - safety_margin)
+                .unwrap_or(Decimal::from_f64(0.9999).unwrap());
+            let available_margin = (free_margin * safety_factor - committed_margin).max(Decimal::ZERO);
 
-                // Apply Safety Margin (default 0.0001 or user config)
-                let safety_margin = ctx.config.safety_margin;
-                // Safety factor = 1.0 - margin (e.g., 0.9999)
-                let safety_factor = Decimal::from_f64(1.0 - safety_margin)
-                    .unwrap_or(Decimal::from_f64(0.9999).unwrap());
-
-                // Available Margin = (Free Margin - Committed Margin + Pending Sell Release) * Safety Factor
-                // Note: Free Margin already accounts for Used Margin of existing positions
-                let available_margin =
-                    (free_margin - committed_margin + pending_sell_release) * safety_factor;
-
-                if required_margin > available_margin {
-                    return Err(AkQuantError::OrderError(format!(
-                        "Risk: Insufficient margin. Required: {required_margin}, Available: {available_margin} (Free: {free_margin}, Committed: {committed_margin}, PendingSellRelease: {pending_sell_release}, Safety: {safety_margin})",
-                    )));
-                }
+            if required_margin > available_margin {
+                return Err(AkQuantError::OrderError(format!(
+                    "Risk: Insufficient margin. Required: {required_margin}, Available: {available_margin} (Free: {free_margin}, Committed: {committed_margin}, Safety: {safety_margin})",
+                )));
             }
         }
         Ok(())

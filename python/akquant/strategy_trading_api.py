@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple, cast
 
-from .akquant import OrderStatus, OrderType, TimeInForce
+from .akquant import OrderSide, OrderStatus, OrderType, TimeInForce
 
 
 def resolve_symbol(strategy: Any, symbol: Optional[str]) -> str:
@@ -472,20 +472,99 @@ def get_portfolio_value(strategy: Any) -> float:
     return total_value
 
 
+def _resolve_mark_price(strategy: Any, symbol: str) -> float:
+    price = float(strategy._last_prices.get(symbol, 0.0))
+    if price > 0.0:
+        return price
+    if strategy.current_bar and strategy.current_bar.symbol == symbol:
+        return float(strategy.current_bar.close)
+    if strategy.current_tick and strategy.current_tick.symbol == symbol:
+        return float(strategy.current_tick.price)
+    return 0.0
+
+
+def _calc_position_margin(strategy: Any, symbol: str, quantity: float) -> float:
+    if quantity == 0.0:
+        return 0.0
+    try:
+        inst = strategy.get_instrument(symbol)
+    except Exception:
+        price = _resolve_mark_price(strategy, symbol)
+        return abs(float(quantity) * float(price))
+
+    qty = float(quantity)
+    price = _resolve_mark_price(strategy, symbol)
+    multiplier = float(inst.multiplier)
+    margin_ratio = float(inst.margin_ratio)
+    asset_type = str(inst.asset_type).upper()
+
+    if asset_type == "OPTION":
+        if qty > 0:
+            return 0.0
+        underlying_symbol = (
+            str(inst.underlying_symbol) if inst.underlying_symbol else ""
+        )
+        underlying_price = (
+            _resolve_mark_price(strategy, underlying_symbol)
+            if underlying_symbol
+            else 0.0
+        )
+        if underlying_price > 0.0:
+            margin_per_unit = price + underlying_price * margin_ratio
+        else:
+            margin_per_unit = price * (1.0 + margin_ratio)
+        return max(margin_per_unit, 0.0) * multiplier * abs(qty)
+
+    return abs(qty * price * multiplier) * margin_ratio
+
+
+def _calc_used_margin(strategy: Any) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    total = 0.0
+    for sym, qty in strategy.ctx.positions.items():
+        total += _calc_position_margin(strategy, str(sym), float(qty))
+    return total
+
+
+def _calc_frozen_cash(strategy: Any) -> float:
+    if strategy.ctx is None:
+        return 0.0
+    frozen = 0.0
+    for order in get_open_orders(strategy):
+        qty = max(float(order.quantity) - float(order.filled_quantity), 0.0)
+        if qty <= 0.0:
+            continue
+        symbol = str(order.symbol)
+        current_pos = float(strategy.ctx.positions.get(symbol, 0.0))
+        if order.side == OrderSide.Buy:
+            next_pos = current_pos + qty
+        elif order.side == OrderSide.Sell:
+            next_pos = current_pos - qty
+        else:
+            continue
+        current_margin = _calc_position_margin(strategy, symbol, current_pos)
+        next_margin = _calc_position_margin(strategy, symbol, next_pos)
+        frozen += max(next_margin - current_margin, 0.0)
+    return frozen
+
+
 def get_account(strategy: Any) -> Dict[str, float]:
     """获取账户资金详情快照."""
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
-    cash = strategy.ctx.cash
-    equity = strategy.equity
-    market_value = equity - cash
+    cash = float(strategy.ctx.cash)
+    equity = float(strategy.equity)
+    market_value = float(equity - cash)
+    margin = float(_calc_used_margin(strategy))
+    frozen_cash = float(_calc_frozen_cash(strategy))
     return {
         "cash": cash,
         "equity": equity,
         "market_value": market_value,
-        "frozen_cash": 0.0,
-        "margin": 0.0,
+        "frozen_cash": frozen_cash,
+        "margin": margin,
     }
 
 

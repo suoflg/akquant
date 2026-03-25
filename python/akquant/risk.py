@@ -40,6 +40,9 @@ def apply_risk_config(engine: "Engine", config: Optional[PyRiskConfig]) -> None:
     if config.active is not None:
         rust_config.active = config.active
 
+    if hasattr(config, "check_cash") and config.check_cash is not None:
+        rust_config.check_cash = config.check_cash
+
     if config.safety_margin is not None:
         rust_config.safety_margin = config.safety_margin
 

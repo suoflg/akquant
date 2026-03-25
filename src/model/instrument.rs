@@ -37,6 +37,7 @@ pub struct FuturesInstrument {
 pub struct OptionInstrument {
     pub symbol: String,
     pub multiplier: Decimal,
+    pub margin_ratio: Decimal,
     pub tick_size: Decimal,
     pub option_type: OptionType,
     pub strike_price: Decimal,
@@ -162,6 +163,7 @@ impl Instrument {
             AssetType::Option => InstrumentEnum::Option(OptionInstrument {
                 symbol: symbol.clone(),
                 multiplier: multiplier_val,
+                margin_ratio: margin_val,
                 tick_size: tick_val,
                 option_type: option_type.unwrap_or(OptionType::Call),
                 strike_price: strike_price
@@ -241,6 +243,7 @@ impl Instrument {
     pub fn margin_ratio(&self) -> Decimal {
         match &self.inner {
             InstrumentEnum::Futures(f) => f.margin_ratio,
+            InstrumentEnum::Option(o) => o.margin_ratio,
             InstrumentEnum::Forex(_) => Decimal::new(1, 2), // 0.01 default for Forex
             _ => Decimal::ONE,
         }
