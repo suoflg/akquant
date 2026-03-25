@@ -300,6 +300,7 @@ def dispatch_portfolio_update(strategy: Any) -> None:
         return
 
     strategy._framework_last_portfolio_state = state_key
+    account_snapshot = strategy.get_account()
     snapshot: Dict[str, Any] = {
         "timestamp": current_time,
         "session": session,
@@ -308,7 +309,8 @@ def dispatch_portfolio_update(strategy: Any) -> None:
         "market_value": market_value,
         "positions": positions,
         "available_positions": available_positions,
-        "margin": 0.0,
+        "margin": float(account_snapshot.get("margin", 0.0)),
+        "frozen_cash": float(account_snapshot.get("frozen_cash", 0.0)),
     }
     call_user_callback(strategy, "on_portfolio_update", snapshot, payload=snapshot)
     strategy._framework_portfolio_dirty = False

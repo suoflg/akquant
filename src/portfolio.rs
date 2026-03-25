@@ -76,6 +76,7 @@ fn test_portfolio_calculate_margin() {
         inner: InstrumentEnum::Option(OptionInstrument {
             symbol: "OPT_LONG".to_string(),
             multiplier: Decimal::from(100),
+            margin_ratio: Decimal::from_str("0.2").unwrap(),
             tick_size: Decimal::from_str("0.01").unwrap(),
             option_type: OptionType::Call,
             strike_price: Decimal::from(100),
