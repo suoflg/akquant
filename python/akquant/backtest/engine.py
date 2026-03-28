@@ -221,6 +221,45 @@ def _accepts_strategy_kwarg(
     )
 
 
+def _split_strategy_kwargs(
+    strategy_input: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
+    strategy_kwargs: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Split kwargs into constructor-accepted kwargs and unknown keys."""
+    if not isinstance(strategy_input, type) or not issubclass(strategy_input, Strategy):
+        return strategy_kwargs, []
+
+    try:
+        signature = inspect.signature(strategy_input.__init__)
+    except (TypeError, ValueError):
+        return strategy_kwargs, []
+
+    supports_var_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    if supports_var_kwargs:
+        return strategy_kwargs, []
+
+    accepted_names = {
+        parameter_name
+        for parameter_name, parameter in signature.parameters.items()
+        if parameter_name != "self"
+        and parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    }
+    accepted_kwargs = {
+        key: value for key, value in strategy_kwargs.items() if key in accepted_names
+    }
+    unknown_keys = sorted(
+        key for key in strategy_kwargs.keys() if key not in accepted_names
+    )
+    return accepted_kwargs, unknown_keys
+
+
 def _maybe_warn_deprecated_symbol_argument(
     *,
     symbol: Union[str, List[str]],
@@ -478,6 +517,7 @@ def _load_data_map_from_adapter(
 def _build_strategy_instance(
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None],
     strategy_kwargs: Dict[str, Any],
+    strict_strategy_params: bool,
     logger: Any,
     initialize: Optional[Callable[[Any], None]],
     on_start: Optional[Callable[[Any], None]],
@@ -489,9 +529,32 @@ def _build_strategy_instance(
     context: Optional[Dict[str, Any]],
 ) -> Strategy:
     if isinstance(strategy, type) and issubclass(strategy, Strategy):
+        accepted_kwargs, unknown_keys = _split_strategy_kwargs(
+            strategy, strategy_kwargs
+        )
+        if unknown_keys:
+            unknown_keys_text = ", ".join(unknown_keys)
+            if strict_strategy_params:
+                raise TypeError(
+                    "Unknown strategy constructor parameter(s): "
+                    f"{unknown_keys_text}. Strategy={strategy.__module__}."
+                    f"{strategy.__name__}"
+                )
+            logger.warning(
+                "Ignoring unknown strategy constructor parameter(s): %s. "
+                "Strategy=%s.%s",
+                unknown_keys_text,
+                strategy.__module__,
+                strategy.__name__,
+            )
         try:
-            return cast(Strategy, strategy(**strategy_kwargs))
+            return cast(Strategy, strategy(**accepted_kwargs))
         except TypeError as e:
+            if strict_strategy_params:
+                raise TypeError(
+                    "Failed to instantiate strategy with provided parameters: "
+                    f"{e}. Strategy={strategy.__module__}.{strategy.__name__}"
+                ) from e
             logger.warning(
                 f"Failed to instantiate strategy with provided parameters: {e}. "
                 "Falling back to default constructor (no arguments)."
@@ -752,6 +815,7 @@ def run_backtest(
     broker_profile: Optional[str] = None,
     timer_execution_policy: str = "same_cycle",
     fill_policy: Optional[FillPolicy] = None,
+    strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -793,6 +857,9 @@ def run_backtest(
          "temporal": "same_cycle|next_event"}。
         预留未实现 price_basis: mid_quote、vwap_window、twap_window。
         若提供该参数，则其语义优先于 execution_mode 与 timer_execution_policy。
+    :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
+                                   False 时保持兼容行为（忽略未知参数并在失败时
+                                   回退无参构造）。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
     :param t_plus_one: 是否启用 T+1 交易规则 (默认 False)
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
@@ -1191,18 +1258,6 @@ def run_backtest(
         if config and config.end_time:
             end_time = config.end_time
 
-    # Update kwargs if needed by strategy (optional, can be removed if strategies
-    # don't need it)
-    if start_time:
-        kwargs["start_time"] = start_time
-    if end_time:
-        kwargs["end_time"] = end_time
-
-        # 注意: initial_cash, commission_rate, timezone, show_progress, history_depth
-        # 已经在上方通过优先级逻辑处理过了，这里不需要再覆盖
-
-        # Risk Config injection handled later
-
     # Handle strategy_params explicitly
     if "strategy_params" in kwargs:
         s_params = kwargs.pop("strategy_params")
@@ -1233,6 +1288,10 @@ def run_backtest(
         strategy_loader_options=strategy_loader_options,
     )
     strategy_kwargs = dict(kwargs)
+    if start_time and _accepts_strategy_kwarg(strategy_input, "start_time"):
+        strategy_kwargs["start_time"] = start_time
+    if end_time and _accepts_strategy_kwarg(strategy_input, "end_time"):
+        strategy_kwargs["end_time"] = end_time
     if (
         symbols is not None
         and "symbols" not in strategy_kwargs
@@ -1242,6 +1301,7 @@ def run_backtest(
     strategy_instance = _build_strategy_instance(
         strategy_input,
         strategy_kwargs,
+        strict_strategy_params,
         logger,
         initialize,
         on_start,
@@ -1263,9 +1323,16 @@ def run_backtest(
                 slot_strategy_input, "symbols"
             ):
                 slot_strategy_kwargs["symbols"] = symbols
+            if start_time and _accepts_strategy_kwarg(
+                slot_strategy_input, "start_time"
+            ):
+                slot_strategy_kwargs["start_time"] = start_time
+            if end_time and _accepts_strategy_kwarg(slot_strategy_input, "end_time"):
+                slot_strategy_kwargs["end_time"] = end_time
             slot_strategy_instances[slot_key_str] = _build_strategy_instance(
                 slot_strategy_input,
                 slot_strategy_kwargs,
+                strict_strategy_params,
                 logger,
                 initialize,
                 on_start,
@@ -3185,6 +3252,7 @@ def run_warm_start(
             slot_strategy_instances[slot_key_str] = _build_strategy_instance(
                 slot_strategy_input,
                 {},
+                False,
                 logger,
                 None,
                 None,

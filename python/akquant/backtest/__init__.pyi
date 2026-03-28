@@ -108,6 +108,7 @@ def run_backtest(
     timer_execution_policy: Literal["same_cycle", "next_event"] = ...,
     fill_policy: Optional[FillPolicy] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
+    strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult: ...
 def run_warm_start(
