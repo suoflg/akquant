@@ -4,6 +4,7 @@
 提供类似 Backtrader optstrategy 的网格搜索功能.
 """
 
+import inspect
 import itertools
 import json
 import multiprocessing
@@ -280,6 +281,43 @@ def _assert_parallel_pickleable(
             ) from e
 
 
+def _validate_strategy_param_grid_keys(
+    strategy: Type[Strategy], param_grid: Mapping[str, Sequence[Any]]
+) -> None:
+    """Validate that param_grid keys can be passed to strategy constructor."""
+    try:
+        signature = inspect.signature(strategy.__init__)
+    except (TypeError, ValueError):
+        return
+
+    supports_var_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    if supports_var_kwargs:
+        return
+
+    accepted_names = {
+        parameter_name
+        for parameter_name, parameter in signature.parameters.items()
+        if parameter_name != "self"
+        and parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    }
+    unknown_keys = sorted(
+        key for key in param_grid.keys() if str(key) not in accepted_names
+    )
+    if unknown_keys:
+        unknown_keys_text = ", ".join(str(key) for key in unknown_keys)
+        raise TypeError(
+            "Unknown strategy constructor parameter(s) in param_grid: "
+            f"{unknown_keys_text}. Strategy={strategy.__module__}.{strategy.__name__}"
+        )
+
+
 def _save_result_to_db(
     db_path: str, strategy_name: str, result: OptimizationResult
 ) -> None:
@@ -352,6 +390,10 @@ def run_grid_search(
     :return: 优化结果 (DataFrame 或 List[OptimizationResult])
     """
     backtest_kwargs = dict(kwargs)
+    backtest_kwargs.setdefault("strict_strategy_params", True)
+    strict_strategy_params = bool(backtest_kwargs.get("strict_strategy_params", False))
+    if strict_strategy_params:
+        _validate_strategy_param_grid_keys(strategy, param_grid)
     if "execution_mode" in backtest_kwargs:
         backtest_kwargs["execution_mode"] = _normalize_execution_mode_for_parallel(
             backtest_kwargs["execution_mode"]
@@ -482,6 +524,12 @@ def run_grid_search(
         # 如果 max_workers 为 None，默认使用 os.cpu_count()
         if max_workers is None:
             max_workers = multiprocessing.cpu_count() or 1
+
+        if max_workers > 1:
+            print(
+                "Warning: max_workers>1 uses subprocess workers. Strategy self.log() "
+                "output may not be visible in the main process console."
+            )
 
         # 如果只有一个任务或 worker=1，直接运行
         # (除非设置了 timeout，需要线程支持，仍走单线程逻辑)

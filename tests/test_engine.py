@@ -1,6 +1,7 @@
 import time
 import warnings
 from datetime import date, datetime, timezone
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,6 +42,11 @@ class RegressionStrategy(akquant.Strategy):
 
 class NoopStrategy(akquant.Strategy):
     """No-op strategy used for performance baselines."""
+
+    def __init__(self, dummy: int = 0) -> None:
+        """Initialize no-op strategy parameter holder."""
+        super().__init__()
+        self.dummy = int(dummy)
 
     def on_bar(self, bar: akquant.Bar) -> None:
         """Handle bar events without generating orders."""
@@ -3623,6 +3629,84 @@ def test_run_grid_search_parallel_fail_fast_for_unpickleable_callback() -> None:
         )
 
 
+def test_run_grid_search_strict_params_raises_on_constructor_mismatch() -> None:
+    """Grid search should fail fast when strategy constructor params mismatch."""
+
+    class StrictParamStrategy(akquant.Strategy):
+        def __init__(self, threshold: float = 1.0) -> None:
+            super().__init__()
+            self.threshold = float(threshold)
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            return
+
+    data = _build_benchmark_data(n=20, symbol="OPT_STRICT_PARAMS")
+    with pytest.raises(
+        TypeError, match="Unknown strategy constructor parameter\\(s\\)"
+    ):
+        akquant.run_grid_search(
+            strategy=StrictParamStrategy,
+            param_grid={"not_exist": [1, 2]},
+            data=data,
+            symbol="OPT_STRICT_PARAMS",
+            max_workers=1,
+            return_df=True,
+            show_progress=False,
+        )
+
+
+def test_run_grid_search_parallel_warns_worker_log_visibility(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Parallel grid search should print worker log visibility warning."""
+    data = _build_benchmark_data(n=20, symbol="OPT_LOG_VISIBILITY")
+    _ = akquant.run_grid_search(
+        strategy=NoopStrategy,
+        param_grid={"dummy": [1, 2]},
+        data=data,
+        symbol="OPT_LOG_VISIBILITY",
+        max_workers=2,
+        return_df=True,
+        show_progress=False,
+    )
+    captured = capsys.readouterr()
+    assert "self.log() output may not be visible" in captured.out
+
+
+def test_run_backtest_strict_default_does_not_inject_time_kwargs() -> None:
+    """Default strict mode should not treat time filters as constructor kwargs."""
+
+    class StrictNoTimeInitStrategy(akquant.Strategy):
+        def on_bar(self, bar: akquant.Bar) -> None:
+            return
+
+    symbol = "STRICT_DEFAULT_TIME_FILTER"
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range(
+                "2023-01-01 00:00:00+00:00", periods=3, freq="D", tz="UTC"
+            ),
+            "open": [1.0, 1.0, 1.0],
+            "high": [1.0, 1.0, 1.0],
+            "low": [1.0, 1.0, 1.0],
+            "close": [1.0, 1.0, 1.0],
+            "volume": [1.0, 1.0, 1.0],
+            "symbol": [symbol, symbol, symbol],
+        }
+    )
+
+    result = akquant.run_backtest(
+        data=data,
+        strategy=StrictNoTimeInitStrategy,
+        symbols=[symbol],
+        start_time="2023-01-02 00:00:00+00:00",
+        end_time="2023-01-03 00:00:00+00:00",
+        show_progress=False,
+    )
+
+    assert result is not None
+
+
 def test_run_backtest_accepts_camelcase_execution_mode_string() -> None:
     """run_backtest should accept CamelCase execution mode aliases."""
     symbol = "EXEC_CAMELCASE"
@@ -3687,6 +3771,69 @@ def test_run_grid_search_single_worker_accepts_camelcase_execution_mode() -> Non
         show_progress=False,
     )
 
+    assert isinstance(results, pd.DataFrame)
+    assert len(results) == 1
+    assert float(results.iloc[0]["end_market_value"]) > float(
+        results.iloc[0]["initial_market_value"]
+    )
+
+
+def test_run_grid_search_external_strategy_current_close_effective(
+    tmp_path: Path,
+) -> None:
+    """External imported strategy should keep CurrentClose fill semantics."""
+    module_path = tmp_path / "external_strategy_module.py"
+    module_path.write_text(
+        "\n".join(
+            [
+                "import akquant",
+                "",
+                "class ExternalSingleBuyStrategy(akquant.Strategy):",
+                "    def __init__(self, dummy: int = 0) -> None:",
+                "        super().__init__()",
+                "        self.dummy = int(dummy)",
+                "        self._submitted = False",
+                "",
+                "    def on_bar(self, bar: akquant.Bar) -> None:",
+                "        if self._submitted:",
+                "            return",
+                "        self.buy(symbol=bar.symbol, quantity=1)",
+                "        self._submitted = True",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    spec = spec_from_file_location("external_strategy_module", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    strategy_cls = getattr(module, "ExternalSingleBuyStrategy")
+
+    symbol = "OPT_EXTERNAL_CURRENT_CLOSE"
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2020-01-01", periods=2, freq="min", tz="UTC"),
+            "open": [10.0, 20.0],
+            "high": [10.0, 20.0],
+            "low": [10.0, 20.0],
+            "close": [10.0, 20.0],
+            "volume": [1000.0, 1000.0],
+            "symbol": [symbol, symbol],
+        }
+    )
+
+    results = akquant.run_grid_search(
+        strategy=cast(type[akquant.Strategy], strategy_cls),
+        param_grid={"dummy": [1]},
+        data=data,
+        symbols=[symbol],
+        execution_mode="current_close",
+        initial_cash=15.0,
+        max_workers=1,
+        return_df=True,
+        show_progress=False,
+    )
     assert isinstance(results, pd.DataFrame)
     assert len(results) == 1
     assert float(results.iloc[0]["end_market_value"]) > float(
