@@ -793,6 +793,32 @@ def test_callback_sequence_on_timer() -> None:
     ]
 
 
+def test_now_uses_context_time_for_timer_event() -> None:
+    """Now should use context current_time during timer callbacks."""
+    strategy = SequenceStrategy()
+
+    bar_ctx = _build_ctx_with_order_and_trade("bar_order")
+    bar_ts = pd.Timestamp("2023-01-01 09:59:00", tz="Asia/Shanghai").value
+    bar_ctx.current_time = bar_ts
+    bar = Bar(
+        timestamp=bar_ts,
+        open=100.0,
+        high=100.0,
+        low=100.0,
+        close=100.0,
+        volume=100.0,
+        symbol="AAPL",
+    )
+    strategy._on_bar_event(bar, bar_ctx)
+
+    timer_ctx = _build_ctx_with_order_and_trade("timer_order")
+    timer_ts = pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai").value
+    timer_ctx.current_time = timer_ts
+    strategy._on_timer_event("rebalance", timer_ctx)
+
+    assert strategy.now == pd.Timestamp("2023-01-01 10:00:00", tz="Asia/Shanghai")
+
+
 class WarmStartE2EStrategy(Strategy):
     """Strategy for warm start end-to-end test."""
 

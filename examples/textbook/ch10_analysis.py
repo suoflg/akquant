@@ -121,6 +121,16 @@ def analyze_results(result: Any) -> None:
     else:
         print("无交易记录")
 
+    print("\n" + "=" * 40)
+    print("3. 曲线与报告频率 (Curves & Report Frequency)")
+    print("=" * 40)
+    print(f"权益曲线点数: {len(result.equity_curve)}")
+    print(f"现金曲线点数: {len(result.cash_curve)}")
+    print(f"保证金曲线点数: {len(result.margin_curve)}")
+    print(f"日频权益点数: {len(result.equity_curve_daily)}")
+    print(f"日频现金点数: {len(result.cash_curve_daily)}")
+    print(f"日频保证金点数: {len(result.margin_curve_daily)}")
+
 
 if __name__ == "__main__":
     df = generate_mock_data()
@@ -132,3 +142,6 @@ if __name__ == "__main__":
 
     # 执行分析函数
     analyze_results(result)
+    result.report(
+        filename="ch10_analysis_report_daily.html", show=False, curve_freq="D"
+    )

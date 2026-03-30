@@ -80,14 +80,18 @@
 *   **系统质量指数 (SQN)**: 衡量交易系统的稳定性。SQN 越高，越容易通过加大仓位来获利。一般认为 >2.0 为合格，>3.0 为优秀，>7.0 为圣杯。
 *   **凯利公式 (Kelly Criterion)**: 基于胜率和盈亏比计算的理论最佳仓位比例。注意凯利公式通常过于激进，实盘中常使用 "半凯利" (Half-Kelly) 甚至更低比例。
 
-## 权益与现金曲线 (Curves)
+## 权益、现金与保证金曲线 (Curves)
 
-`result` 对象提供了权益和现金随时间变化的曲线数据，方便进行绘图和分析。
+`result` 对象提供了权益、现金与保证金随时间变化的曲线数据，方便进行绘图和风控分析。
 
 | 属性名称 (Property) | 含义 (Description) | 类型 (Type) | 说明 |
 | :--- | :--- | :--- | :--- |
 | `equity_curve` | 权益曲线 | `pandas.Series` | 索引为时间 (`Datetime`)，值为账户总权益 (`Equity`)。反映账户资产净值的变化趋势。 |
 | `cash_curve` | 现金曲线 | `pandas.Series` | 索引为时间 (`Datetime`)，值为账户可用现金 (`Cash`)。反映账户流动资金的变化情况，有助于资金管理分析。 |
+| `margin_curve` | 保证金曲线 | `pandas.Series` | 索引为时间 (`Datetime`)，值为账户占用保证金 (`Margin`)。适用于杠杆/保证金账户监控。 |
+| `equity_curve_daily` | 日频权益曲线 | `pandas.Series` | `equity_curve` 按日取最后一个点，适合长周期对比与报告提速。 |
+| `cash_curve_daily` | 日频现金曲线 | `pandas.Series` | `cash_curve` 按日取最后一个点。 |
+| `margin_curve_daily` | 日频保证金曲线 | `pandas.Series` | `margin_curve` 按日取最后一个点。 |
 | `daily_returns` | 日收益率 | `pandas.Series` | 索引为时间 (`Datetime`)，值为每日收益率。用于计算夏普、波动率等指标。 |
 
 ## 交易明细 (Trades)
@@ -173,6 +177,7 @@ result.report(
     filename="report.html",
     show=True,  # 设为 True 以自动在浏览器中打开 (默认为 False)
     compact_currency=True,  # 金额列使用 K/M/B 紧凑显示 (默认为 True)
+    curve_freq="raw",  # "raw" 保留原始频率，"D" 使用日频末值
 )
 ```
 
@@ -183,6 +188,7 @@ result.report(
     title="我的策略报告",
     filename="report_raw_amount.html",
     compact_currency=False,
+    curve_freq="D",
 )
 ```
 

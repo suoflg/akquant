@@ -17,9 +17,15 @@ def format_time(strategy: Any, timestamp: int, fmt: str = "%Y-%m-%d %H:%M:%S") -
 def now(strategy: Any) -> Optional[pd.Timestamp]:
     """获取当前回测时间的本地时间表示."""
     ts = None
-    if strategy.current_bar:
+    ctx = getattr(strategy, "ctx", None)
+    if ctx is not None:
+        current_time = int(getattr(ctx, "current_time", 0))
+        if current_time > 0:
+            ts = current_time
+
+    if ts is None and strategy.current_bar:
         ts = strategy.current_bar.timestamp
-    elif strategy.current_tick:
+    elif ts is None and strategy.current_tick:
         ts = strategy.current_tick.timestamp
 
     if ts is not None:

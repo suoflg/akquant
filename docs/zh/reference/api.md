@@ -907,6 +907,11 @@ class RiskConfig:
 *   `executions_df`: 所有成交流水表格（优先使用 Rust IPC/dict 快速导出）。
 *   `positions_df`: 每日持仓详情。
 *   `equity_curve`: 权益曲线 (List[Tuple[timestamp, value]])。
+*   `cash_curve`: 现金曲线 (List[Tuple[timestamp, value]])。
+*   `margin_curve`: 保证金曲线 (List[Tuple[timestamp, value]])。
+*   `equity_curve_daily`: 日频权益曲线（按日末值聚合）。
+*   `cash_curve_daily`: 日频现金曲线（按日末值聚合）。
+*   `margin_curve_daily`: 日频保证金曲线（按日末值聚合）。
 *   `trades`: `ClosedTrade` 对象列表。
 *   `executions`: `Trade` 对象列表 (所有成交流水)。
 *   `snapshots`: 每日 `PositionSnapshot` 列表。
@@ -919,6 +924,7 @@ class RiskConfig:
 *   `orders_by_strategy()`: 按 `owner_strategy_id` 聚合订单统计。
 *   `executions_by_strategy()`: 按 `owner_strategy_id` 聚合成交流水统计。
 *   `get_event_stats()`: 返回流式事件统计摘要（如 `processed_events`、`dropped_event_count`、`callback_error_count`、`backpressure_policy`、`stream_mode`）。
+*   `report(..., curve_freq="raw" | "D")`: 生成 HTML 报告时，可选原始频率或日频末值曲线。
 
 ```python
 orders_by_strategy = result.orders_by_strategy()

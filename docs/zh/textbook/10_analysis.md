@@ -139,7 +139,25 @@ avg_loss = abs(trades[trades['pnl'] < 0]['pnl'].mean())
 pl_ratio = avg_profit / avg_loss
 ```
 
-### 10.5.3 代码示例
+### 10.5.3 曲线与报告频率
+
+在杠杆/保证金场景下，建议同时观察权益、现金与保证金曲线：
+
+```python
+equity = result.equity_curve
+cash = result.cash_curve
+margin = result.margin_curve
+
+# 日频末值（用于长周期对比或加速报告渲染）
+equity_daily = result.equity_curve_daily
+cash_daily = result.cash_curve_daily
+margin_daily = result.margin_curve_daily
+
+# 报告可选使用日频曲线
+result.report(filename="report_daily.html", curve_freq="D")
+```
+
+### 10.5.4 代码示例
 
 下面的代码演示了如何运行策略并生成详细的性能分析报告。
 

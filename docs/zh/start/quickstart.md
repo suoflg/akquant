@@ -274,13 +274,27 @@ result.report(
     show=True,
     filename="report.html",
     compact_currency=True,
+    curve_freq="raw",
 )
 
 result.report(
     show=False,
     filename="report_raw_amount.html",
     compact_currency=False,
+    curve_freq="D",
 )
+```
+
+你也可以直接复用曲线数据做二次分析：
+
+```python
+equity = result.equity_curve
+cash = result.cash_curve
+margin = result.margin_curve
+
+equity_daily = result.equity_curve_daily
+cash_daily = result.cash_curve_daily
+margin_daily = result.margin_curve_daily
 ```
 
 你也可以直接获取结构化分析结果用于二次研究：
