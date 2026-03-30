@@ -844,6 +844,10 @@ Backtest result object.
 *   `positions_df`: Daily position details.
 *   `equity_curve`: Equity curve.
 *   `cash_curve`: Cash curve.
+*   `margin_curve`: Margin curve (used margin over time).
+*   `equity_curve_daily`: Daily end-of-day equity curve.
+*   `cash_curve_daily`: Daily end-of-day cash curve.
+*   `margin_curve_daily`: Daily end-of-day margin curve.
 
 **Analysis Methods:**
 
@@ -853,6 +857,7 @@ Backtest result object.
 *   `orders_by_strategy()`: Strategy-ownership order aggregation by `owner_strategy_id`.
 *   `executions_by_strategy()`: Strategy-ownership execution aggregation by `owner_strategy_id`.
 *   `get_event_stats()`: Unified stream summary stats (for example `processed_events`, `dropped_event_count`, `callback_error_count`, `backpressure_policy`, `stream_mode`).
+*   `report(..., curve_freq="raw" | "D")`: Generate HTML report with raw or daily curve frequency.
 
 ```python
 orders_by_strategy = result.orders_by_strategy()

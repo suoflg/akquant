@@ -17,6 +17,7 @@ result.report(
     filename="report.html",
     show=True,  # Set to True to open in browser automatically (default is False)
     compact_currency=True,  # Format amount columns as K/M/B in report tables
+    curve_freq="raw",  # "raw" keeps all bars, "D" uses end-of-day points
 )
 ```
 
@@ -27,6 +28,7 @@ result.report(
     title="My Strategy Report",
     filename="report_raw_amount.html",
     compact_currency=False,
+    curve_freq="D",
 )
 ```
 
@@ -139,14 +141,24 @@ aqp.plot_pnl_vs_duration(result.trades_df)
 *   **SQN**: System Quality Number. Measures system stability.
 *   **Kelly Criterion**: Optimal position size based on win rate and payoff ratio.
 
-## Equity & Cash Curves
+## Equity, Cash & Margin Curves
 
-The `result` object provides equity and cash curves over time, useful for plotting and analysis.
+The `result` object provides equity/cash/margin curves over time, useful for plotting and risk analysis.
 
 | Property | Description | Type | Explanation |
 | :--- | :--- | :--- | :--- |
 | `equity_curve` | Equity Curve | `pandas.Series` | Index is `Datetime`, values are Total Equity. Shows the trend of net asset value. |
 | `cash_curve` | Cash Curve | `pandas.Series` | Index is `Datetime`, values are Available Cash. Shows the trend of liquid capital, useful for money management analysis. |
+| `margin_curve` | Margin Curve | `pandas.Series` | Index is `Datetime`, values are Used Margin. Useful for leveraged/margin account monitoring. |
+| `equity_curve_daily` | Daily Equity Curve | `pandas.Series` | End-of-day `equity_curve` values, useful for fast reporting and long-horizon comparisons. |
+| `cash_curve_daily` | Daily Cash Curve | `pandas.Series` | End-of-day `cash_curve` values. |
+| `margin_curve_daily` | Daily Margin Curve | `pandas.Series` | End-of-day `margin_curve` values. |
+
+For long intraday backtests, you can speed up HTML report rendering by using daily curve mode:
+
+```python
+result.report(filename="report_daily.html", curve_freq="D")
+```
 
 ## Trades
 

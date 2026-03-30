@@ -240,13 +240,27 @@ result.report(
     show=True,
     filename="report.html",
     compact_currency=True,
+    curve_freq="raw",
 )
 
 result.report(
     show=False,
     filename="report_raw_amount.html",
     compact_currency=False,
+    curve_freq="D",
 )
+```
+
+Curve outputs are also directly reusable:
+
+```python
+equity = result.equity_curve
+cash = result.cash_curve
+margin = result.margin_curve
+
+equity_daily = result.equity_curve_daily
+cash_daily = result.cash_curve_daily
+margin_daily = result.margin_curve_daily
 ```
 
 You can also reuse structured analysis outputs for downstream research:
