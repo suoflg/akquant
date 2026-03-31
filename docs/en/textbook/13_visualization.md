@@ -8,3 +8,8 @@ This chapter is currently maintained in Chinese first.
   - Primary example: [examples/textbook/ch13_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/textbook/ch13_visualization.py)
   - Extended example: [examples/11_plot_visualization.py](https://github.com/akfamily/akquant/blob/main/examples/11_plot_visualization.py)
   - Guide: [Visualization Guide](../guide/visualization.md)
+
+Key update in this chapter:
+
+- `result.report(..., benchmark=...)` now supports benchmark comparison in the built-in HTML report.
+- The report includes cumulative excess return, annual excess return, tracking error, information ratio, beta, and alpha.

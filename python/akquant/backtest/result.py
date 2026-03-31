@@ -1381,15 +1381,16 @@ class BacktestResult:
         title: str = "Backtest Result",
     ) -> Any:
         """
-        Plot the backtest results using Plotly.
+        Plot the backtest results using Plotly dashboard.
 
-        :param symbol: The symbol to highlight positions for.
+        :param symbol: Reserved for backward compatibility.
         :param show: Whether to display the plot immediately.
         :param title: Title of the plot.
         :return: Plotly Figure object.
         """
+        _ = symbol
         try:
-            from .plot import plot_result
+            from ..plot import plot_dashboard
         except ImportError:
             print(
                 "Plotly is not installed. Please install it using `pip install plotly` "
@@ -1397,7 +1398,7 @@ class BacktestResult:
             )
             return None
 
-        return plot_result(result=self, show=show, title=title)
+        return plot_dashboard(result=self, show=show, title=title)
 
     def to_quantstats(self) -> pd.Series:
         """
@@ -1474,6 +1475,7 @@ class BacktestResult:
         market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
         plot_symbol: Optional[str] = None,
         include_trade_kline: bool = True,
+        benchmark: Optional[Union[str, pd.Series]] = None,
         curve_freq: str = "raw",
     ) -> None:
         """
@@ -1488,6 +1490,7 @@ class BacktestResult:
         :param market_data: 可选行情数据，用于绘制 K 线买卖点图
         :param plot_symbol: 可选标的代码，指定 K 线复盘标的
         :param include_trade_kline: 是否在报告中包含 K 线复盘图
+        :param benchmark: 基准收益序列 (pd.Series) 或基准标识字符串
         :param curve_freq: 曲线频率，"raw" 为原始频率，"D" 为日频末值
         """
         # 延迟导入，避免循环引用和非必要的 Plotly 依赖
@@ -1506,5 +1509,6 @@ class BacktestResult:
             market_data=market_data,
             plot_symbol=plot_symbol,
             include_trade_kline=include_trade_kline,
+            benchmark=benchmark,
             curve_freq=curve_freq,
         )

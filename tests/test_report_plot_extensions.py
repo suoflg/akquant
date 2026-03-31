@@ -180,6 +180,69 @@ def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
     assert "exit" in html
 
 
+def test_report_includes_benchmark_comparison_sections(tmp_path: Path) -> None:
+    """Report HTML should include benchmark metrics and cumulative comparison chart."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RoundTripStrategy,
+        symbol="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+    )
+    benchmark_idx = pd.date_range("2023-01-01", periods=5, freq="D", tz="Asia/Shanghai")
+    benchmark_returns = pd.Series(
+        [0.0, 0.001, -0.0005, 0.0008, 0.0],
+        index=benchmark_idx,
+        name="CSI300",
+    )
+    report_path = tmp_path / "report_with_benchmark.html"
+    result.report(
+        filename=str(report_path),
+        show=False,
+        benchmark=benchmark_returns,
+    )
+    html = report_path.read_text(encoding="utf-8")
+    assert "基准对比 (Benchmark Comparison)" in html
+    assert "累计超额收益 (Total Excess)" in html
+    assert "信息比率 (Information Ratio)" in html
+    assert "Cumulative Return Comparison" in html
+    assert "CSI300" in html
+
+
+def test_report_handles_string_benchmark_with_notice(tmp_path: Path) -> None:
+    """Report should render benchmark section notice when benchmark is ticker string."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=NoTradeStrategy,
+        symbol="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        execution_mode="current_close",
+        lot_size=1,
+        show_progress=False,
+    )
+    report_path = tmp_path / "report_with_benchmark_string.html"
+    result.report(
+        filename=str(report_path),
+        show=False,
+        benchmark="000300.SH",
+    )
+    html = report_path.read_text(encoding="utf-8")
+    assert "基准对比 (Benchmark Comparison)" in html
+    assert "未生成基准对比: 暂不支持自动拉取基准: 000300.SH" in html
+
+
 def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
     """Report should still render when there are no trades."""
     _skip_if_no_plotly()

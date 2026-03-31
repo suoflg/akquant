@@ -78,13 +78,25 @@ result = aq.run_backtest(
     data=df,
     strategy=MyStrategy,
     initial_cash=100000.0,
-    symbol="sh600000"
+    symbols="sh600000"
 )
 
 # 打印回测结果
 print("\n=== Backtest Result ===")
 print(result)
+
+# 生成最小基准对比报告
+benchmark_returns = (
+    df.set_index("date")["close"].pct_change().fillna(0.0).rename("SIMPLE_BENCH")
+)
+result.report(
+    filename="quickstart_report.html",
+    show=False,
+    benchmark=benchmark_returns,
+)
 ```
+
+调用 `result.report(..., benchmark=...)` 后，报告会新增“基准对比 (Benchmark Comparison)”区块，展示策略/基准/超额累计收益曲线，以及累计超额收益、年化超额收益、跟踪误差、信息比率、Beta、Alpha 等相对指标。
 
 **运行结果示例:**
 
@@ -205,7 +217,7 @@ def on_event(event):
 result = aq.run_backtest(
     data=df,
     strategy=MyStrategy,
-    symbol="sh600000",
+    symbols="sh600000",
     on_event=on_event,
     show_progress=False,
     stream_progress_interval=10,

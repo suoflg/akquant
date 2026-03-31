@@ -419,6 +419,14 @@ HTML_TEMPLATE = """
             {rolling_metrics_html}
         </div>
 
+        <div class="section-title">基准对比 (Benchmark Comparison)</div>
+        <div class="metrics-grid">
+            {benchmark_metrics_html}
+        </div>
+        <div class="chart-container">
+            {benchmark_chart_html}
+        </div>
+
         <div class="section-title">交易分析 (Trade Analysis)</div>
         <div class="row">
             <div class="col">
@@ -577,6 +585,225 @@ def _build_daily_returns_from_equity(equity_curve: pd.Series) -> pd.Series:
     daily_equity = equity_curve.resample("D").last().ffill()
     returns = daily_equity.pct_change().fillna(0.0)
     return cast(pd.Series, returns)
+
+
+def _normalize_returns_series(series: pd.Series) -> pd.Series:
+    """Normalize return series index to timezone-naive daily datetime index."""
+    cleaned = series.copy()
+    cleaned = pd.to_numeric(cleaned, errors="coerce")
+    cleaned = cast(pd.Series, cleaned.dropna())
+    if cleaned.empty:
+        return cast(pd.Series, cleaned)
+    index = pd.to_datetime(cleaned.index, errors="coerce")
+    valid_mask = pd.Series(index).notna().to_numpy()
+    cleaned = cleaned.loc[valid_mask].copy()
+    index = index[valid_mask]
+    dt_index = cast(pd.DatetimeIndex, index)
+    if dt_index.tz is not None:
+        dt_index = dt_index.tz_convert("UTC").tz_localize(None)
+    cleaned.index = dt_index.normalize()
+    cleaned = cast(pd.Series, cleaned.groupby(cleaned.index).last())
+    cleaned = cast(pd.Series, cleaned.sort_index())
+    return cleaned
+
+
+def _resolve_benchmark_returns(
+    benchmark: Optional[Union[str, pd.Series]], strategy_returns: pd.Series
+) -> tuple[Optional[pd.Series], str]:
+    """Resolve benchmark input into aligned return series and display label."""
+    if benchmark is None:
+        return None, "未提供基准"
+    if isinstance(benchmark, str):
+        return None, f"暂不支持自动拉取基准: {benchmark}"
+    if not isinstance(benchmark, pd.Series):
+        return None, "基准类型错误，需为 pd.Series 或 str"
+    benchmark_label = (
+        str(benchmark.name)
+        if benchmark.name is not None and str(benchmark.name).strip()
+        else "Benchmark"
+    )
+    benchmark_series = _normalize_returns_series(benchmark)
+    if benchmark_series.empty:
+        return None, f"基准序列为空: {benchmark_label}"
+    quantile_95 = float(benchmark_series.abs().quantile(0.95))
+    if quantile_95 > 2.0:
+        benchmark_series = cast(pd.Series, benchmark_series.pct_change().fillna(0.0))
+    strategy_series = _normalize_returns_series(strategy_returns)
+    if strategy_series.empty:
+        return None, f"策略收益为空，无法对齐基准: {benchmark_label}"
+    aligned = cast(
+        pd.Series,
+        benchmark_series.reindex(strategy_series.index).fillna(0.0).astype(float),
+    )
+    if aligned.empty:
+        return None, f"策略与基准无重叠区间: {benchmark_label}"
+    return aligned, benchmark_label
+
+
+def _build_benchmark_sections(
+    strategy_returns: pd.Series,
+    benchmark: Optional[Union[str, pd.Series]],
+    config: dict[str, Any],
+) -> dict[str, str]:
+    """Build benchmark comparison metrics and chart sections."""
+    benchmark_returns, benchmark_label = _resolve_benchmark_returns(
+        benchmark, strategy_returns
+    )
+    if benchmark_returns is None:
+        reason = (
+            "未提供可用基准数据，已跳过相对收益分析。"
+            if benchmark is None
+            else f"未生成基准对比: {benchmark_label}"
+        )
+        empty_html = f'<div class="empty-panel">{reason}</div>'
+        return {
+            "benchmark_metrics_html": empty_html,
+            "benchmark_chart_html": empty_html,
+        }
+    strategy_series = _normalize_returns_series(strategy_returns)
+    aligned = pd.concat(
+        [strategy_series.rename("strategy"), benchmark_returns.rename("benchmark")],
+        axis=1,
+        join="inner",
+    ).dropna()
+    if aligned.empty:
+        empty_html = (
+            '<div class="empty-panel">'
+            "策略与基准收益率无可用重叠样本，已跳过对比。"
+            "</div>"
+        )
+        return {
+            "benchmark_metrics_html": empty_html,
+            "benchmark_chart_html": empty_html,
+        }
+    strategy_aligned = cast(pd.Series, aligned["strategy"].astype(float))
+    benchmark_aligned = cast(pd.Series, aligned["benchmark"].astype(float))
+    excess = cast(pd.Series, strategy_aligned - benchmark_aligned)
+    annual_factor = 252.0
+    annual_excess = float(excess.mean() * annual_factor)
+    tracking_error = float(excess.std(ddof=0) * (annual_factor**0.5))
+    info_ratio = annual_excess / tracking_error if tracking_error > 0 else float("nan")
+    strategy_total = float((1.0 + strategy_aligned).to_numpy(dtype=float).prod())
+    benchmark_total = float((1.0 + benchmark_aligned).to_numpy(dtype=float).prod())
+    total_excess = (
+        strategy_total / benchmark_total - 1.0 if benchmark_total > 0 else float("nan")
+    )
+    mean_strategy = float(strategy_aligned.mean())
+    mean_benchmark = float(benchmark_aligned.mean())
+    variance_benchmark = float(benchmark_aligned.var(ddof=0))
+    beta = float("nan")
+    alpha = float("nan")
+    if variance_benchmark > 0:
+        covariance = float(
+            (
+                (strategy_aligned - mean_strategy)
+                * (benchmark_aligned - mean_benchmark)
+            ).mean()
+        )
+        beta = covariance / variance_benchmark
+        alpha = (mean_strategy - beta * mean_benchmark) * annual_factor
+
+    def metric_color(value: float) -> str:
+        if pd.isna(value):
+            return ""
+        if value > 0:
+            return "positive"
+        if value < 0:
+            return "negative"
+        return ""
+
+    def metric_fmt(value: float, kind: str) -> str:
+        if pd.isna(value):
+            return "N/A"
+        if kind == "pct":
+            return f"{value * 100:.2f}%"
+        return f"{value:.4f}"
+
+    benchmark_metrics = [
+        ("基准名称 (Benchmark)", benchmark_label, ""),
+        (
+            "累计超额收益 (Total Excess)",
+            metric_fmt(total_excess, "pct"),
+            metric_color(total_excess),
+        ),
+        (
+            "年化超额收益 (Annual Excess)",
+            metric_fmt(annual_excess, "pct"),
+            metric_color(annual_excess),
+        ),
+        (
+            "跟踪误差 (Tracking Error)",
+            metric_fmt(tracking_error, "pct"),
+            "",
+        ),
+        (
+            "信息比率 (Information Ratio)",
+            metric_fmt(info_ratio, "ratio"),
+            metric_color(info_ratio),
+        ),
+        (
+            "Beta",
+            metric_fmt(beta, "ratio"),
+            metric_color(beta - 1.0 if not pd.isna(beta) else beta),
+        ),
+        (
+            "Alpha (Annual)",
+            metric_fmt(alpha, "pct"),
+            metric_color(alpha),
+        ),
+    ]
+    metrics_html = ""
+    for label, value, color_cls in benchmark_metrics:
+        metrics_html += (
+            f'<div class="metric-card"><div class="metric-value {color_cls}">{value}'
+            f'</div><div class="metric-label">{label}</div></div>'
+        )
+    cumulative_strategy = cast(pd.Series, (1.0 + strategy_aligned).cumprod() - 1.0)
+    cumulative_benchmark = cast(pd.Series, (1.0 + benchmark_aligned).cumprod() - 1.0)
+    cumulative_excess = cast(pd.Series, cumulative_strategy - cumulative_benchmark)
+    go = __import__("plotly.graph_objects", fromlist=["Figure"])
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=cumulative_strategy.index,
+            y=cumulative_strategy,
+            mode="lines",
+            name="策略累计收益",
+            line=dict(color="#1f77b4", width=2),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=cumulative_benchmark.index,
+            y=cumulative_benchmark,
+            mode="lines",
+            name=f"基准累计收益 ({benchmark_label})",
+            line=dict(color="#7f8c8d", width=2, dash="dash"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=cumulative_excess.index,
+            y=cumulative_excess,
+            mode="lines",
+            name="累计超额收益",
+            line=dict(color="#c0392b", width=2),
+        )
+    )
+    fig.update_layout(
+        title="策略与基准累计收益对比 (Cumulative Return Comparison)",
+        template="plotly_white",
+        yaxis=dict(tickformat=".2%"),
+        height=420,
+        margin=dict(l=20, r=20, t=60, b=30),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="x unified",
+    )
+    chart_html = fig.to_html(full_html=False, include_plotlyjs=False, config=config)
+    return {
+        "benchmark_metrics_html": metrics_html,
+        "benchmark_chart_html": chart_html,
+    }
 
 
 def _build_summary_context(result: Any, curve_freq: str = "raw") -> dict[str, str]:
@@ -780,6 +1007,7 @@ def _build_chart_html_sections(
     market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
     plot_symbol: Optional[str] = None,
     include_trade_kline: bool = True,
+    benchmark: Optional[Union[str, pd.Series]] = None,
     curve_freq: str = "raw",
 ) -> dict[str, str]:
     """Build chart HTML sections from plot figures."""
@@ -819,6 +1047,11 @@ def _build_chart_html_sections(
         fig_yearly.to_html(full_html=False, include_plotlyjs=False, config=config)
         if fig_yearly
         else "<div>暂无数据</div>"
+    )
+    benchmark_sections = _build_benchmark_sections(
+        strategy_returns=returns_series,
+        benchmark=benchmark,
+        config=config,
     )
 
     fig_dist = plot_trades_distribution(result.trades_df)
@@ -1264,6 +1497,8 @@ def _build_chart_html_sections(
         "yearly_returns_html": yearly_returns_html,
         "returns_dist_html": returns_dist_html,
         "rolling_metrics_html": rolling_metrics_html,
+        "benchmark_metrics_html": benchmark_sections["benchmark_metrics_html"],
+        "benchmark_chart_html": benchmark_sections["benchmark_chart_html"],
         "trades_dist_html": trades_dist_html,
         "pnl_duration_html": pnl_duration_html,
         "strategy_kline_html": strategy_kline_html,
@@ -1608,6 +1843,7 @@ def plot_report(
     market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
     plot_symbol: Optional[str] = None,
     include_trade_kline: bool = True,
+    benchmark: Optional[Union[str, pd.Series]] = None,
     curve_freq: str = "raw",
 ) -> None:
     """
@@ -1619,6 +1855,7 @@ def plot_report(
     3. 交易分布与持仓时间分析 (Trade Analysis)
 
     :param compact_currency: 是否将金额列按 K/M/B 紧凑显示
+    :param benchmark: 基准收益序列 (pd.Series) 或基准标识字符串
     :param curve_freq: 曲线频率，"raw" 为原始频率，"D" 为日频末值
     """
     if not check_plotly():
@@ -1636,6 +1873,7 @@ def plot_report(
         market_data=market_data,
         plot_symbol=plot_symbol,
         include_trade_kline=include_trade_kline,
+        benchmark=benchmark,
         curve_freq=normalized_curve_freq,
     )
     analysis_sections = _build_analysis_table_sections(
@@ -1658,6 +1896,8 @@ def plot_report(
         yearly_returns_html=chart_sections["yearly_returns_html"],
         returns_dist_html=chart_sections["returns_dist_html"],
         rolling_metrics_html=chart_sections["rolling_metrics_html"],
+        benchmark_metrics_html=chart_sections["benchmark_metrics_html"],
+        benchmark_chart_html=chart_sections["benchmark_chart_html"],
         trades_dist_html=chart_sections["trades_dist_html"],
         pnl_duration_html=chart_sections["pnl_duration_html"],
         strategy_kline_html=chart_sections["strategy_kline_html"],
