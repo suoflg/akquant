@@ -64,30 +64,48 @@ python examples/textbook/ch13_visualization.py
 
 ## 13.3 AKQuant 内置绘图工具
 
-`AKQuant` 提供了简洁的 API，基于 `matplotlib` 生成核心图表。
+`AKQuant` 提供了统一的 Plotly 报告接口，可直接输出交互式 HTML，并内置基准对比分析模块。
 
 ### 13.3.1 基础绘图
 
 ```python
 import akquant as aq
-import matplotlib.pyplot as plt
 
 # 运行回测
 result = aq.run_backtest(...)
 
-# 绘制权益曲线和回撤图
-aq.plot_result(result, title="Strategy Performance")
-plt.show()
+# 生成交互式仪表盘
+fig = result.plot(show=False, title="Strategy Dashboard")
+fig.write_html("dashboard.html")
 ```
 
-### 13.3.2 交互式图表 (Plotly)
+### 13.3.2 策略报告与基准对比 (Plotly)
 
-在 Jupyter Notebook 环境中，推荐使用交互式图表，可以缩放、拖拽，查看具体某天的持仓。
+`result.report` 会生成整合版策略报告，默认包含：
+
+1. 核心指标与权益回撤图
+2. 收益分布与滚动指标
+3. 交易复盘图（提供行情数据时）
+4. 基准对比模块（传入 `benchmark` 时）
 
 ```python
-# 生成 HTML 交互式报告
-result.plot(engine="plotly", filename="backtest.html")
+benchmark_returns = benchmark_df["close"].pct_change().fillna(0.0)
+
+result.report(
+    title="Alpha Strategy Report",
+    filename="akquant_report.html",
+    show=False,
+    benchmark=benchmark_returns,
+)
 ```
+
+基准对比模块会展示以下相对指标：
+
+- 累计超额收益 (Total Excess)
+- 年化超额收益 (Annual Excess)
+- 跟踪误差 (Tracking Error)
+- 信息比率 (Information Ratio)
+- Beta / Alpha
 
 ### 13.3.3 信用账户强平审计视图
 
@@ -122,26 +140,16 @@ pip install quantstats
 ### 13.4.2 生成综合报告
 
 ```python
-import quantstats as qs
-
-# 1. 获取收益率序列 (pd.Series)
-returns = result.metrics_df.loc['daily_returns']
-# 注意：akquant result 对象通常需要转换，这里假设有一个辅助方法
-# 或者直接从 equity curve 计算:
-returns = result.equity_curve.pct_change().dropna()
-
-# 2. 生成 HTML 报告
-qs.reports.html(
-    returns,
-    benchmark="000300.SH", # 对比沪深300
-    output='stats.html',
-    title='Alpha Strategy Report'
+result.report_quantstats(
+    benchmark="000300.SH",
+    filename="qs_stats.html",
+    title="Alpha Strategy QuantStats Report",
 )
 ```
 
 ## 13.5 完整示例代码
 
-下面的代码演示了如何运行策略，并分别使用 `AKQuant` 内置工具和 `QuantStats` 生成可视化报告。
+下面的代码演示了如何运行策略，并使用 `AKQuant` 报告接口生成包含基准对比的可视化报告。
 
 ```python
 --8<-- "examples/textbook/ch13_visualization.py"

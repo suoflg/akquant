@@ -54,6 +54,24 @@ result = run_backtest(
 print(result)  # 跟 print(result.metrics_df) 等效
 ```
 
+## 基准对比快览
+
+完成最小回测后，可以立即生成带基准对比的 HTML 报告：
+
+```python
+benchmark_returns = (
+    df.set_index("date")["close"].pct_change().fillna(0.0).rename("SIMPLE_BENCH")
+)
+
+result.report(
+    filename="quickstart_report.html",
+    show=False,
+    benchmark=benchmark_returns,
+)
+```
+
+报告会新增“基准对比 (Benchmark Comparison)”区块，展示策略/基准/超额累计收益曲线，以及累计超额收益、年化超额收益、跟踪误差、信息比率、Beta、Alpha 等指标。
+
 运行结果中，你会看到该策略的完整绩效评价指标：
 
 ```text

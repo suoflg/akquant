@@ -54,6 +54,24 @@ result = run_backtest(
 print(result)  # Equivalent to print(result.metrics_df)
 ```
 
+## Benchmark Quick View
+
+After the minimal backtest, you can generate an HTML report with benchmark comparison:
+
+```python
+benchmark_returns = (
+    df.set_index("date")["close"].pct_change().fillna(0.0).rename("SIMPLE_BENCH")
+)
+
+result.report(
+    filename="quickstart_report.html",
+    show=False,
+    benchmark=benchmark_returns,
+)
+```
+
+The report will add a “Benchmark Comparison” section with strategy/benchmark/excess cumulative curves and relative metrics, including total excess return, annual excess return, tracking error, information ratio, beta, and alpha.
+
 In the output, you will see the complete performance metrics of the strategy:
 
 ```text

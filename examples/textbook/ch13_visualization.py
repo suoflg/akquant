@@ -1,16 +1,12 @@
 """
 第 13 章：可视化与报告 (Visualization).
 
-本示例展示了如何将回测结果可视化，生成包含权益曲线、回撤图和日收益分布的综合图表。
-AKQuant 内置了基于 `matplotlib` 的绘图工具，可以一键生成专业级报表。
-
-依赖：
-需要安装 matplotlib: `pip install matplotlib`
+本示例展示如何使用 AKQuant 的 Plotly 报告能力，并加入基准对比分析。
 
 演示内容：
 1. 运行一个简单的策略。
-2. 使用 `aq.plot_result` 生成可视化图表。
-3. 保存图表为图片文件。
+2. 构造一个简单基准收益序列。
+3. 使用 `result.report(..., benchmark=...)` 生成交互式 HTML 报告。
 """
 
 import akquant as aq
@@ -80,22 +76,18 @@ if __name__ == "__main__":
         strategy=PlotStrategy, data=df, initial_cash=100_000, commission_rate=0.0003
     )
 
-    print("回测完成，正在生成图表...")
+    print("回测完成，正在生成带基准对比的报告...")
 
-    try:
-        # 使用 akquant 内置的绘图函数
-        # filename: 如果指定，将保存为文件而不是直接弹窗显示
-        aq.plot_result(
-            result,
-            filename="backtest_report.png",
-            title="Moving Average Strategy Performance",
-        )
-        print("图表已保存至: backtest_report.png")
-
-        # 如果在 Jupyter Notebook 中，可以直接显示
-        # result.plot()
-
-    except ImportError:
-        print("绘图失败: 请确保安装了 matplotlib (pip install matplotlib)")
-    except Exception as e:
-        print(f"绘图过程中发生错误: {e}")
+    benchmark_returns = (
+        df.set_index("date")["close"].pct_change().fillna(0.0).rename("MOCK_BENCH")
+    )
+    result.report(
+        title="AKQuant Chapter 13 - Visualization with Benchmark",
+        filename="ch13_report_with_benchmark.html",
+        show=False,
+        market_data=df,
+        plot_symbol="MOCK_PLOT",
+        include_trade_kline=True,
+        benchmark=benchmark_returns,
+    )
+    print("报告已保存至: ch13_report_with_benchmark.html")
