@@ -59,7 +59,7 @@ def test_account_max_drawdown_rule_rejects_new_orders() -> None:
     result = run_backtest(
         data=bars,
         strategy=AlwaysBuyStrategy,
-        symbol="RISK",
+        symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
         execution_mode="current_close",
@@ -82,7 +82,7 @@ def test_account_max_daily_loss_rule_rejects_new_orders_same_day() -> None:
     result = run_backtest(
         data=bars,
         strategy=AlwaysBuyStrategy,
-        symbol="RISK",
+        symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
         execution_mode="current_close",
@@ -105,7 +105,7 @@ def test_account_stop_loss_threshold_rule_rejects_new_orders() -> None:
     result = run_backtest(
         data=bars,
         strategy=AlwaysBuyStrategy,
-        symbol="RISK",
+        symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
         execution_mode="current_close",
@@ -239,7 +239,7 @@ def test_margin_account_allows_short_sell_when_enabled() -> None:
     result = run_backtest(
         data=bars,
         strategy=ShortStockStrategy,
-        symbol="SHORTABLE",
+        symbols="SHORTABLE",
         initial_cash=100000.0,
         show_progress=False,
         execution_mode="current_close",
@@ -283,7 +283,7 @@ def test_margin_account_stock_buy_uses_initial_margin_ratio() -> None:
     result = run_backtest(
         data=bars,
         strategy=LeveragedBuyStrategy,
-        symbol="MARGIN_BUY",
+        symbols="MARGIN_BUY",
         initial_cash=100000.0,
         show_progress=False,
         execution_mode="current_close",
@@ -336,7 +336,7 @@ def test_margin_account_daily_financing_interest_is_deducted() -> None:
     run_backtest(
         data=bars,
         strategy=FinancingInterestStrategy,
-        symbol="INTEREST",
+        symbols="INTEREST",
         initial_cash=10000.0,
         show_progress=False,
         execution_mode="current_close",
@@ -388,7 +388,7 @@ def test_margin_account_force_liquidation_on_maintenance_breach() -> None:
     result = run_backtest(
         data=bars,
         strategy=ForceLiquidationStrategy,
-        symbol="LIQ",
+        symbols="LIQ",
         initial_cash=10000.0,
         show_progress=False,
         execution_mode="current_close",

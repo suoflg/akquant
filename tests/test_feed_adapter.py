@@ -247,7 +247,7 @@ def test_run_backtest_accepts_resampled_adapter() -> None:
     result = akquant.run_backtest(
         data=adapter,
         strategy=OneShotBuyStrategy,
-        symbol="RBK",
+        symbols="RBK",
         execution_mode="current_close",
         initial_cash=100000.0,
         commission_rate=0.0,

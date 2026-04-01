@@ -127,7 +127,7 @@ def test_report_contains_new_analysis_sections(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_data(),
         strategy=RoundTripStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -155,7 +155,7 @@ def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_data(),
         strategy=RoundTripStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -186,7 +186,7 @@ def test_report_includes_benchmark_comparison_sections(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_data(),
         strategy=RoundTripStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -222,7 +222,7 @@ def test_report_handles_string_benchmark_with_notice(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_data(),
         strategy=NoTradeStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -249,7 +249,7 @@ def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_data(),
         strategy=NoTradeStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -272,7 +272,7 @@ def test_plot_functions_return_figures_for_non_empty_result() -> None:
     result = run_backtest(
         data=_build_data(),
         strategy=RoundTripStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -300,7 +300,7 @@ def test_daily_curve_properties_reduce_intraday_points() -> None:
     result = run_backtest(
         data=_build_intraday_data(),
         strategy=NoTradeStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -325,7 +325,7 @@ def test_report_accepts_curve_freq_daily(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_intraday_data(),
         strategy=NoTradeStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -346,7 +346,7 @@ def test_report_rejects_invalid_curve_freq(tmp_path: Path) -> None:
     result = run_backtest(
         data=_build_intraday_data(),
         strategy=NoTradeStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,
@@ -396,7 +396,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
     result = run_backtest(
         data=bars,
         strategy=MarginLiquidationStrategy,
-        symbol="LIQ",
+        symbols="LIQ",
         initial_cash=10000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,

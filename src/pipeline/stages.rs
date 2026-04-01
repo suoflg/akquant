@@ -821,6 +821,7 @@ impl Processor for ExecutionProcessor {
             ExecutionPhase::PreStrategy => matches!(
                 engine.execution_mode,
                 ExecutionMode::NextOpen
+                    | ExecutionMode::NextClose
                     | ExecutionMode::NextAverage
                     | ExecutionMode::NextHighLowMid
             ),

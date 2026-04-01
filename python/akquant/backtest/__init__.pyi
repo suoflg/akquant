@@ -1,5 +1,16 @@
 import os
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypedDict, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    TypedDict,
+    Union,
+)
 
 import pandas as pd
 
@@ -40,6 +51,7 @@ class FillPolicy(TypedDict, total=False):
     price_basis: Literal[
         "next_open",
         "current_close",
+        "next_close",
         "ohlc4",
         "hl2",
         "mid_quote",
@@ -54,13 +66,12 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = ...,
     strategy_loader: Optional[str] = ...,
     strategy_loader_options: Optional[Dict[str, Any]] = ...,
-    symbol: Union[str, List[str]] = ...,
-    symbols: Optional[Union[str, List[str]]] = ...,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = ...,
     initial_cash: Optional[float] = ...,
     commission_rate: Optional[float] = ...,
-    stamp_tax_rate: float = ...,
-    transfer_fee_rate: float = ...,
-    min_commission: float = ...,
+    stamp_tax_rate: Optional[float] = ...,
+    transfer_fee_rate: Optional[float] = ...,
+    min_commission: Optional[float] = ...,
     slippage: Optional[float] = ...,
     volume_limit_pct: Optional[float] = ...,
     execution_mode: Union[ExecutionMode, str] = ...,
@@ -115,8 +126,7 @@ def run_warm_start(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = ...,
     show_progress: bool = ...,
-    symbol: Union[str, List[str]] = ...,
-    symbols: Optional[Union[str, List[str]]] = ...,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = ...,
     strategy_runtime_config: Optional[
         Union[StrategyRuntimeConfig, Dict[str, Any]]
     ] = ...,

@@ -29,6 +29,17 @@ from .strategy import Strategy
 _WORKER_LOG_QUEUE: Any = None
 
 
+def _normalize_backtest_symbol_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(kwargs)
+    has_symbol = "symbol" in normalized
+    has_symbols = "symbols" in normalized
+    if has_symbol and has_symbols:
+        raise ValueError("pass only one of `symbol` or `symbols`")
+    if has_symbol:
+        normalized["symbols"] = normalized.pop("symbol")
+    return normalized
+
+
 @dataclass
 class OptimizationResult:
     """
@@ -59,6 +70,7 @@ def _run_backtest_safe(
 ) -> None:
     """Run backtest in a thread and store result/exception."""
     try:
+        kwargs = _normalize_backtest_symbol_kwargs(kwargs)
         # 运行回测
         # 注意：show_progress 在并行时最好关掉
         kwargs["show_progress"] = False
@@ -408,7 +420,7 @@ def run_grid_search(
     :param kwargs: 传递给 run_backtest 的其他参数 (symbol, cash, etc.)
     :return: 优化结果 (DataFrame 或 List[OptimizationResult])
     """
-    backtest_kwargs = dict(kwargs)
+    backtest_kwargs = _normalize_backtest_symbol_kwargs(dict(kwargs))
     backtest_kwargs.setdefault("strict_strategy_params", True)
     strict_strategy_params = bool(backtest_kwargs.get("strict_strategy_params", False))
     if strict_strategy_params:
@@ -713,6 +725,7 @@ def run_walk_forward(
     """
     if not isinstance(data, pd.DataFrame):
         raise ValueError("run_walk_forward requires data to be a pandas DataFrame.")
+    kwargs = _normalize_backtest_symbol_kwargs(kwargs)
 
     total_len = len(data)
     if total_len < train_period + test_period:

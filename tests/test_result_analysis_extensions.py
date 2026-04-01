@@ -107,7 +107,7 @@ def test_exposure_df_and_capacity_df_basic_properties() -> None:
     result = run_backtest(
         data=_build_single_symbol_data(),
         strategy=ExposureCapacityStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=200000.0,
         commission_rate=0.0,
         stamp_tax_rate=0.0,

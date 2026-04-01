@@ -211,6 +211,7 @@ impl TimeInForce {
 pub enum ExecutionMode {
     CurrentClose,   // 当前Bar收盘价成交 (Cheat-on-Close)
     NextOpen,       // 下一根Bar开盘价成交 (Real-world)
+    NextClose,      // 下一根Bar收盘价成交
     NextAverage,    // 下一根Bar均价成交 (TWAP/VWAP 模拟)
     NextHighLowMid, // 下一根Bar最高价和最低价的中间价成交
 }

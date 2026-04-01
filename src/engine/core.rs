@@ -1031,7 +1031,7 @@ impl Engine {
         pipeline.add_processor(Box::new(DataProcessor::new()));
 
         // 3. Pre-Strategy Execution (Match Pending Orders)
-        // For NextOpen/NextAverage: Matches orders generated in previous bar against current bar.
+        // For NextOpen/NextClose/NextAverage: Matches orders generated in previous bar against current bar.
         pipeline.add_processor(Box::new(ExecutionProcessor::new(
             ExecutionPhase::PreStrategy,
         )));

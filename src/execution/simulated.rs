@@ -521,6 +521,72 @@ mod tests {
     }
 
     #[test]
+    fn test_execution_market_order_next_close() {
+        let mut sim = SimulatedExecutionClient::new();
+        let instruments = create_test_instruments();
+        let order = create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Buy,
+            crate::model::OrderType::Market,
+            Decimal::from(100),
+            None,
+        );
+        sim.on_order(order);
+
+        let bar = create_test_bar(
+            "AAPL",
+            Decimal::from(100),
+            Decimal::from(105),
+            Decimal::from(95),
+            Decimal::from(102),
+        );
+        let event = Event::Bar(bar);
+
+        let portfolio = crate::portfolio::Portfolio {
+            cash: Decimal::from(100000),
+            positions: HashMap::new().into(),
+            available_positions: HashMap::new().into(),
+        };
+        let last_prices = HashMap::new();
+        let risk_manager = crate::risk::RiskManager::new();
+
+        let china_config = crate::market::ChinaMarketConfig {
+            stock: Some(crate::market::stock::StockConfig::default()),
+            ..Default::default()
+        };
+        let market_config = crate::market::MarketConfig::China(china_config);
+        let market_model = market_config.create_model();
+
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &last_prices,
+            market_model: market_model.as_ref(),
+            execution_mode: ExecutionMode::NextClose,
+            bar_index: 0,
+            current_time: 0,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &risk_manager.config,
+        };
+
+        let events = sim.on_event(&event, &ctx);
+        let trades: Vec<crate::model::Trade> = events
+            .iter()
+            .filter_map(|e| {
+                if let Event::ExecutionReport(_, Some(trade)) = e {
+                    Some(trade.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].price, Decimal::from(102));
+    }
+
+    #[test]
     fn test_execution_limit_buy() {
         let mut sim = SimulatedExecutionClient::new();
         let instruments = create_test_instruments();

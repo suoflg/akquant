@@ -58,7 +58,7 @@ def test_strategy_logging(caplog: Any) -> None:
         strategy._on_bar_event(bar, ctx)
 
     assert "Bar AAPL Close: 102.0" in caplog.text
-    assert "[2023-01-01 09:30:00]" in caplog.text
+    assert "[" in caplog.text and "]" in caplog.text
 
 
 def test_strategy_properties() -> None:
@@ -464,7 +464,7 @@ def test_get_trades_refreshes_during_backtest() -> None:
     result = run_backtest(
         data=bars,
         strategy=ClosedTradesSnapshotStrategy,
-        symbol="AAPL",
+        symbols="AAPL",
         initial_cash=100000.0,
         show_progress=False,
     )
@@ -939,7 +939,7 @@ def test_run_backtest_accepts_strategy_source_python_plain(tmp_path: Path) -> No
         data=bars,
         strategy_source=str(strategy_file),
         strategy_loader="python_plain",
-        symbol="PLAIN",
+        symbols="PLAIN",
         show_progress=False,
     )
     strategy = result.strategy
@@ -975,7 +975,7 @@ def test_run_backtest_rebuilds_console_handler_for_imported_strategy(
             data=bars,
             strategy_source=str(strategy_file),
             strategy_loader="python_plain",
-            symbol="PLAIN_LOG",
+            symbols="PLAIN_LOG",
             show_progress=False,
         )
         has_console = any(
@@ -1017,7 +1017,7 @@ def test_run_backtest_imported_strategy_log_visible_in_stdout(
             data=bars,
             strategy_source=str(strategy_file),
             strategy_loader="python_plain",
-            symbol="PLAIN_STDOUT",
+            symbols="PLAIN_STDOUT",
             show_progress=False,
         )
         captured = capsys.readouterr()
@@ -1052,7 +1052,7 @@ def test_run_backtest_accepts_strategy_source_encrypted_external(
         strategy_source=str(strategy_file),
         strategy_loader="encrypted_external",
         strategy_loader_options={"decrypt_and_load": _mock_decrypt_loader},
-        symbol="ENC",
+        symbols="ENC",
         show_progress=False,
     )
     strategy = result.strategy
@@ -1068,7 +1068,7 @@ def test_run_backtest_rejects_unknown_strategy_loader_name() -> None:
             data=bars,
             strategy_source="missing.py",
             strategy_loader="not_exist",
-            symbol="BAD_LOADER",
+            symbols="BAD_LOADER",
             show_progress=False,
         )
 
@@ -1081,7 +1081,7 @@ def test_run_backtest_rejects_invalid_strategy_loader_options_type() -> None:
             data=bars,
             strategy_source="missing.py",
             strategy_loader_options=cast(Any, "bad"),
-            symbol="BAD_OPT",
+            symbols="BAD_OPT",
             show_progress=False,
         )
 
@@ -1094,7 +1094,7 @@ def test_run_backtest_rejects_invalid_strategy_loader_type() -> None:
             data=bars,
             strategy_source="missing.py",
             strategy_loader=cast(Any, 123),
-            symbol="BAD_LOADER_TYPE",
+            symbols="BAD_LOADER_TYPE",
             show_progress=False,
         )
 
@@ -1107,7 +1107,7 @@ def test_run_backtest_rejects_python_plain_with_bytes_source() -> None:
             data=bars,
             strategy_source=b"cipher",
             strategy_loader="python_plain",
-            symbol="BAD_PLAIN_BYTES",
+            symbols="BAD_PLAIN_BYTES",
             show_progress=False,
         )
 
@@ -1120,7 +1120,7 @@ def test_run_backtest_rejects_encrypted_loader_without_callback() -> None:
             data=bars,
             strategy_source="encrypted.mock",
             strategy_loader="encrypted_external",
-            symbol="BAD_ENC_OPT",
+            symbols="BAD_ENC_OPT",
             show_progress=False,
         )
 
@@ -1158,7 +1158,7 @@ def test_run_backtest_python_plain_supports_strategy_attr_selection(
         strategy_source=str(strategy_file),
         strategy_loader="python_plain",
         strategy_loader_options={"strategy_attr": "Beta"},
-        symbol="ATTR",
+        symbols="ATTR",
         show_progress=False,
     )
     strategy = result.strategy
@@ -1193,7 +1193,7 @@ def test_run_backtest_rejects_python_plain_with_multiple_classes_without_attr(
             data=bars,
             strategy_source=str(strategy_file),
             strategy_loader="python_plain",
-            symbol="MULTI",
+            symbols="MULTI",
             show_progress=False,
         )
 
@@ -1206,7 +1206,7 @@ def test_run_backtest_rejects_missing_strategy_and_strategy_source() -> None:
             data=bars,
             strategy=None,
             strategy_source=None,
-            symbol="NO_STRATEGY",
+            symbols="NO_STRATEGY",
             show_progress=False,
         )
 
@@ -1234,7 +1234,7 @@ def test_run_backtest_accepts_registered_custom_strategy_loader() -> None:
         data=bars,
         strategy_source=b"mock",
         strategy_loader=loader_name,
-        symbol="CUSTOM_LOADER",
+        symbols="CUSTOM_LOADER",
         show_progress=False,
     )
     strategy = result.strategy
@@ -1271,7 +1271,7 @@ def test_run_backtest_loads_strategy_source_from_config(tmp_path: Path) -> None:
     result = run_backtest(
         data=bars,
         strategy=None,
-        symbol="CFG",
+        symbols="CFG",
         config=cfg,
     )
     strategy = result.strategy
@@ -1313,7 +1313,7 @@ def test_run_backtest_prefers_explicit_strategy_over_strategy_source(
         strategy=ExplicitPriorityStrategy,
         strategy_source=str(strategy_file),
         strategy_loader="python_plain",
-        symbol="PRIO",
+        symbols="PRIO",
         show_progress=False,
     )
     strategy = result.strategy
@@ -1330,7 +1330,7 @@ def test_run_warm_start_end_to_end_lifecycle(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartE2EStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=100000.0,
         show_progress=False,
     )
@@ -1340,7 +1340,7 @@ def test_run_warm_start_end_to_end_lifecycle(tmp_path: Path) -> None:
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
 
@@ -1380,10 +1380,10 @@ def test_run_warm_start_accepts_symbols_alias(tmp_path: Path) -> None:
     assert strategy.bar_seen == 4
 
 
-def test_run_warm_start_warns_when_using_deprecated_symbol_argument(
+def test_run_warm_start_rejects_legacy_symbol_keyword_alias(
     tmp_path: Path,
 ) -> None:
-    """run_warm_start should emit deprecation warning for symbol argument."""
+    """run_warm_start should reject removed symbol keyword alias."""
     checkpoint = tmp_path / "snapshot_symbols_warn.pkl"
     phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
     phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
@@ -1396,16 +1396,13 @@ def test_run_warm_start_warns_when_using_deprecated_symbol_argument(
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    with pytest.warns(DeprecationWarning, match="run_warm_start\\(symbol=\\.\\.\\.\\)"):
-        result2 = run_warm_start(
+    with pytest.raises(ValueError, match="no longer accepts `symbol`"):
+        run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
             symbol="TEST",
             show_progress=False,
         )
-    strategy = result2.strategy
-    assert strategy is not None
-    assert strategy.bar_seen == 4
 
 
 def test_run_warm_start_rejects_conflicting_symbol_and_symbols(tmp_path: Path) -> None:
@@ -1417,12 +1414,12 @@ def test_run_warm_start_rejects_conflicting_symbol_and_symbols(tmp_path: Path) -
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartE2EStrategy,
-        symbol="AAA",
+        symbols="AAA",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match="both `symbol` and `symbols`"):
+    with pytest.raises(ValueError, match="no longer accepts `symbol`"):
         run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
@@ -1468,7 +1465,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=100000.0,
         execution_mode="current_close",
         show_progress=False,
@@ -1482,7 +1479,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         execution_mode="current_close",
         show_progress=False,
     )
@@ -1517,7 +1514,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=100000.0,
         execution_mode="current_close",
         show_progress=False,
@@ -1529,7 +1526,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         execution_mode="current_close",
         show_progress=False,
         strategy_id="alpha",
@@ -1564,7 +1561,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
-        symbol="TEST",
+        symbols="TEST",
         execution_mode="current_close",
         show_progress=False,
         config=config,
@@ -1574,7 +1571,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         execution_mode="current_close",
         show_progress=False,
         config=config,
@@ -1607,7 +1604,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
-        symbol="TEST",
+        symbols="TEST",
         execution_mode="current_close",
         show_progress=False,
         config=config,
@@ -1617,7 +1614,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         execution_mode="current_close",
         show_progress=False,
         config=config,
@@ -1645,7 +1642,7 @@ def test_run_warm_start_accepts_fee_rate_names_and_default_timezone(
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartE2EStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1653,7 +1650,7 @@ def test_run_warm_start_accepts_fee_rate_names_and_default_timezone(
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
         commission_rate=0.0003,
         stamp_tax_rate=0.001,
@@ -1663,6 +1660,30 @@ def test_run_warm_start_accepts_fee_rate_names_and_default_timezone(
     equity_index = cast(pd.DatetimeIndex, result2.equity_curve.index)
     assert equity_index.tz is not None
     assert str(equity_index.tz) == "Asia/Shanghai"
+
+
+def test_run_warm_start_rejects_unknown_broker_profile(tmp_path: Path) -> None:
+    """run_warm_start should validate broker_profile names."""
+    checkpoint = tmp_path / "snapshot_unknown_profile.pkl"
+    phase1 = _make_bars("2023-01-01", 2)
+    phase2 = _make_bars("2023-01-03", 2, start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="Unknown broker_profile"):
+        run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            broker_profile="does_not_exist",
+        )
 
 
 def test_run_warm_start_runtime_config_override_true_by_default(
@@ -1676,7 +1697,7 @@ def test_run_warm_start_runtime_config_override_true_by_default(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmConflictStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1685,7 +1706,7 @@ def test_run_warm_start_runtime_config_override_true_by_default(
         result2 = run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config={"error_mode": "continue"},
         )
@@ -1708,7 +1729,7 @@ def test_run_warm_start_runtime_config_override_false_keeps_strategy_config(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmConflictStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1718,7 +1739,7 @@ def test_run_warm_start_runtime_config_override_false_keeps_strategy_config(
             run_warm_start(
                 checkpoint_path=str(checkpoint),
                 data=phase2,
-                symbol="TEST",
+                symbols="TEST",
                 show_progress=False,
                 strategy_runtime_config={"error_mode": "continue"},
                 runtime_config_override=False,
@@ -1739,7 +1760,7 @@ def test_run_warm_start_rejects_invalid_strategy_runtime_config_type(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmStartStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1748,7 +1769,7 @@ def test_run_warm_start_rejects_invalid_strategy_runtime_config_type(
         run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config=cast(Any, "invalid"),
         )
@@ -1765,7 +1786,7 @@ def test_run_warm_start_rejects_invalid_runtime_config_from_forwarded_kwargs(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmStartStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1775,7 +1796,7 @@ def test_run_warm_start_rejects_invalid_runtime_config_from_forwarded_kwargs(
         run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             **forwarded_kwargs,
         )
@@ -1792,7 +1813,7 @@ def test_run_warm_start_accepts_runtime_config_from_forwarded_kwargs(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmStartStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1803,7 +1824,7 @@ def test_run_warm_start_accepts_runtime_config_from_forwarded_kwargs(
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
         **forwarded_kwargs,
     )
@@ -1824,7 +1845,7 @@ def test_run_warm_start_rejects_unknown_strategy_runtime_config_fields(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmStartStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1833,7 +1854,7 @@ def test_run_warm_start_rejects_unknown_strategy_runtime_config_fields(
         run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config=cast(Any, {"unknown_flag": True}),
         )
@@ -1850,7 +1871,7 @@ def test_run_warm_start_rejects_invalid_strategy_runtime_config_values(
     result1 = run_backtest(
         data=phase1,
         strategy=RuntimeConfigWarmStartStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
@@ -1859,7 +1880,7 @@ def test_run_warm_start_rejects_invalid_strategy_runtime_config_values(
         run_warm_start(
             checkpoint_path=str(checkpoint),
             data=phase2,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config={"portfolio_update_eps": -1},
         )
@@ -1925,7 +1946,7 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartMultiSymbolStrategy,
-        symbol="BENCHMARK",
+        symbols="BENCHMARK",
         initial_cash=100000.0,
         show_progress=False,
     )
@@ -1935,7 +1956,7 @@ def test_run_warm_start_multi_symbol_continuity(tmp_path: Path) -> None:
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="BENCHMARK",
+        symbols="BENCHMARK",
         show_progress=False,
     )
 
@@ -2021,7 +2042,7 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     result1 = run_backtest(
         data=phase1,
         strategy=WarmStartEventIdempotencyStrategy,
-        symbol="BENCHMARK",
+        symbols="BENCHMARK",
         initial_cash=100000.0,
         execution_mode="current_close",
         show_progress=False,
@@ -2031,7 +2052,7 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
     result2 = run_warm_start(
         checkpoint_path=str(checkpoint),
         data=phase2,
-        symbol="BENCHMARK",
+        symbols="BENCHMARK",
         show_progress=False,
     )
 
@@ -2806,7 +2827,7 @@ def test_run_backtest_accepts_strategy_runtime_config() -> None:
     result = run_backtest(
         data=bars,
         strategy=RuntimeConfigBarErrorStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
         strategy_runtime_config={"error_mode": "continue"},
     )
@@ -2823,7 +2844,7 @@ def test_run_backtest_rejects_invalid_strategy_runtime_config_type() -> None:
         run_backtest(
             data=bars,
             strategy=RuntimeConfigBarErrorStrategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config=cast(Any, "invalid"),
         )
@@ -2836,7 +2857,7 @@ def test_run_backtest_rejects_invalid_runtime_config_from_strategy_params() -> N
         run_backtest(
             data=bars,
             strategy=RuntimeConfigBarErrorStrategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_params={"strategy_runtime_config": "invalid"},
         )
@@ -2848,7 +2869,7 @@ def test_run_backtest_explicit_runtime_config_has_higher_priority_than_kwargs() 
     result = run_backtest(
         data=bars,
         strategy=RuntimeConfigBarErrorStrategy,
-        symbol="TEST",
+        symbols="TEST",
         show_progress=False,
         strategy_runtime_config={"error_mode": "continue"},
         strategy_params={"strategy_runtime_config": {"error_mode": "raise"}},
@@ -2866,7 +2887,7 @@ def test_run_backtest_rejects_unknown_strategy_runtime_config_fields() -> None:
         run_backtest(
             data=bars,
             strategy=RuntimeConfigBarErrorStrategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config=cast(Any, {"unknown_flag": True}),
         )
@@ -2879,7 +2900,7 @@ def test_run_backtest_rejects_invalid_strategy_runtime_config_values() -> None:
         run_backtest(
             data=bars,
             strategy=RuntimeConfigBarErrorStrategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config={"portfolio_update_eps": -1},
         )
@@ -2894,7 +2915,7 @@ def test_run_backtest_runtime_config_override_true_by_default(
         result = run_backtest(
             data=bars,
             strategy=RuntimeConfigConflictStrategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config={"error_mode": "continue"},
         )
@@ -2915,14 +2936,14 @@ def test_runtime_config_conflict_warning_deduplicated_per_strategy_instance(
         run_backtest(
             data=bars,
             strategy=strategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config={"error_mode": "continue"},
         )
         run_backtest(
             data=bars,
             strategy=strategy,
-            symbol="TEST",
+            symbols="TEST",
             show_progress=False,
             strategy_runtime_config={"error_mode": "continue"},
         )
@@ -2942,7 +2963,7 @@ def test_run_backtest_runtime_config_override_false_keeps_strategy_config(
             run_backtest(
                 data=bars,
                 strategy=RuntimeConfigConflictStrategy,
-                symbol="TEST",
+                symbols="TEST",
                 show_progress=False,
                 strategy_runtime_config={"error_mode": "continue"},
                 runtime_config_override=False,

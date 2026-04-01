@@ -158,6 +158,7 @@ impl CommonMatcher {
                 let market_price = match execution_mode {
                     ExecutionMode::NextOpen => bar.open,
                     ExecutionMode::CurrentClose => bar.close,
+                    ExecutionMode::NextClose => bar.close,
                     ExecutionMode::NextAverage => {
                         (bar.open + bar.high + bar.low + bar.close) / Decimal::from(4)
                     }

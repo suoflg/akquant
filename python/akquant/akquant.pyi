@@ -23,6 +23,7 @@ class AssetType:
 class ExecutionMode:
     NextOpen: typing.ClassVar["ExecutionMode"]
     CurrentClose: typing.ClassVar["ExecutionMode"]
+    NextClose: typing.ClassVar["ExecutionMode"]
     NextAverage: typing.ClassVar["ExecutionMode"]
     NextHighLowMid: typing.ClassVar["ExecutionMode"]
 

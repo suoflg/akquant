@@ -44,7 +44,7 @@ def test_partial_filled_status_and_open_orders_visibility() -> None:
     result = run_backtest(
         data=data,
         strategy=PartialFillOpenOrderStrategy,
-        symbol="TEST",
+        symbols="TEST",
         initial_cash=100000.0,
         commission_rate=0.0,
         min_commission=0.0,

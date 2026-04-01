@@ -125,8 +125,7 @@ def run_warm_start(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbol: Union[str, List[str]] = "BENCHMARK",
-    symbols: Optional[Union[str, List[str]]] = None,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
     strategy_runtime_config: Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]] = None,
     runtime_config_override: bool = True,
     strategy_id: Optional[str] = None,
@@ -154,9 +153,8 @@ def run_warm_start(
 *   `data`: 回测数据。支持单个 DataFrame，`{symbol: DataFrame}` 字典，`List[Bar]`，或实现 `DataFeedAdapter.load(request)` 的对象。
 *   `strategy`: 策略类、策略实例，或 `on_bar` 函数（函数式编程风格）。
 *   `initialize` / `on_start` / `on_stop`: 函数式策略生命周期回调，分别对应初始化、启动、停止阶段。
-*   `symbols`: 推荐参数。标的代码或代码列表。
-*   `symbol`: 兼容参数。仅在未传 `symbols` 时生效。
-*   `initial_cash`: 初始资金 (默认 1,000,000.0)。
+*   `symbols`: 标的代码或代码列表。
+*   `initial_cash`: 初始资金 (默认 100,000.0)。
 *   `execution_mode`: 执行模式。
     *   `ExecutionMode.NextOpen`: 下一 Bar 开盘价成交 (默认)。
     *   `ExecutionMode.CurrentClose`: 当前 Bar 收盘价成交。

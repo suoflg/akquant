@@ -687,7 +687,7 @@ impl Engine {
 
     /// 设置撮合模式
     ///
-    /// :param mode: 撮合模式 (ExecutionMode.CurrentClose 或 ExecutionMode.NextOpen)
+    /// :param mode: 撮合模式 (ExecutionMode.CurrentClose / NextOpen / NextClose)
     /// :type mode: ExecutionMode
     fn set_execution_mode(&mut self, mode: ExecutionMode) {
         self.execution_mode = mode;

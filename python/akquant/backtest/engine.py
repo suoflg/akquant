@@ -3,8 +3,7 @@ import inspect
 import logging
 import os
 import sys
-import warnings
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from typing import (
     Any,
     Callable,
@@ -39,6 +38,7 @@ from ..config import (
     ChinaFuturesInstrumentTemplateConfig,
     ChinaOptionsConfig,
     RiskConfig,
+    StrategyConfig,
 )
 from ..data import ParquetDataCatalog
 from ..feed_adapter import DataFeedAdapter, FeedSlice
@@ -79,14 +79,121 @@ class FillPolicy(TypedDict, total=False):
     temporal: str
 
 
+@dataclass(frozen=True)
+class ResolvedExecutionPolicy:
+    """Resolved execution semantics for matching."""
+
+    price_basis: str
+    temporal: str
+    execution_mode: ExecutionMode
+
+
 _SUPPORTED_FILL_PRICE_BASIS_TO_MODE: Dict[str, ExecutionMode] = {
     "next_open": ExecutionMode.NextOpen,
     "current_close": ExecutionMode.CurrentClose,
+    "next_close": ExecutionMode.NextClose,
     "ohlc4": ExecutionMode.NextAverage,
     "hl2": ExecutionMode.NextHighLowMid,
 }
 _RESERVED_FILL_PRICE_BASIS: set[str] = {"mid_quote", "vwap_window", "twap_window"}
 _SUPPORTED_FILL_TEMPORAL: set[str] = {"same_cycle", "next_event"}
+
+
+def _resolve_execution_policy(
+    execution_mode: Union[ExecutionMode, str],
+    timer_execution_policy: str,
+    fill_policy: Optional[FillPolicy],
+    logger: logging.Logger,
+) -> ResolvedExecutionPolicy:
+    resolved_execution_mode = execution_mode
+    resolved_timer_policy = str(timer_execution_policy).strip().lower()
+    resolved_price_basis = "next_open"
+    if fill_policy is not None:
+        if not isinstance(fill_policy, dict):
+            raise TypeError("fill_policy must be a dict")
+        raw_basis = str(fill_policy.get("price_basis", "next_open")).strip().lower()
+        raw_temporal = str(fill_policy.get("temporal", "same_cycle")).strip().lower()
+        basis_mode = _SUPPORTED_FILL_PRICE_BASIS_TO_MODE.get(raw_basis)
+        if basis_mode is None:
+            if raw_basis in _RESERVED_FILL_PRICE_BASIS:
+                raise NotImplementedError(
+                    "fill_policy.price_basis='%s' is reserved but not implemented yet"
+                    % raw_basis
+                )
+            raise ValueError(
+                "fill_policy.price_basis must be one of: "
+                "next_open, current_close, next_close, ohlc4, hl2; "
+                "reserved: mid_quote, vwap_window, twap_window"
+            )
+        if raw_temporal not in _SUPPORTED_FILL_TEMPORAL:
+            raise ValueError(
+                "fill_policy.temporal must be one of: same_cycle, next_event"
+            )
+        if execution_mode != ExecutionMode.NextOpen:
+            logger.warning(
+                "fill_policy overrides execution_mode=%s",
+                execution_mode,
+            )
+        if str(timer_execution_policy).strip().lower() != "same_cycle":
+            logger.warning(
+                "fill_policy overrides timer_execution_policy=%s",
+                timer_execution_policy,
+            )
+        resolved_execution_mode = basis_mode
+        resolved_timer_policy = raw_temporal
+        resolved_price_basis = raw_basis
+
+    if isinstance(resolved_execution_mode, str):
+        mode_text = str(resolved_execution_mode).strip()
+        mode_raw = mode_text.split(".", 1)[-1] if "." in mode_text else mode_text
+        mode_compact = mode_raw.replace(" ", "").replace("-", "_")
+        mode_key = mode_compact.lower()
+        mode_map = {
+            "next_open": (ExecutionMode.NextOpen, "next_open"),
+            "nextopen": (ExecutionMode.NextOpen, "next_open"),
+            "current_close": (ExecutionMode.CurrentClose, "current_close"),
+            "currentclose": (ExecutionMode.CurrentClose, "current_close"),
+            "next_close": (ExecutionMode.NextClose, "next_close"),
+            "nextclose": (ExecutionMode.NextClose, "next_close"),
+            "next_average": (ExecutionMode.NextAverage, "ohlc4"),
+            "nextaverage": (ExecutionMode.NextAverage, "ohlc4"),
+            "next_high_low_mid": (ExecutionMode.NextHighLowMid, "hl2"),
+            "nexthighlowmid": (ExecutionMode.NextHighLowMid, "hl2"),
+            "ohlc4": (ExecutionMode.NextAverage, "ohlc4"),
+            "hl2": (ExecutionMode.NextHighLowMid, "hl2"),
+        }
+        mode_tuple = mode_map.get(mode_key)
+        if not mode_tuple:
+            logger.warning(
+                "Unknown execution mode '%s', defaulting to NextOpen",
+                resolved_execution_mode,
+            )
+            mode_tuple = (ExecutionMode.NextOpen, "next_open")
+        resolved_mode_enum, mapped_basis = mode_tuple
+        if fill_policy is None:
+            resolved_price_basis = mapped_basis
+    else:
+        resolved_mode_enum = resolved_execution_mode
+        if fill_policy is None:
+            reverse_mode_map = {
+                ExecutionMode.NextOpen: "next_open",
+                ExecutionMode.CurrentClose: "current_close",
+                ExecutionMode.NextClose: "next_close",
+                ExecutionMode.NextAverage: "ohlc4",
+                ExecutionMode.NextHighLowMid: "hl2",
+            }
+            resolved_price_basis = reverse_mode_map.get(resolved_mode_enum, "next_open")
+
+    if resolved_timer_policy not in _SUPPORTED_FILL_TEMPORAL:
+        raise ValueError(
+            "timer_execution_policy must be one of: same_cycle, next_event"
+        )
+
+    return ResolvedExecutionPolicy(
+        price_basis=resolved_price_basis,
+        temporal=resolved_timer_policy,
+        execution_mode=resolved_mode_enum,
+    )
 
 
 def _index_to_local_trading_days(
@@ -159,28 +266,15 @@ def _noop_stream_event_handler(_event: BacktestStreamEvent) -> None:
 
 
 def _normalize_symbols_argument(
-    symbol: Union[str, List[str]],
-    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]],
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]],
     *,
     api_name: str,
 ) -> List[str]:
-    """Normalize symbol inputs and keep compatibility."""
-    if symbols is not None and symbol != "BENCHMARK":
-        raise ValueError(
-            f"{api_name} received both `symbol` and `symbols`; "
-            "please pass only `symbols`"
-        )
-
-    raw_input: Union[str, List[str], Tuple[str, ...], set[str]]
-    if symbols is not None:
-        raw_input = symbols
-    else:
-        raw_input = symbol
-
-    if isinstance(raw_input, str):
-        normalized = [raw_input]
-    elif isinstance(raw_input, (list, tuple, set)):
-        normalized = [str(item) for item in raw_input]
+    """Normalize symbols input."""
+    if isinstance(symbols, str):
+        normalized = [symbols]
+    elif isinstance(symbols, (list, tuple, set)):
+        normalized = [str(item) for item in symbols]
     else:
         raise TypeError("symbols must be str, list, tuple, or set")
 
@@ -198,6 +292,33 @@ def _normalize_symbols_argument(
     if not cleaned:
         raise ValueError("symbols cannot be empty")
     return cleaned
+
+
+def _resolve_effective_symbols(
+    *,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str], None],
+    kwargs: Dict[str, Any],
+    api_name: str,
+) -> Tuple[Union[str, List[str], Tuple[str, ...], set[str]], List[str]]:
+    if "symbol" in kwargs:
+        raise ValueError(
+            f"{api_name} no longer accepts `symbol`; please use `symbols` only"
+        )
+
+    if symbols is None and "symbols" in kwargs:
+        symbols = cast(
+            Union[str, List[str], Tuple[str, ...], set[str]],
+            kwargs.pop("symbols"),
+        )
+    elif "symbols" in kwargs:
+        kwargs.pop("symbols")
+    if symbols is None:
+        symbols = "BENCHMARK"
+    effective_symbols = _normalize_symbols_argument(
+        symbols=symbols,
+        api_name=api_name,
+    )
+    return symbols, effective_symbols
 
 
 def _accepts_strategy_kwarg(
@@ -260,29 +381,6 @@ def _split_strategy_kwargs(
     return accepted_kwargs, unknown_keys
 
 
-def _maybe_warn_deprecated_symbol_argument(
-    *,
-    symbol: Union[str, List[str]],
-    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]],
-    api_name: str,
-) -> None:
-    if symbols is not None:
-        return
-
-    is_default_symbol = isinstance(symbol, str) and symbol == "BENCHMARK"
-    if is_default_symbol:
-        return
-
-    warnings.warn(
-        (
-            f"`{api_name}(symbol=...)` is deprecated and will be removed in a "
-            "future version; please use `symbols=...` instead"
-        ),
-        DeprecationWarning,
-        stacklevel=3,
-    )
-
-
 def _resolve_broker_profile(profile: Optional[str]) -> Dict[str, Any]:
     if profile is None:
         return {}
@@ -295,6 +393,286 @@ def _resolve_broker_profile(profile: Optional[str]) -> Dict[str, Any]:
             f"Unknown broker_profile '{profile}', available profiles: {available}"
         )
     return dict(_BROKER_PROFILE_TEMPLATES[key])
+
+
+def _resolve_stock_fee_rules(
+    *,
+    commission_rate: Optional[float],
+    stamp_tax_rate: Optional[float],
+    transfer_fee_rate: Optional[float],
+    min_commission: Optional[float],
+    broker_profile_values: Dict[str, Any],
+    strategy_config: Optional[Any],
+) -> Tuple[float, float, float, float]:
+    resolved_commission_rate = commission_rate
+    resolved_stamp_tax_rate = stamp_tax_rate
+    resolved_transfer_fee_rate = transfer_fee_rate
+    resolved_min_commission = min_commission
+
+    if resolved_commission_rate is None:
+        resolved_commission_rate = cast(
+            Optional[float], broker_profile_values.get("commission_rate")
+        )
+    if resolved_stamp_tax_rate is None:
+        resolved_stamp_tax_rate = cast(
+            Optional[float], broker_profile_values.get("stamp_tax_rate")
+        )
+    if resolved_transfer_fee_rate is None:
+        resolved_transfer_fee_rate = cast(
+            Optional[float], broker_profile_values.get("transfer_fee_rate")
+        )
+    if resolved_min_commission is None:
+        resolved_min_commission = cast(
+            Optional[float], broker_profile_values.get("min_commission")
+        )
+
+    if strategy_config is not None:
+        if resolved_commission_rate is None:
+            resolved_commission_rate = cast(
+                Optional[float], getattr(strategy_config, "commission_rate", None)
+            )
+        if resolved_stamp_tax_rate is None:
+            resolved_stamp_tax_rate = cast(
+                Optional[float], getattr(strategy_config, "stamp_tax_rate", None)
+            )
+        if resolved_transfer_fee_rate is None:
+            resolved_transfer_fee_rate = cast(
+                Optional[float], getattr(strategy_config, "transfer_fee_rate", None)
+            )
+        if resolved_min_commission is None:
+            resolved_min_commission = cast(
+                Optional[float], getattr(strategy_config, "min_commission", None)
+            )
+
+    return (
+        float(
+            resolved_commission_rate if resolved_commission_rate is not None else 0.0
+        ),
+        float(resolved_stamp_tax_rate if resolved_stamp_tax_rate is not None else 0.0),
+        float(resolved_transfer_fee_rate or 0.0),
+        float(resolved_min_commission or 0.0),
+    )
+
+
+def _apply_strategy_config_overrides(
+    *,
+    strategy_config: Optional[Any],
+    strategy_id: Optional[str],
+    strategies_by_slot: Optional[
+        Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
+    ],
+    strategy_max_order_value: Optional[Dict[str, float]],
+    strategy_max_order_size: Optional[Dict[str, float]],
+    strategy_max_position_size: Optional[Dict[str, float]],
+    strategy_max_daily_loss: Optional[Dict[str, float]],
+    strategy_max_drawdown: Optional[Dict[str, float]],
+    strategy_reduce_only_after_risk: Optional[Dict[str, bool]],
+    strategy_risk_cooldown_bars: Optional[Dict[str, int]],
+    strategy_priority: Optional[Dict[str, int]],
+    strategy_risk_budget: Optional[Dict[str, float]],
+    portfolio_risk_budget: Optional[float],
+    strategy_runtime_config: Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]],
+    strategy_source: Optional[Union[str, bytes, os.PathLike[str]]],
+    strategy_loader: Optional[str],
+    strategy_loader_options: Optional[Dict[str, Any]],
+) -> Tuple[
+    Optional[str],
+    Optional[Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]],
+    Optional[Dict[str, float]],
+    Optional[Dict[str, float]],
+    Optional[Dict[str, float]],
+    Optional[Dict[str, float]],
+    Optional[Dict[str, float]],
+    Optional[Dict[str, bool]],
+    Optional[Dict[str, int]],
+    Optional[Dict[str, int]],
+    Optional[Dict[str, float]],
+    Optional[float],
+    Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]],
+    Optional[Union[str, bytes, os.PathLike[str]]],
+    Optional[str],
+    Optional[Dict[str, Any]],
+]:
+    if strategy_config is None:
+        return (
+            strategy_id,
+            strategies_by_slot,
+            strategy_max_order_value,
+            strategy_max_order_size,
+            strategy_max_position_size,
+            strategy_max_daily_loss,
+            strategy_max_drawdown,
+            strategy_reduce_only_after_risk,
+            strategy_risk_cooldown_bars,
+            strategy_priority,
+            strategy_risk_budget,
+            portfolio_risk_budget,
+            strategy_runtime_config,
+            strategy_source,
+            strategy_loader,
+            strategy_loader_options,
+        )
+
+    if strategy_id is None:
+        strategy_id = cast(Optional[str], getattr(strategy_config, "strategy_id", None))
+    if strategies_by_slot is None:
+        strategies_by_slot = cast(
+            Optional[
+                Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
+            ],
+            getattr(strategy_config, "strategies_by_slot", None),
+        )
+    if strategy_max_order_value is None:
+        strategy_max_order_value = cast(
+            Optional[Dict[str, float]],
+            getattr(strategy_config, "strategy_max_order_value", None),
+        )
+    if strategy_max_order_size is None:
+        strategy_max_order_size = cast(
+            Optional[Dict[str, float]],
+            getattr(strategy_config, "strategy_max_order_size", None),
+        )
+    if strategy_max_position_size is None:
+        strategy_max_position_size = cast(
+            Optional[Dict[str, float]],
+            getattr(strategy_config, "strategy_max_position_size", None),
+        )
+    if strategy_max_daily_loss is None:
+        strategy_max_daily_loss = cast(
+            Optional[Dict[str, float]],
+            getattr(strategy_config, "strategy_max_daily_loss", None),
+        )
+    if strategy_max_drawdown is None:
+        strategy_max_drawdown = cast(
+            Optional[Dict[str, float]],
+            getattr(strategy_config, "strategy_max_drawdown", None),
+        )
+    if strategy_reduce_only_after_risk is None:
+        strategy_reduce_only_after_risk = cast(
+            Optional[Dict[str, bool]],
+            getattr(strategy_config, "strategy_reduce_only_after_risk", None),
+        )
+    if strategy_risk_cooldown_bars is None:
+        strategy_risk_cooldown_bars = cast(
+            Optional[Dict[str, int]],
+            getattr(strategy_config, "strategy_risk_cooldown_bars", None),
+        )
+    if strategy_priority is None:
+        strategy_priority = cast(
+            Optional[Dict[str, int]],
+            getattr(strategy_config, "strategy_priority", None),
+        )
+    if strategy_risk_budget is None:
+        strategy_risk_budget = cast(
+            Optional[Dict[str, float]],
+            getattr(strategy_config, "strategy_risk_budget", None),
+        )
+    if portfolio_risk_budget is None:
+        portfolio_risk_budget = cast(
+            Optional[float],
+            getattr(strategy_config, "portfolio_risk_budget", None),
+        )
+    if strategy_runtime_config is None:
+        config_indicator_mode = getattr(strategy_config, "indicator_mode", None)
+        if config_indicator_mode is not None:
+            strategy_runtime_config = {"indicator_mode": config_indicator_mode}
+    if strategy_source is None:
+        strategy_source = cast(
+            Optional[Union[str, bytes, os.PathLike[str]]],
+            getattr(strategy_config, "strategy_source", None),
+        )
+    if strategy_loader is None:
+        strategy_loader = cast(
+            Optional[str],
+            getattr(strategy_config, "strategy_loader", None),
+        )
+    if strategy_loader_options is None:
+        strategy_loader_options = cast(
+            Optional[Dict[str, Any]],
+            getattr(strategy_config, "strategy_loader_options", None),
+        )
+
+    return (
+        strategy_id,
+        strategies_by_slot,
+        strategy_max_order_value,
+        strategy_max_order_size,
+        strategy_max_position_size,
+        strategy_max_daily_loss,
+        strategy_max_drawdown,
+        strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars,
+        strategy_priority,
+        strategy_risk_budget,
+        portfolio_risk_budget,
+        strategy_runtime_config,
+        strategy_source,
+        strategy_loader,
+        strategy_loader_options,
+    )
+
+
+def _validate_strategy_risk_inputs(
+    *,
+    strategies_by_slot: Optional[
+        Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
+    ],
+    strategy_max_order_value: Optional[Dict[str, float]],
+    strategy_max_order_size: Optional[Dict[str, float]],
+    strategy_max_position_size: Optional[Dict[str, float]],
+    strategy_max_daily_loss: Optional[Dict[str, float]],
+    strategy_max_drawdown: Optional[Dict[str, float]],
+    strategy_reduce_only_after_risk: Optional[Dict[str, bool]],
+    strategy_risk_cooldown_bars: Optional[Dict[str, int]],
+    strategy_priority: Optional[Dict[str, int]],
+    strategy_risk_budget: Optional[Dict[str, float]],
+    portfolio_risk_budget: Optional[float],
+    risk_budget_mode: str,
+) -> Tuple[Optional[float], str]:
+    if strategies_by_slot is not None and not isinstance(strategies_by_slot, dict):
+        raise TypeError("strategies_by_slot must be a dict when provided")
+    if strategy_max_order_value is not None and not isinstance(
+        strategy_max_order_value, dict
+    ):
+        raise TypeError("strategy_max_order_value must be a dict when provided")
+    if strategy_max_order_size is not None and not isinstance(
+        strategy_max_order_size, dict
+    ):
+        raise TypeError("strategy_max_order_size must be a dict when provided")
+    if strategy_max_position_size is not None and not isinstance(
+        strategy_max_position_size, dict
+    ):
+        raise TypeError("strategy_max_position_size must be a dict when provided")
+    if strategy_max_daily_loss is not None and not isinstance(
+        strategy_max_daily_loss, dict
+    ):
+        raise TypeError("strategy_max_daily_loss must be a dict when provided")
+    if strategy_max_drawdown is not None and not isinstance(
+        strategy_max_drawdown, dict
+    ):
+        raise TypeError("strategy_max_drawdown must be a dict when provided")
+    if strategy_reduce_only_after_risk is not None and not isinstance(
+        strategy_reduce_only_after_risk, dict
+    ):
+        raise TypeError("strategy_reduce_only_after_risk must be a dict when provided")
+    if strategy_risk_cooldown_bars is not None and not isinstance(
+        strategy_risk_cooldown_bars, dict
+    ):
+        raise TypeError("strategy_risk_cooldown_bars must be a dict when provided")
+    if strategy_priority is not None and not isinstance(strategy_priority, dict):
+        raise TypeError("strategy_priority must be a dict when provided")
+    if strategy_risk_budget is not None and not isinstance(strategy_risk_budget, dict):
+        raise TypeError("strategy_risk_budget must be a dict when provided")
+    if portfolio_risk_budget is not None:
+        portfolio_risk_budget = float(portfolio_risk_budget)
+        if not pd.notna(portfolio_risk_budget) or portfolio_risk_budget < 0.0:
+            raise ValueError("portfolio_risk_budget must be >= 0")
+    normalized_mode = str(risk_budget_mode).strip().lower()
+    if normalized_mode not in {"order_notional", "trade_notional"}:
+        raise ValueError(
+            "risk_budget_mode must be 'order_notional' or 'trade_notional'"
+        )
+    return portfolio_risk_budget, normalized_mode
 
 
 def _parse_asset_type_name(value: Any) -> Literal["futures", "stock", "fund", "option"]:
@@ -761,13 +1139,12 @@ def run_backtest(
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]] = None,
     strategy_loader: Optional[str] = None,
     strategy_loader_options: Optional[Dict[str, Any]] = None,
-    symbol: Union[str, List[str]] = "BENCHMARK",
-    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
     initial_cash: Optional[float] = None,
     commission_rate: Optional[float] = None,
-    stamp_tax_rate: float = 0.0,
-    transfer_fee_rate: float = 0.0,
-    min_commission: float = 0.0,
+    stamp_tax_rate: Optional[float] = None,
+    transfer_fee_rate: Optional[float] = None,
+    min_commission: Optional[float] = None,
     slippage: Optional[float] = None,
     volume_limit_pct: Optional[float] = None,
     execution_mode: Union[ExecutionMode, str] = ExecutionMode.NextOpen,
@@ -839,21 +1216,20 @@ def run_backtest(
     :param strategy_loader_options: 传给策略加载器的参数字典（可选），
                                     如 {"strategy_attr": "MyStrategy"} 或
                                     {"decrypt_and_load": callable}
-    :param symbol: 兼容参数。标的代码或代码列表（推荐改用 symbols）
-    :param symbols: 推荐参数。标的代码或代码列表
-    :param initial_cash: 初始资金 (默认 1,000,000.0)
+    :param symbols: 标的代码或代码列表
+    :param initial_cash: 初始资金 (默认 100,000.0)
     :param commission_rate: 佣金率 (默认 0.0)
     :param stamp_tax_rate: 印花税率 (仅卖出, 默认 0.0)
     :param transfer_fee_rate: 过户费率 (默认 0.0)
     :param min_commission: 最低佣金 (默认 0.0)
     :param slippage: 滑点 (默认 0.0)
     :param volume_limit_pct: 成交量限制比例 (默认 0.25)
-    :param execution_mode: 执行模式 (ExecutionMode.NextOpen 或 "next_open")
+    :param execution_mode: 执行模式 (如 ExecutionMode.NextOpen/NextClose 或字符串)
     :param timer_execution_policy: 定时器下单撮合策略:
         "same_cycle" 表示在当前 timer 事件撮合（CurrentClose 模式）；
         "next_event" 表示延后到下一条行情事件撮合。
     :param fill_policy: 统一成交语义配置（可选），格式:
-        {"price_basis": "next_open|current_close|ohlc4|hl2",
+        {"price_basis": "next_open|current_close|next_close|ohlc4|hl2",
          "temporal": "same_cycle|next_event"}。
         预留未实现 price_basis: mid_quote、vwap_window、twap_window。
         若提供该参数，则其语义优先于 execution_mode 与 timer_execution_policy。
@@ -936,90 +1312,42 @@ def run_backtest(
     if "_engine_mode" in kwargs:
         raise TypeError("_engine_mode is no longer supported")
     strategy_config = config.strategy_config if config is not None else None
-    if strategy_config is not None:
-        if strategy_id is None:
-            strategy_id = cast(
-                Optional[str], getattr(strategy_config, "strategy_id", None)
-            )
-        if strategies_by_slot is None:
-            strategies_by_slot = cast(
-                Optional[
-                    Dict[
-                        str,
-                        Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]],
-                    ]
-                ],
-                getattr(strategy_config, "strategies_by_slot", None),
-            )
-        if strategy_max_order_value is None:
-            strategy_max_order_value = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_order_value", None),
-            )
-        if strategy_max_order_size is None:
-            strategy_max_order_size = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_order_size", None),
-            )
-        if strategy_max_position_size is None:
-            strategy_max_position_size = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_position_size", None),
-            )
-        if strategy_max_daily_loss is None:
-            strategy_max_daily_loss = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_daily_loss", None),
-            )
-        if strategy_max_drawdown is None:
-            strategy_max_drawdown = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_drawdown", None),
-            )
-        if strategy_reduce_only_after_risk is None:
-            strategy_reduce_only_after_risk = cast(
-                Optional[Dict[str, bool]],
-                getattr(strategy_config, "strategy_reduce_only_after_risk", None),
-            )
-        if strategy_risk_cooldown_bars is None:
-            strategy_risk_cooldown_bars = cast(
-                Optional[Dict[str, int]],
-                getattr(strategy_config, "strategy_risk_cooldown_bars", None),
-            )
-        if strategy_priority is None:
-            strategy_priority = cast(
-                Optional[Dict[str, int]],
-                getattr(strategy_config, "strategy_priority", None),
-            )
-        if strategy_risk_budget is None:
-            strategy_risk_budget = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_risk_budget", None),
-            )
-        if portfolio_risk_budget is None:
-            portfolio_risk_budget = cast(
-                Optional[float],
-                getattr(strategy_config, "portfolio_risk_budget", None),
-            )
-        if strategy_runtime_config is None:
-            config_indicator_mode = getattr(strategy_config, "indicator_mode", None)
-            if config_indicator_mode is not None:
-                strategy_runtime_config = {"indicator_mode": config_indicator_mode}
-        if strategy_source is None:
-            strategy_source = cast(
-                Optional[Union[str, bytes, os.PathLike[str]]],
-                getattr(strategy_config, "strategy_source", None),
-            )
-        if strategy_loader is None:
-            strategy_loader = cast(
-                Optional[str],
-                getattr(strategy_config, "strategy_loader", None),
-            )
-        if strategy_loader_options is None:
-            strategy_loader_options = cast(
-                Optional[Dict[str, Any]],
-                getattr(strategy_config, "strategy_loader_options", None),
-            )
+    (
+        strategy_id,
+        strategies_by_slot,
+        strategy_max_order_value,
+        strategy_max_order_size,
+        strategy_max_position_size,
+        strategy_max_daily_loss,
+        strategy_max_drawdown,
+        strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars,
+        strategy_priority,
+        strategy_risk_budget,
+        portfolio_risk_budget,
+        strategy_runtime_config,
+        strategy_source,
+        strategy_loader,
+        strategy_loader_options,
+    ) = _apply_strategy_config_overrides(
+        strategy_config=strategy_config,
+        strategy_id=strategy_id,
+        strategies_by_slot=strategies_by_slot,
+        strategy_max_order_value=strategy_max_order_value,
+        strategy_max_order_size=strategy_max_order_size,
+        strategy_max_position_size=strategy_max_position_size,
+        strategy_max_daily_loss=strategy_max_daily_loss,
+        strategy_max_drawdown=strategy_max_drawdown,
+        strategy_reduce_only_after_risk=strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars=strategy_risk_cooldown_bars,
+        strategy_priority=strategy_priority,
+        strategy_risk_budget=strategy_risk_budget,
+        portfolio_risk_budget=portfolio_risk_budget,
+        strategy_runtime_config=strategy_runtime_config,
+        strategy_source=strategy_source,
+        strategy_loader=strategy_loader,
+        strategy_loader_options=strategy_loader_options,
+    )
     broker_profile_values = _resolve_broker_profile(broker_profile)
     if broker_profile_values:
         if initial_cash is None:
@@ -1041,61 +1369,32 @@ def run_backtest(
                 Optional[Union[int, Dict[str, int]]],
                 broker_profile_values.get("lot_size"),
             )
-        if stamp_tax_rate == 0.0:
-            stamp_tax_rate = float(
-                broker_profile_values.get("stamp_tax_rate", stamp_tax_rate)
+        if stamp_tax_rate is None:
+            stamp_tax_rate = cast(
+                Optional[float], broker_profile_values.get("stamp_tax_rate")
             )
-        if transfer_fee_rate == 0.0:
-            transfer_fee_rate = float(
-                broker_profile_values.get("transfer_fee_rate", transfer_fee_rate)
+        if transfer_fee_rate is None:
+            transfer_fee_rate = cast(
+                Optional[float], broker_profile_values.get("transfer_fee_rate")
             )
-        if min_commission == 0.0:
-            min_commission = float(
-                broker_profile_values.get("min_commission", min_commission)
+        if min_commission is None:
+            min_commission = cast(
+                Optional[float], broker_profile_values.get("min_commission")
             )
-    if strategies_by_slot is not None and not isinstance(strategies_by_slot, dict):
-        raise TypeError("strategies_by_slot must be a dict when provided")
-    if strategy_max_order_value is not None and not isinstance(
-        strategy_max_order_value, dict
-    ):
-        raise TypeError("strategy_max_order_value must be a dict when provided")
-    if strategy_max_order_size is not None and not isinstance(
-        strategy_max_order_size, dict
-    ):
-        raise TypeError("strategy_max_order_size must be a dict when provided")
-    if strategy_max_position_size is not None and not isinstance(
-        strategy_max_position_size, dict
-    ):
-        raise TypeError("strategy_max_position_size must be a dict when provided")
-    if strategy_max_daily_loss is not None and not isinstance(
-        strategy_max_daily_loss, dict
-    ):
-        raise TypeError("strategy_max_daily_loss must be a dict when provided")
-    if strategy_max_drawdown is not None and not isinstance(
-        strategy_max_drawdown, dict
-    ):
-        raise TypeError("strategy_max_drawdown must be a dict when provided")
-    if strategy_reduce_only_after_risk is not None and not isinstance(
-        strategy_reduce_only_after_risk, dict
-    ):
-        raise TypeError("strategy_reduce_only_after_risk must be a dict when provided")
-    if strategy_risk_cooldown_bars is not None and not isinstance(
-        strategy_risk_cooldown_bars, dict
-    ):
-        raise TypeError("strategy_risk_cooldown_bars must be a dict when provided")
-    if strategy_priority is not None and not isinstance(strategy_priority, dict):
-        raise TypeError("strategy_priority must be a dict when provided")
-    if strategy_risk_budget is not None and not isinstance(strategy_risk_budget, dict):
-        raise TypeError("strategy_risk_budget must be a dict when provided")
-    if portfolio_risk_budget is not None:
-        portfolio_risk_budget = float(portfolio_risk_budget)
-        if not pd.notna(portfolio_risk_budget) or portfolio_risk_budget < 0.0:
-            raise ValueError("portfolio_risk_budget must be >= 0")
-    risk_budget_mode = str(risk_budget_mode).strip().lower()
-    if risk_budget_mode not in {"order_notional", "trade_notional"}:
-        raise ValueError(
-            "risk_budget_mode must be 'order_notional' or 'trade_notional'"
-        )
+    portfolio_risk_budget, risk_budget_mode = _validate_strategy_risk_inputs(
+        strategies_by_slot=strategies_by_slot,
+        strategy_max_order_value=strategy_max_order_value,
+        strategy_max_order_size=strategy_max_order_size,
+        strategy_max_position_size=strategy_max_position_size,
+        strategy_max_daily_loss=strategy_max_daily_loss,
+        strategy_max_drawdown=strategy_max_drawdown,
+        strategy_reduce_only_after_risk=strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars=strategy_risk_cooldown_bars,
+        strategy_priority=strategy_priority,
+        strategy_risk_budget=strategy_risk_budget,
+        portfolio_risk_budget=portfolio_risk_budget,
+        risk_budget_mode=risk_budget_mode,
+    )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
     stream_on_event = on_event
     internal_stream_callback = kwargs.pop("_stream_on_event", None)
@@ -1163,7 +1462,7 @@ def run_backtest(
     # 优先级: 参数 > Config > 默认值
 
     # Defaults
-    DEFAULT_INITIAL_CASH = 1_000_000.0
+    DEFAULT_INITIAL_CASH = float(getattr(StrategyConfig, "initial_cash", 100000.0))
     DEFAULT_COMMISSION_RATE = 0.0
     DEFAULT_TIMEZONE = "Asia/Shanghai"
     DEFAULT_SHOW_PROGRESS = True
@@ -1185,12 +1484,18 @@ def run_backtest(
 
     # Resolve Other Fees (if not passed as args, check config)
     if config and config.strategy_config:
-        if stamp_tax_rate == 0.0:
+        if stamp_tax_rate is None:
             stamp_tax_rate = config.strategy_config.stamp_tax_rate
-        if transfer_fee_rate == 0.0:
+        if transfer_fee_rate is None:
             transfer_fee_rate = config.strategy_config.transfer_fee_rate
-        if min_commission == 0.0:
+        if min_commission is None:
             min_commission = config.strategy_config.min_commission
+    if stamp_tax_rate is None:
+        stamp_tax_rate = 0.0
+    if transfer_fee_rate is None:
+        transfer_fee_rate = 0.0
+    if min_commission is None:
+        min_commission = 0.0
 
     # Resolve Slippage & Volume Limit
     if slippage is None:
@@ -1263,21 +1568,13 @@ def run_backtest(
         s_params = kwargs.pop("strategy_params")
         if isinstance(s_params, dict):
             kwargs.update(s_params)
-    if strategy_runtime_config is None and "strategy_runtime_config" in kwargs:
-        strategy_runtime_config = kwargs.pop("strategy_runtime_config")
-    if symbols is None and "symbols" in kwargs:
-        symbols = kwargs.pop("symbols")
-    elif "symbols" in kwargs:
-        kwargs.pop("symbols")
-    _maybe_warn_deprecated_symbol_argument(
-        symbol=symbol,
+    if "strategy_runtime_config" in kwargs:
+        kwargs_runtime_config = kwargs.pop("strategy_runtime_config")
+        if strategy_runtime_config is None:
+            strategy_runtime_config = kwargs_runtime_config
+    symbols, effective_symbols = _resolve_effective_symbols(
         symbols=symbols,
-        api_name="run_backtest",
-    )
-
-    effective_symbols = _normalize_symbols_argument(
-        symbol=symbol,
-        symbols=symbols,
+        kwargs=kwargs,
         api_name="run_backtest",
     )
 
@@ -1500,7 +1797,7 @@ def run_backtest(
             raise TypeError("InstrumentConfig.static_attrs must be Dict[str, scalar]")
         conf_lot = (
             float(conf.lot_size)
-            if conf.lot_size != 1
+            if conf.lot_size is not None
             else float(symbol_lot_size or 1.0)
         )
         preliminary_snapshots[sym] = InstrumentSnapshot(
@@ -2117,75 +2414,15 @@ def run_backtest(
                     e,
                 )
 
-    resolved_execution_mode = execution_mode
-    resolved_timer_policy = str(timer_execution_policy).strip().lower()
-    if fill_policy is not None:
-        if not isinstance(fill_policy, dict):
-            raise TypeError("fill_policy must be a dict")
-        raw_basis = str(fill_policy.get("price_basis", "next_open")).strip().lower()
-        raw_temporal = str(fill_policy.get("temporal", "same_cycle")).strip().lower()
-        basis_mode = _SUPPORTED_FILL_PRICE_BASIS_TO_MODE.get(raw_basis)
-        if basis_mode is None:
-            if raw_basis in _RESERVED_FILL_PRICE_BASIS:
-                raise NotImplementedError(
-                    "fill_policy.price_basis='%s' is reserved but not implemented yet"
-                    % raw_basis
-                )
-            raise ValueError(
-                "fill_policy.price_basis must be one of: "
-                "next_open, current_close, ohlc4, hl2; "
-                "reserved: mid_quote, vwap_window, twap_window"
-            )
-        if raw_temporal not in _SUPPORTED_FILL_TEMPORAL:
-            raise ValueError(
-                "fill_policy.temporal must be one of: same_cycle, next_event"
-            )
-        if execution_mode != ExecutionMode.NextOpen:
-            logger.warning(
-                "fill_policy overrides execution_mode=%s",
-                execution_mode,
-            )
-        if str(timer_execution_policy).strip().lower() != "same_cycle":
-            logger.warning(
-                "fill_policy overrides timer_execution_policy=%s",
-                timer_execution_policy,
-            )
-        resolved_execution_mode = basis_mode
-        resolved_timer_policy = raw_temporal
-
-    if isinstance(resolved_execution_mode, str):
-        mode_text = str(resolved_execution_mode).strip()
-        mode_raw = mode_text.split(".", 1)[-1] if "." in mode_text else mode_text
-        mode_compact = mode_raw.replace(" ", "").replace("-", "_")
-        mode_key = mode_compact.lower()
-        mode_map = {
-            "next_open": ExecutionMode.NextOpen,
-            "nextopen": ExecutionMode.NextOpen,
-            "current_close": ExecutionMode.CurrentClose,
-            "currentclose": ExecutionMode.CurrentClose,
-            "next_average": ExecutionMode.NextAverage,
-            "nextaverage": ExecutionMode.NextAverage,
-            "next_high_low_mid": ExecutionMode.NextHighLowMid,
-            "nexthighlowmid": ExecutionMode.NextHighLowMid,
-            "ohlc4": ExecutionMode.NextAverage,
-            "hl2": ExecutionMode.NextHighLowMid,
-        }
-        mode = mode_map.get(mode_key)
-        if not mode:
-            logger.warning(
-                "Unknown execution mode '%s', defaulting to NextOpen",
-                resolved_execution_mode,
-            )
-            mode = ExecutionMode.NextOpen
-        resolved_mode_enum = mode
-    else:
-        resolved_mode_enum = resolved_execution_mode
+    resolved_policy = _resolve_execution_policy(
+        execution_mode=execution_mode,
+        timer_execution_policy=timer_execution_policy,
+        fill_policy=fill_policy,
+        logger=logger,
+    )
+    resolved_mode_enum = resolved_policy.execution_mode
     engine.set_execution_mode(resolved_mode_enum)
-    timer_policy = resolved_timer_policy
-    if timer_policy not in _SUPPORTED_FILL_TEMPORAL:
-        raise ValueError(
-            "timer_execution_policy must be one of: same_cycle, next_event"
-        )
+    timer_policy = resolved_policy.temporal
     if (
         resolved_mode_enum != ExecutionMode.CurrentClose
         and timer_policy == "same_cycle"
@@ -2648,7 +2885,7 @@ def run_backtest(
             # If config has lot_size, use it, otherwise use global setting
             p_lot = (
                 i_conf.lot_size
-                if i_conf.lot_size != 1
+                if i_conf.lot_size is not None
                 else float(current_lot_size or 1.0)
             )
             if futures_template and p_asset_type == AssetType.Futures:
@@ -2661,7 +2898,7 @@ def run_backtest(
                     p_margin = futures_template.margin_ratio
                 if i_conf.tick_size == 0.01 and futures_template.tick_size is not None:
                     p_tick = futures_template.tick_size
-                if i_conf.lot_size == 1 and futures_template.lot_size is not None:
+                if i_conf.lot_size is None and futures_template.lot_size is not None:
                     p_lot = futures_template.lot_size
 
             p_opt_type = _parse_option_type(i_conf.option_type)
@@ -2884,8 +3121,7 @@ def run_warm_start(
     checkpoint_path: str,
     data: Optional[BacktestDataInput] = None,
     show_progress: bool = True,
-    symbol: Union[str, List[str]] = "BENCHMARK",
-    symbols: Optional[Union[str, List[str], Tuple[str, ...], set[str]]] = None,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
     strategy_runtime_config: Optional[
         Union[StrategyRuntimeConfig, Dict[str, Any]]
     ] = None,
@@ -2935,118 +3171,56 @@ def run_warm_start(
         register_logger(console=True, level="INFO")
         logger = get_logger()
     strategy_config = config.strategy_config if config is not None else None
-    if strategy_config is not None:
-        if strategy_id is None:
-            strategy_id = cast(
-                Optional[str], getattr(strategy_config, "strategy_id", None)
-            )
-        if strategies_by_slot is None:
-            strategies_by_slot = cast(
-                Optional[
-                    Dict[
-                        str,
-                        Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]],
-                    ]
-                ],
-                getattr(strategy_config, "strategies_by_slot", None),
-            )
-        if strategy_max_order_value is None:
-            strategy_max_order_value = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_order_value", None),
-            )
-        if strategy_max_order_size is None:
-            strategy_max_order_size = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_order_size", None),
-            )
-        if strategy_max_position_size is None:
-            strategy_max_position_size = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_position_size", None),
-            )
-        if strategy_max_daily_loss is None:
-            strategy_max_daily_loss = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_daily_loss", None),
-            )
-        if strategy_max_drawdown is None:
-            strategy_max_drawdown = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_max_drawdown", None),
-            )
-        if strategy_reduce_only_after_risk is None:
-            strategy_reduce_only_after_risk = cast(
-                Optional[Dict[str, bool]],
-                getattr(strategy_config, "strategy_reduce_only_after_risk", None),
-            )
-        if strategy_risk_cooldown_bars is None:
-            strategy_risk_cooldown_bars = cast(
-                Optional[Dict[str, int]],
-                getattr(strategy_config, "strategy_risk_cooldown_bars", None),
-            )
-        if strategy_priority is None:
-            strategy_priority = cast(
-                Optional[Dict[str, int]],
-                getattr(strategy_config, "strategy_priority", None),
-            )
-        if strategy_risk_budget is None:
-            strategy_risk_budget = cast(
-                Optional[Dict[str, float]],
-                getattr(strategy_config, "strategy_risk_budget", None),
-            )
-        if portfolio_risk_budget is None:
-            portfolio_risk_budget = cast(
-                Optional[float],
-                getattr(strategy_config, "portfolio_risk_budget", None),
-            )
-        if strategy_runtime_config is None:
-            config_indicator_mode = getattr(strategy_config, "indicator_mode", None)
-            if config_indicator_mode is not None:
-                strategy_runtime_config = {"indicator_mode": config_indicator_mode}
-    if strategies_by_slot is not None and not isinstance(strategies_by_slot, dict):
-        raise TypeError("strategies_by_slot must be a dict when provided")
-    if strategy_max_order_value is not None and not isinstance(
-        strategy_max_order_value, dict
-    ):
-        raise TypeError("strategy_max_order_value must be a dict when provided")
-    if strategy_max_order_size is not None and not isinstance(
-        strategy_max_order_size, dict
-    ):
-        raise TypeError("strategy_max_order_size must be a dict when provided")
-    if strategy_max_position_size is not None and not isinstance(
-        strategy_max_position_size, dict
-    ):
-        raise TypeError("strategy_max_position_size must be a dict when provided")
-    if strategy_max_daily_loss is not None and not isinstance(
-        strategy_max_daily_loss, dict
-    ):
-        raise TypeError("strategy_max_daily_loss must be a dict when provided")
-    if strategy_max_drawdown is not None and not isinstance(
-        strategy_max_drawdown, dict
-    ):
-        raise TypeError("strategy_max_drawdown must be a dict when provided")
-    if strategy_reduce_only_after_risk is not None and not isinstance(
-        strategy_reduce_only_after_risk, dict
-    ):
-        raise TypeError("strategy_reduce_only_after_risk must be a dict when provided")
-    if strategy_risk_cooldown_bars is not None and not isinstance(
-        strategy_risk_cooldown_bars, dict
-    ):
-        raise TypeError("strategy_risk_cooldown_bars must be a dict when provided")
-    if strategy_priority is not None and not isinstance(strategy_priority, dict):
-        raise TypeError("strategy_priority must be a dict when provided")
-    if strategy_risk_budget is not None and not isinstance(strategy_risk_budget, dict):
-        raise TypeError("strategy_risk_budget must be a dict when provided")
-    if portfolio_risk_budget is not None:
-        portfolio_risk_budget = float(portfolio_risk_budget)
-        if not pd.notna(portfolio_risk_budget) or portfolio_risk_budget < 0.0:
-            raise ValueError("portfolio_risk_budget must be >= 0")
-    risk_budget_mode = str(risk_budget_mode).strip().lower()
-    if risk_budget_mode not in {"order_notional", "trade_notional"}:
-        raise ValueError(
-            "risk_budget_mode must be 'order_notional' or 'trade_notional'"
-        )
+    (
+        strategy_id,
+        strategies_by_slot,
+        strategy_max_order_value,
+        strategy_max_order_size,
+        strategy_max_position_size,
+        strategy_max_daily_loss,
+        strategy_max_drawdown,
+        strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars,
+        strategy_priority,
+        strategy_risk_budget,
+        portfolio_risk_budget,
+        strategy_runtime_config,
+        _ignored_strategy_source,
+        _ignored_strategy_loader,
+        _ignored_strategy_loader_options,
+    ) = _apply_strategy_config_overrides(
+        strategy_config=strategy_config,
+        strategy_id=strategy_id,
+        strategies_by_slot=strategies_by_slot,
+        strategy_max_order_value=strategy_max_order_value,
+        strategy_max_order_size=strategy_max_order_size,
+        strategy_max_position_size=strategy_max_position_size,
+        strategy_max_daily_loss=strategy_max_daily_loss,
+        strategy_max_drawdown=strategy_max_drawdown,
+        strategy_reduce_only_after_risk=strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars=strategy_risk_cooldown_bars,
+        strategy_priority=strategy_priority,
+        strategy_risk_budget=strategy_risk_budget,
+        portfolio_risk_budget=portfolio_risk_budget,
+        strategy_runtime_config=strategy_runtime_config,
+        strategy_source=None,
+        strategy_loader=None,
+        strategy_loader_options=None,
+    )
+    portfolio_risk_budget, risk_budget_mode = _validate_strategy_risk_inputs(
+        strategies_by_slot=strategies_by_slot,
+        strategy_max_order_value=strategy_max_order_value,
+        strategy_max_order_size=strategy_max_order_size,
+        strategy_max_position_size=strategy_max_position_size,
+        strategy_max_daily_loss=strategy_max_daily_loss,
+        strategy_max_drawdown=strategy_max_drawdown,
+        strategy_reduce_only_after_risk=strategy_reduce_only_after_risk,
+        strategy_risk_cooldown_bars=strategy_risk_cooldown_bars,
+        strategy_priority=strategy_priority,
+        strategy_risk_budget=strategy_risk_budget,
+        portfolio_risk_budget=portfolio_risk_budget,
+        risk_budget_mode=risk_budget_mode,
+    )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
     stream_on_event = on_event
     internal_stream_callback = kwargs.pop("_stream_on_event", None)
@@ -3098,18 +3272,9 @@ def run_warm_start(
     )
     stream_mode = _parse_stream_mode(kwargs.pop("stream_mode", "observability"))
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
-    if symbols is None and "symbols" in kwargs:
-        symbols = kwargs.pop("symbols")
-    elif "symbols" in kwargs:
-        kwargs.pop("symbols")
-    _maybe_warn_deprecated_symbol_argument(
-        symbol=symbol,
+    symbols, effective_symbols = _resolve_effective_symbols(
         symbols=symbols,
-        api_name="run_warm_start",
-    )
-    effective_symbols = _normalize_symbols_argument(
-        symbol=symbol,
-        symbols=symbols,
+        kwargs=kwargs,
         api_name="run_warm_start",
     )
 
@@ -3295,8 +3460,10 @@ def run_warm_start(
                 )
             cast(Any, engine).set_strategy_for_slot(slot_index, assigned_strategy)
 
-    if strategy_runtime_config is None and "strategy_runtime_config" in kwargs:
-        strategy_runtime_config = kwargs.pop("strategy_runtime_config")
+    if "strategy_runtime_config" in kwargs:
+        kwargs_runtime_config = kwargs.pop("strategy_runtime_config")
+        if strategy_runtime_config is None:
+            strategy_runtime_config = kwargs_runtime_config
     if strategy_runtime_config is not None and isinstance(strategy_instance, Strategy):
         _apply_strategy_runtime_config(
             strategy_instance,
@@ -3623,8 +3790,30 @@ def run_warm_start(
     # 2.6 Re-configure Market Model
     # Engine restoration might lose market model config if not in State.
     # Default to SimpleMarket (T+0) or ChinaMarket (T+1) based on kwargs.
-    commission = kwargs.get("commission_rate", 0.0)
-    stamp_tax = kwargs.get("stamp_tax_rate", kwargs.get("stamp_tax", 0.0))
+    broker_profile_values = _resolve_broker_profile(
+        cast(Optional[str], kwargs.get("broker_profile"))
+    )
+    commission_rate_value = cast(Optional[float], kwargs.get("commission_rate"))
+    stamp_tax_rate_value = cast(
+        Optional[float], kwargs.get("stamp_tax_rate", kwargs.get("stamp_tax"))
+    )
+    transfer_fee_rate_value = cast(
+        Optional[float], kwargs.get("transfer_fee_rate", kwargs.get("transfer_fee"))
+    )
+    min_commission_value = cast(Optional[float], kwargs.get("min_commission"))
+    (
+        commission,
+        stamp_tax,
+        transfer_fee,
+        min_commission,
+    ) = _resolve_stock_fee_rules(
+        commission_rate=commission_rate_value,
+        stamp_tax_rate=stamp_tax_rate_value,
+        transfer_fee_rate=transfer_fee_rate_value,
+        min_commission=min_commission_value,
+        broker_profile_values=broker_profile_values,
+        strategy_config=strategy_config,
+    )
     t_plus_one = kwargs.get("t_plus_one", False)
 
     if t_plus_one:
@@ -3640,11 +3829,6 @@ def run_warm_start(
     # but set_stock_fee_rules overrides them?
     # Let's just set it.
     if hasattr(engine, "set_stock_fee_rules"):
-        transfer_fee = kwargs.get(
-            "transfer_fee_rate",
-            kwargs.get("transfer_fee", 0.0),
-        )
-        min_commission = kwargs.get("min_commission", 0.0)
         engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
         logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
     if stream_on_event is not None:
