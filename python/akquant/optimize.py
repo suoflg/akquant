@@ -219,43 +219,6 @@ class JSONEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def _normalize_execution_mode_for_parallel(value: Any) -> Any:
-    """
-    Normalize execution_mode into a pickle-safe representation for multiprocessing.
-
-    :param value: 原始 execution_mode 参数值
-    :return: 归一化后的 execution_mode
-    """
-    if isinstance(value, str):
-        mode_text = value.strip()
-        mode_raw = mode_text.split(".", 1)[-1] if "." in mode_text else mode_text
-        mode_key = mode_raw.replace(" ", "").replace("-", "_")
-    else:
-        mode_name = getattr(value, "name", None)
-        if isinstance(mode_name, str):
-            mode_key = mode_name
-        else:
-            mode_text = str(value).strip()
-            mode_raw = mode_text.split(".", 1)[-1] if "." in mode_text else mode_text
-            mode_key = mode_raw.replace(" ", "").replace("-", "_")
-
-    mode_key = mode_key.lower()
-
-    mode_map = {
-        "next_open": "next_open",
-        "nextopen": "next_open",
-        "current_close": "current_close",
-        "currentclose": "current_close",
-        "next_average": "next_average",
-        "nextaverage": "next_average",
-        "next_high_low_mid": "next_high_low_mid",
-        "nexthighlowmid": "next_high_low_mid",
-        "ohlc4": "next_average",
-        "hl2": "next_high_low_mid",
-    }
-    return mode_map.get(mode_key, value)
-
-
 def _assert_parallel_pickleable(
     strategy: Type[Strategy],
     backtest_kwargs: Mapping[str, Any],
@@ -282,7 +245,6 @@ def _assert_parallel_pickleable(
         checks.append(("warmup_calc", warmup_calc))
 
     sensitive_keys = (
-        "execution_mode",
         "fill_policy",
         "on_event",
         "initialize",
@@ -304,9 +266,8 @@ def _assert_parallel_pickleable(
             raise TypeError(
                 "run_grid_search with max_workers>1 requires pickle-serializable "
                 f"arguments, but {label} failed: {e}. "
-                "Tips: use execution_mode='current_close' string instead of "
-                "ExecutionMode enum object, avoid lambda/local callbacks, and ensure "
-                "strategy class is defined in importable module."
+                "Tips: use fill_policy dict and avoid lambda/local callbacks, "
+                "and ensure strategy class is defined in importable module."
             ) from e
 
 
@@ -422,13 +383,17 @@ def run_grid_search(
     """
     backtest_kwargs = _normalize_backtest_symbol_kwargs(dict(kwargs))
     backtest_kwargs.setdefault("strict_strategy_params", True)
+    if (
+        "execution_mode" in backtest_kwargs
+        or "timer_execution_policy" in backtest_kwargs
+    ):
+        raise ValueError(
+            "run_grid_search no longer accepts execution_mode/timer_execution_policy; "
+            "please use fill_policy"
+        )
     strict_strategy_params = bool(backtest_kwargs.get("strict_strategy_params", False))
     if strict_strategy_params:
         _validate_strategy_param_grid_keys(strategy, param_grid)
-    if "execution_mode" in backtest_kwargs:
-        backtest_kwargs["execution_mode"] = _normalize_execution_mode_for_parallel(
-            backtest_kwargs["execution_mode"]
-        )
 
     # 1. 生成参数组合
     keys = param_grid.keys()

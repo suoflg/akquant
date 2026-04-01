@@ -1,17 +1,28 @@
-# 执行语义切换清单
+# 执行语义切换（已完成）
 
-本清单用于将 legacy `execution_mode` / `timer_execution_policy` 最终切换到 `fill_policy`。
+本文档作为历史记录，说明 legacy 执行参数向三轴 `fill_policy`
+的迁移已完成。
 
-## 范围
+## 当前公开模型
 
-- 不改公开入口名（`run_backtest` / `run_warm_start`）
-- 继续保持 `symbols` 为唯一标的参数
-- 将 `fill_policy` 作为执行语义主路径
-- 通过 `legacy_execution_policy_compat` 分阶段推进
+- `price_basis`: `open | close | ohlc4 | hl2`
+- `bar_offset`: `0 | 1`
+- `temporal`: `same_cycle | next_event`
 
-## 阶段 A：告警清理
+统一配置写法：
 
-- 先跑全量检查，确保无回归：
+```python
+fill_policy={"price_basis":"...", "bar_offset": 0_or_1, "temporal":"..."}
+```
+
+## 当前状态
+
+- `run_backtest` / `run_warm_start` 已拒绝 legacy 执行参数。
+- `legacy_execution_policy_compat` 已移除。
+- `AKQ_LEGACY_EXECUTION_POLICY_COMPAT` 回滚路径已移除。
+- 内部兼容映射仅作为实现细节保留（internal，非公开 API）。
+
+## 基线校验命令
 
 ```bash
 uv run ruff check .
@@ -19,49 +30,18 @@ uv run mypy .
 uv run pytest -q
 ```
 
-- 检索 legacy 调用残留：
+## 三轴配置参考（公开口径）
 
-```bash
-rg 'execution_mode='
-rg 'timer_execution_policy='
-```
+| 场景 | 三轴 `fill_policy` |
+| :--- | :--- |
+| next-open 风格成交 | `{"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}` |
+| current-close 风格成交 | `{"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` |
+| 下一根收盘价成交 | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
+| 下一根 OHLC 均价成交 | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
+| 下一根 HL2 成交 | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
 
-- 内部调用全部改写为 `fill_policy`
-- 清理剩余 `execution_mode` / `timer_execution_policy` 调用点
+## 收口结论
 
-## 阶段 B：测试/灰度验证
-
-- 验证关键场景：
-  - backtest + `fill_policy` 正常
-  - warm start + `fill_policy` 正常
-  - legacy 调用能给出明确迁移报错
-- 生成并审核黄金基线报告：
-
-```bash
-uv run python scripts/golden_baseline_report.py
-```
-
-## 阶段 C：生产彻底移除 legacy
-
-- 重点观察：
-  - 是否仍有 legacy 调用触发迁移错误
-  - 策略行为是否出现突变
-- 准备回滚路径：
-  - 快速回滚：环境变量改回 `true`
-  - 版本回滚：回退部署版本
-
-## 回滚点
-
-- **R1：运行时回滚**
-  - 仅改环境变量：
-  - `AKQ_LEGACY_EXECUTION_POLICY_COMPAT=true`
-- **R2：版本回滚**
-  - 回滚到上一版发布产物
-- **R3：调用点回滚**
-  - 对个别问题调用点临时显式传 `legacy_execution_policy_compat=True`
-
-## 完成标准
-
-- 生产调用方不再依赖 legacy 执行语义
-- 一个完整观察窗口内无 legacy execution policy 相关告警/报错
-- 黄金基线回归报告通过策略负责人审核
+- 迁移工作已完成。
+- 公开执行语义以三轴模型为唯一主路径。
+- 本文件不再作为在途发布清单，仅作历史说明。

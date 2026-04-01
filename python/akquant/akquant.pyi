@@ -20,13 +20,6 @@ class AssetType:
     Bond: typing.ClassVar["AssetType"]
     Unknown: typing.ClassVar["AssetType"]
 
-class ExecutionMode:
-    NextOpen: typing.ClassVar["ExecutionMode"]
-    CurrentClose: typing.ClassVar["ExecutionMode"]
-    NextClose: typing.ClassVar["ExecutionMode"]
-    NextAverage: typing.ClassVar["ExecutionMode"]
-    NextHighLowMid: typing.ClassVar["ExecutionMode"]
-
 class OrderStatus:
     New: typing.ClassVar["OrderStatus"]
     Submitted: typing.ClassVar["OrderStatus"]
@@ -494,24 +487,13 @@ class Engine:
         """
         ...
 
-    def set_execution_mode(self, mode: akquant.ExecutionMode) -> None:
-        r"""
-        设置撮合模式.
-
-        :param mode: 撮合模式 (ExecutionMode.CurrentClose 或 ExecutionMode.NextOpen)
-        :type mode: ExecutionMode
-        """
-        ...
-
-    def set_timer_execution_policy(self, policy: str) -> None:
-        r"""
-        设置定时器下单撮合策略.
-
-        :param policy: "same_cycle" 表示在当前 timer 事件撮合;
-                       "next_event" 表示延后到下一条行情事件撮合.
-        """
-        ...
-
+    def set_fill_policy(
+        self,
+        price_basis: typing.Literal["open", "close", "ohlc4", "hl2"],
+        bar_offset: int,
+        temporal: typing.Literal["same_cycle", "next_event"],
+    ) -> None: ...
+    def get_fill_policy(self) -> tuple[str, int, str]: ...
     def use_simple_market(self, commission_rate: float) -> None:
         r"""
         启用 SimpleMarket (7x24小时, T+0, 无税, 简单佣金).

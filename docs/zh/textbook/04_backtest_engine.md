@@ -449,7 +449,7 @@ stateDiagram-v2
 对于每一根新的 Bar (或 Tick)，引擎会遍历所有活跃订单进行撮合：
 
 1.  **市价单 (Market Order)**:
-    *   **成交价**: 取决于 `ExecutionMode`（见下文）。
+    *   **成交价**: 取决于 `fill_policy` 三轴（见下文）。
     *   **成交量**: 尽可能全部成交，除非受限于当根 Bar 的成交量（Volume Limit）。
 
 2.  **限价单 (Limit Order)**:
@@ -462,18 +462,19 @@ stateDiagram-v2
     *   当市场价格突破触发价 (`Trigger Price`) 时，止损单会转化为市价单或限价单。
     *   `akquant` 支持**穿透检查 (Gap Detection)**：例如，昨日收盘 100，今日跳空低开 90，如果你有 95 的止损卖单，引擎会正确地在 90 成交（而不是 95），真实模拟跳空风险。
 
-### 4.10.2 撮合模式 (Execution Mode)
+### 4.10.2 三轴成交语义 (Three-Axis Fill Policy)
 
-为了平衡回测的严谨性和灵活性，`akquant` 提供了多种撮合模式：
+为了平衡回测的严谨性和灵活性，`akquant` 使用三轴成交策略：
 
-| 模式 | 描述 | 适用场景 | 备注 |
-| :--- | :--- | :--- | :--- |
-| **NextOpen** (默认) | 当前 Bar 的信号，在**下一根 Bar 的开盘价**成交。 | 日线/分钟线策略 | **最推荐**。完全避免未来函数。 |
-| **CurrentClose** | 当前 Bar 的信号，在**当前 Bar 的收盘价**成交。 | 收盘竞价策略 | 需小心使用，容易引入前视偏差。 |
+| 维度 | 取值 | 描述 |
+| :--- | :--- | :--- |
+| `price_basis` | `open` / `close` / `ohlc4` / `hl2` | 使用哪种价格基准 |
+| `bar_offset` | `0` / `1` | 使用当前 Bar 还是下一根 Bar |
+| `temporal` | `same_cycle` / `next_event` | timer 订单在当前周期或下一事件撮合 |
 
 ### 4.10.3 成交时序策略 (Temporal Policy)
 
-在 `execution_mode` 之外，AKQuant 还支持通过 `timer_execution_policy`（或统一写法 `fill_policy.temporal`）控制 `on_timer` 下单的撮合时点：
+AKQuant 通过 `fill_policy.temporal` 控制 `on_timer` 下单的撮合时点：
 
 | 时序策略 | 描述 | 典型场景 |
 | :--- | :--- | :--- |
@@ -486,7 +487,7 @@ stateDiagram-v2
 result = akquant.run_backtest(
     data=data,
     strategy=MyStrategy,
-    fill_policy={"price_basis": "close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
 )
 ```
 

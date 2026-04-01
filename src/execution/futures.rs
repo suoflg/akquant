@@ -226,6 +226,10 @@ mod tests {
             event,
             instrument,
             execution_mode: ExecutionMode::NextOpen,
+            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
+                ExecutionMode::NextOpen,
+                "same_cycle",
+            ),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,

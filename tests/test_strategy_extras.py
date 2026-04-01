@@ -1483,7 +1483,6 @@ def test_run_warm_start_exposes_resolved_execution_policy(tmp_path: Path) -> Non
     assert policy["price_basis"] == "close"
     assert int(policy["bar_offset"]) == 1
     assert policy["temporal"] == "next_event"
-    assert str(policy["execution_mode"]).endswith("NextClose")
     assert policy["source"] == "fill_policy"
 
 

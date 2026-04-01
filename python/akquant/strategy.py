@@ -20,7 +20,6 @@ import pandas as pd
 
 from .akquant import (
     Bar,
-    ExecutionMode,
     Order,
     StrategyContext,
     Tick,
@@ -223,7 +222,7 @@ class Strategy:
     """
 
     ctx: Optional[StrategyContext]
-    execution_mode: Optional[ExecutionMode]
+    execution_mode: Optional[Any]
     sizer: Sizer
     current_bar: Optional[Bar]
     current_tick: Optional[Tick]

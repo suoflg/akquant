@@ -24,7 +24,6 @@ def run_backtest(
     min_commission: float = 0.0,
     slippage: Optional[float] = None,
     volume_limit_pct: Optional[float] = None,
-    execution_mode: Union[ExecutionMode, str] = ExecutionMode.NextOpen,
     timezone: Optional[str] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
@@ -44,8 +43,7 @@ def run_backtest(
     strategies_by_slot: Optional[Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     broker_profile: Optional[str] = None,
-    timer_execution_policy: Literal["same_cycle", "next_event"] = "same_cycle",
-    fill_policy: Optional[Dict[str, str]] = None,
+    fill_policy: Optional[Dict[str, Any]] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult
@@ -154,14 +152,15 @@ def run_warm_start(
 *   `initialize` / `on_start` / `on_stop`: 函数式策略生命周期回调，分别对应初始化、启动、停止阶段。
 *   `symbols`: 标的代码或代码列表。
 *   `initial_cash`: 初始资金 (默认 100,000.0)。
-*   `execution_mode`: 已移除。请使用 `fill_policy.price_basis`。
-*   `timer_execution_policy`: 已移除。请使用 `fill_policy.temporal`。
+*   legacy 价格基准参数：已移除。
+*   legacy 时序参数：已移除。
 *   `fill_policy`: 统一成交语义配置。
-    *   `price_basis`: `next_open`、`current_close`、`ohlc4`（OHLC 平均价）或 `hl2`（高低中价）。
+    *   `price_basis`: `open`、`close`、`ohlc4`（OHLC 平均价）或 `hl2`（高低中价）。
+    *   `bar_offset`: `0` 或 `1`，用于完整三轴语义。
     *   预留（暂未实现）: `mid_quote`、`vwap_window`、`twap_window`（当前会抛出 `NotImplementedError`）。
     *   `temporal`: `same_cycle` 或 `next_event`。
 *   `legacy_execution_policy_compat`（通过 `**kwargs`）: 已移除。
-*   迁移建议：`execution_mode`/`timer_execution_policy` 已不再接受，统一使用 `fill_policy`。
+*   迁移建议：legacy 执行参数已不再接受，统一使用 `fill_policy`。
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
@@ -188,7 +187,7 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"},
 )
 
 # 当前收盘价 + next_event 时序
@@ -196,19 +195,19 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
 )
 ```
 
-**执行语义迁移映射（legacy -> fill_policy）：**
+**执行语义速查（三轴主路径）：**
 
-| 旧参数组合 | 新参数写法 |
+| 场景 | `fill_policy` |
 | :--- | :--- |
-| `execution_mode="next_open"` | `fill_policy={"price_basis":"open","temporal":"same_cycle"}` |
-| `execution_mode="current_close", timer_execution_policy="same_cycle"` | `fill_policy={"price_basis":"close","temporal":"same_cycle"}` |
-| `execution_mode="current_close", timer_execution_policy="next_event"` | `fill_policy={"price_basis":"close","temporal":"next_event"}` |
-| `execution_mode="next_average"` | `fill_policy={"price_basis":"ohlc4","temporal":"same_cycle"}` |
-| `execution_mode="next_high_low_mid"` | `fill_policy={"price_basis":"hl2","temporal":"same_cycle"}` |
+| next-open 风格成交 | `{"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}` |
+| current-close 风格成交 | `{"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` |
+| 下一根收盘价成交 | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
+| 下一根 OHLC 均价成交 | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
+| 下一根 HL2 成交 | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
 
 **DataFeedAdapter 用法（多时间框）:**
 
@@ -244,8 +243,8 @@ result = aq.run_backtest(
 *   推荐逐步将实时 UI / 日志 / 告警接入迁移到 `run_backtest(..., on_event=...)`。
 *   流式场景统一使用 `run_backtest(..., on_event=...)`。
 *   legacy 执行语义兼容开关已移除。
-*   `execution_mode`/`timer_execution_policy` 与 `legacy_execution_policy_compat` 不再接受。
-*   全量统一使用 `fill_policy`。
+*   legacy 执行参数与 `legacy_execution_policy_compat` 不再接受。
+*   公开执行配置全量统一使用 `fill_policy`。
 *   切换执行清单：见[执行语义切换清单](../advanced/execution_policy_cutover.md)。
 *   在 PyCharm 中若未开启终端仿真，原生进度条可能不可见；可开启 `Emulate terminal in output console` 或改用 `on_event` 的 `progress` 事件输出文本进度。
 *   阶段 5 后不再提供运行时参数级回滚开关；如需回滚请使用版本级回滚策略。
@@ -775,7 +774,8 @@ runner = LiveRunner(
 
 *   `set_timezone(offset: int)`: 设置时区偏移。
 *   `use_simulated_execution()` / `use_realtime_execution()`: 设置执行环境。
-*   `set_execution_mode(mode)`: 设置撮合模式。
+*   `set_fill_policy(price_basis, bar_offset, temporal)`: 设置统一三轴执行策略（推荐）。
+*   `get_fill_policy()`: 获取当前三轴执行策略。
 *   `set_history_depth(depth)`: 设置历史数据缓存长度。
 
 **市场与费率配置:**

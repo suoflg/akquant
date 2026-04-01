@@ -1,6 +1,6 @@
 use crate::event::Event;
 use crate::execution::matcher::MatchContext;
-use crate::model::{ExecutionMode, Order, OrderSide, OrderStatus, OrderType, TimeInForce, Trade};
+use crate::model::{Order, OrderSide, OrderStatus, OrderType, PriceBasis, TimeInForce, Trade};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -74,7 +74,7 @@ impl CommonMatcher {
     ) -> Option<Event> {
         let event = ctx.event;
         let instrument = ctx.instrument;
-        let execution_mode = ctx.execution_mode;
+        let execution_policy = ctx.execution_policy_core;
         let slippage = ctx.slippage;
         let volume_limit_pct = ctx.volume_limit_pct;
         let bar_index = ctx.bar_index;
@@ -155,14 +155,21 @@ impl CommonMatcher {
                 let mut execute_price: Option<Decimal> = None;
 
                 // Determine Market Base Price
-                let market_price = match execution_mode {
-                    ExecutionMode::NextOpen => bar.open,
-                    ExecutionMode::CurrentClose => bar.close,
-                    ExecutionMode::NextClose => bar.close,
-                    ExecutionMode::NextAverage => {
+                let market_price = match (execution_policy.price_basis, execution_policy.bar_offset)
+                {
+                    (PriceBasis::Open, 1) => bar.open,
+                    (PriceBasis::Close, 0) => bar.close,
+                    (PriceBasis::Close, 1) => bar.close,
+                    (PriceBasis::Ohlc4, 1) => {
                         (bar.open + bar.high + bar.low + bar.close) / Decimal::from(4)
                     }
-                    ExecutionMode::NextHighLowMid => (bar.high + bar.low) / Decimal::from(2),
+                    (PriceBasis::Hl2, 1) => (bar.high + bar.low) / Decimal::from(2),
+                    (PriceBasis::Open, _) => bar.open,
+                    (PriceBasis::Close, _) => bar.close,
+                    (PriceBasis::Ohlc4, _) => {
+                        (bar.open + bar.high + bar.low + bar.close) / Decimal::from(4)
+                    }
+                    (PriceBasis::Hl2, _) => (bar.high + bar.low) / Decimal::from(2),
                 };
 
                 match order.order_type {
@@ -386,7 +393,10 @@ impl CommonMatcher {
                 }
             }
             Event::Timer(timer) => {
-                if execution_mode != ExecutionMode::CurrentClose {
+                if !matches!(
+                    (execution_policy.price_basis, execution_policy.bar_offset),
+                    (PriceBasis::Close, 0)
+                ) {
                     return None;
                 }
                 let Some(reference_price) = ctx.last_price else {

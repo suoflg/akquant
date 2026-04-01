@@ -81,7 +81,7 @@ from .utils import (
 
 __doc__ = _akquant.__doc__
 if hasattr(_akquant, "__all__"):  # noqa: F405
-    __all__ = _akquant.__all__ + [  # noqa: F405
+    __all__ = [name for name in _akquant.__all__ if name != "ExecutionMode"] + [  # noqa: F405
         "load_bar_from_df",
         "prepare_dataframe",
         "fetch_akshare_symbol",

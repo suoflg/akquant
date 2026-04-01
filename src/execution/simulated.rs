@@ -2,7 +2,7 @@ use crate::event::Event;
 use crate::execution::matcher::{ExecutionMatcher, MatchContext};
 use crate::execution::slippage::{SlippageModel, ZeroSlippage};
 use crate::execution::{ExecutionClient, crypto, forex, futures, option, stock};
-use crate::model::{AssetType, Order, OrderStatus, TimeInForce, TradingSession};
+use crate::model::{AssetType, ExecutionPolicyCore, Order, OrderStatus, TimeInForce, TradingSession};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
@@ -204,6 +204,10 @@ impl ExecutionClient for SimulatedExecutionClient {
                             event,
                             instrument,
                             execution_mode: ctx.execution_mode,
+                            execution_policy_core: ExecutionPolicyCore::from_legacy(
+                                ctx.execution_mode,
+                                "same_cycle",
+                            ),
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
                             bar_index: ctx.bar_index,

@@ -21,12 +21,12 @@ from typing import (
 
 import pandas as pd
 
+from .. import akquant as _akquant_module
 from ..akquant import (
     AssetType,
     Bar,
     DataFeed,
     Engine,
-    ExecutionMode,
     Instrument,
     SettlementType,
     TradingSession,
@@ -58,6 +58,18 @@ from ..utils.inspector import infer_warmup_period
 from .result import BacktestResult
 
 _RUNTIME_CONFIG_FIELDS = {f.name for f in fields(StrategyRuntimeConfig)}
+_RUNTIME_EXECUTION_MODE = getattr(cast(Any, _akquant_module), "ExecutionMode", None)
+_RUNTIME_MODE_NEXT_OPEN = getattr(_RUNTIME_EXECUTION_MODE, "NextOpen", "next_open")
+_RUNTIME_MODE_CURRENT_CLOSE = getattr(
+    _RUNTIME_EXECUTION_MODE, "CurrentClose", "current_close"
+)
+_RUNTIME_MODE_NEXT_CLOSE = getattr(_RUNTIME_EXECUTION_MODE, "NextClose", "next_close")
+_RUNTIME_MODE_NEXT_AVERAGE = getattr(
+    _RUNTIME_EXECUTION_MODE, "NextAverage", "next_average"
+)
+_RUNTIME_MODE_NEXT_HIGH_LOW_MID = getattr(
+    _RUNTIME_EXECUTION_MODE, "NextHighLowMid", "next_high_low_mid"
+)
 
 
 class BacktestStreamEvent(TypedDict):
@@ -100,7 +112,7 @@ class ResolvedExecutionPolicy:
     price_basis: str
     bar_offset: int
     temporal: str
-    execution_mode: ExecutionMode
+    execution_mode: Any
     source: Literal["fill_policy", "legacy"]
 
 
@@ -131,7 +143,7 @@ _DEFAULT_FILL_BAR_OFFSET: Dict[str, int] = {
 
 
 def _resolve_execution_policy(
-    execution_mode: Union[ExecutionMode, str],
+    execution_mode: Union[Any, str],
     timer_execution_policy: str,
     fill_policy: Optional[FillPolicy],
     logger: logging.Logger,
@@ -173,22 +185,22 @@ def _resolve_execution_policy(
         if raw_basis == "open":
             if raw_offset != 1:
                 raise ValueError("fill_policy(open) requires bar_offset=1")
-            basis_mode = ExecutionMode.NextOpen
+            basis_mode = _RUNTIME_MODE_NEXT_OPEN
         elif raw_basis == "close":
             basis_mode = (
-                ExecutionMode.CurrentClose
+                _RUNTIME_MODE_CURRENT_CLOSE
                 if raw_offset == 0
-                else ExecutionMode.NextClose
+                else _RUNTIME_MODE_NEXT_CLOSE
             )
         elif raw_basis == "ohlc4":
             if raw_offset != 1:
                 raise ValueError("fill_policy(ohlc4) requires bar_offset=1")
-            basis_mode = ExecutionMode.NextAverage
+            basis_mode = _RUNTIME_MODE_NEXT_AVERAGE
         else:
             if raw_offset != 1:
                 raise ValueError("fill_policy(hl2) requires bar_offset=1")
-            basis_mode = ExecutionMode.NextHighLowMid
-        if execution_mode != ExecutionMode.NextOpen:
+            basis_mode = _RUNTIME_MODE_NEXT_HIGH_LOW_MID
+        if execution_mode != _RUNTIME_MODE_NEXT_OPEN:
             logger.warning(
                 "fill_policy overrides execution_mode=%s",
                 execution_mode,
@@ -210,20 +222,20 @@ def _resolve_execution_policy(
         mode_compact = mode_raw.replace(" ", "").replace("-", "_")
         mode_key = mode_compact.lower()
         mode_map = {
-            "open": (ExecutionMode.NextOpen, "open", 1),
-            "close": (ExecutionMode.CurrentClose, "close", 0),
-            "next_open": (ExecutionMode.NextOpen, "open", 1),
-            "nextopen": (ExecutionMode.NextOpen, "open", 1),
-            "current_close": (ExecutionMode.CurrentClose, "close", 0),
-            "currentclose": (ExecutionMode.CurrentClose, "close", 0),
-            "next_close": (ExecutionMode.NextClose, "close", 1),
-            "nextclose": (ExecutionMode.NextClose, "close", 1),
-            "next_average": (ExecutionMode.NextAverage, "ohlc4", 1),
-            "nextaverage": (ExecutionMode.NextAverage, "ohlc4", 1),
-            "next_high_low_mid": (ExecutionMode.NextHighLowMid, "hl2", 1),
-            "nexthighlowmid": (ExecutionMode.NextHighLowMid, "hl2", 1),
-            "ohlc4": (ExecutionMode.NextAverage, "ohlc4", 1),
-            "hl2": (ExecutionMode.NextHighLowMid, "hl2", 1),
+            "open": (_RUNTIME_MODE_NEXT_OPEN, "open", 1),
+            "close": (_RUNTIME_MODE_CURRENT_CLOSE, "close", 0),
+            "next_open": (_RUNTIME_MODE_NEXT_OPEN, "open", 1),
+            "nextopen": (_RUNTIME_MODE_NEXT_OPEN, "open", 1),
+            "current_close": (_RUNTIME_MODE_CURRENT_CLOSE, "close", 0),
+            "currentclose": (_RUNTIME_MODE_CURRENT_CLOSE, "close", 0),
+            "next_close": (_RUNTIME_MODE_NEXT_CLOSE, "close", 1),
+            "nextclose": (_RUNTIME_MODE_NEXT_CLOSE, "close", 1),
+            "next_average": (_RUNTIME_MODE_NEXT_AVERAGE, "ohlc4", 1),
+            "nextaverage": (_RUNTIME_MODE_NEXT_AVERAGE, "ohlc4", 1),
+            "next_high_low_mid": (_RUNTIME_MODE_NEXT_HIGH_LOW_MID, "hl2", 1),
+            "nexthighlowmid": (_RUNTIME_MODE_NEXT_HIGH_LOW_MID, "hl2", 1),
+            "ohlc4": (_RUNTIME_MODE_NEXT_AVERAGE, "ohlc4", 1),
+            "hl2": (_RUNTIME_MODE_NEXT_HIGH_LOW_MID, "hl2", 1),
         }
         mode_tuple = mode_map.get(mode_key)
         if not mode_tuple:
@@ -231,7 +243,7 @@ def _resolve_execution_policy(
                 "Unknown execution mode '%s', defaulting to NextOpen",
                 resolved_execution_mode,
             )
-            mode_tuple = (ExecutionMode.NextOpen, "open", 1)
+            mode_tuple = (_RUNTIME_MODE_NEXT_OPEN, "open", 1)
         resolved_mode_enum, mapped_basis, mapped_offset = mode_tuple
         if fill_policy is None:
             resolved_price_basis = mapped_basis
@@ -240,11 +252,11 @@ def _resolve_execution_policy(
         resolved_mode_enum = resolved_execution_mode
         if fill_policy is None:
             reverse_mode_map = {
-                ExecutionMode.NextOpen: ("open", 1),
-                ExecutionMode.CurrentClose: ("close", 0),
-                ExecutionMode.NextClose: ("close", 1),
-                ExecutionMode.NextAverage: ("ohlc4", 1),
-                ExecutionMode.NextHighLowMid: ("hl2", 1),
+                _RUNTIME_MODE_NEXT_OPEN: ("open", 1),
+                _RUNTIME_MODE_CURRENT_CLOSE: ("close", 0),
+                _RUNTIME_MODE_NEXT_CLOSE: ("close", 1),
+                _RUNTIME_MODE_NEXT_AVERAGE: ("ohlc4", 1),
+                _RUNTIME_MODE_NEXT_HIGH_LOW_MID: ("hl2", 1),
             }
             mapped_basis, mapped_offset = reverse_mode_map.get(
                 resolved_mode_enum, ("open", 1)
@@ -451,7 +463,6 @@ def _attach_result_runtime_metadata(
                 "price_basis": resolved_policy.price_basis,
                 "bar_offset": resolved_policy.bar_offset,
                 "temporal": resolved_policy.temporal,
-                "execution_mode": str(resolved_policy.execution_mode),
                 "source": resolved_policy.source,
             },
         )
@@ -1342,7 +1353,6 @@ def run_backtest(
     min_commission: Optional[float] = None,
     slippage: Optional[float] = None,
     volume_limit_pct: Optional[float] = None,
-    execution_mode: Union[ExecutionMode, str] = ExecutionMode.NextOpen,
     timezone: Optional[str] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
@@ -1385,7 +1395,6 @@ def run_backtest(
     analyzer_plugins: Optional[Sequence[AnalyzerPlugin]] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     broker_profile: Optional[str] = None,
-    timer_execution_policy: str = "same_cycle",
     fill_policy: Optional[FillPolicy] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
@@ -1419,14 +1428,11 @@ def run_backtest(
     :param min_commission: 最低佣金 (默认 0.0)
     :param slippage: 滑点 (默认 0.0)
     :param volume_limit_pct: 成交量限制比例 (默认 0.25)
-    :param execution_mode: 已移除（仅保留默认值）。请使用 fill_policy.price_basis。
-    :param timer_execution_policy: 已移除（仅保留默认值）。请使用 fill_policy.temporal。
     :param fill_policy: 统一成交语义配置（可选），格式:
         {"price_basis": "open|close|ohlc4|hl2",
          "bar_offset": "0|1",
          "temporal": "same_cycle|next_event"}。
         预留未实现 price_basis: mid_quote、vwap_window、twap_window。
-        若提供该参数，则其语义优先于 execution_mode 与 timer_execution_policy。
     :param legacy_execution_policy_compat: 已移除，不再支持。
     :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
                                    False 时保持兼容行为（忽略未知参数并在失败时
@@ -1506,6 +1512,11 @@ def run_backtest(
     """
     if "_engine_mode" in kwargs:
         raise TypeError("_engine_mode is no longer supported")
+    _raise_if_legacy_execution_policy_used(
+        legacy_mode_used="execution_mode" in kwargs,
+        legacy_timer_used="timer_execution_policy" in kwargs,
+        api_name="run_backtest",
+    )
     strategy_config = config.strategy_config if config is not None else None
     (
         strategy_id,
@@ -2564,30 +2575,31 @@ def run_backtest(
                 )
 
     resolved_policy = _resolve_execution_policy(
-        execution_mode=execution_mode,
-        timer_execution_policy=timer_execution_policy,
+        execution_mode="next_open",
+        timer_execution_policy="same_cycle",
         fill_policy=fill_policy,
         logger=logger,
     )
-    _raise_if_legacy_execution_policy_used(
-        legacy_mode_used=execution_mode != ExecutionMode.NextOpen,
-        legacy_timer_used=str(timer_execution_policy).strip().lower() != "same_cycle",
-        api_name="run_backtest",
+    if not hasattr(engine, "set_fill_policy"):
+        raise RuntimeError(
+            "Engine binary does not expose set_fill_policy; please rebuild bindings"
+        )
+    cast(Any, engine).set_fill_policy(
+        resolved_policy.price_basis,
+        resolved_policy.bar_offset,
+        resolved_policy.temporal,
     )
-    resolved_mode_enum = resolved_policy.execution_mode
-    engine.set_execution_mode(resolved_mode_enum)
     timer_policy = resolved_policy.temporal
     if (
-        resolved_mode_enum != ExecutionMode.CurrentClose
+        not (resolved_policy.price_basis == "close" and resolved_policy.bar_offset == 0)
         and timer_policy == "same_cycle"
     ):
         logger.info(
-            "timer_execution_policy=%s has no effect when execution_mode=%s",
+            "temporal=%s has no effect when price_basis=%s and bar_offset=%s",
             timer_policy,
-            resolved_mode_enum,
+            resolved_policy.price_basis,
+            resolved_policy.bar_offset,
         )
-    if hasattr(engine, "set_timer_execution_policy"):
-        cast(Any, engine).set_timer_execution_policy(timer_policy)
 
     # 4.1 市场规则配置
     china_futures_config: Optional[ChinaFuturesConfig] = None
@@ -3389,14 +3401,13 @@ def run_warm_start(
     stream_max_buffer = prepared_stream_runtime.stream_max_buffer
     stream_error_mode = prepared_stream_runtime.stream_error_mode
     stream_mode = prepared_stream_runtime.stream_mode
-    has_execution_mode_override = "execution_mode" in kwargs
-    has_timer_policy_override = "timer_execution_policy" in kwargs
+    legacy_mode_override = "execution_mode" in kwargs
+    legacy_timer_override = "timer_execution_policy" in kwargs
     has_fill_policy_override = "fill_policy" in kwargs
-    execution_mode_override = cast(
-        Optional[Union[ExecutionMode, str]], kwargs.pop("execution_mode", None)
-    )
-    timer_execution_policy_override = cast(
-        str, kwargs.pop("timer_execution_policy", "same_cycle")
+    _raise_if_legacy_execution_policy_used(
+        legacy_mode_used=legacy_mode_override,
+        legacy_timer_used=legacy_timer_override,
+        api_name="run_warm_start",
     )
     fill_policy_override = cast(Optional[FillPolicy], kwargs.pop("fill_policy", None))
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
@@ -3960,32 +3971,22 @@ def run_warm_start(
         engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
         logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
     resolved_policy_warm_start: Optional[ResolvedExecutionPolicy] = None
-    if (
-        has_execution_mode_override
-        or has_timer_policy_override
-        or has_fill_policy_override
-    ):
-        _raise_if_legacy_execution_policy_used(
-            legacy_mode_used=has_execution_mode_override,
-            legacy_timer_used=has_timer_policy_override,
-            api_name="run_warm_start",
-        )
-        policy_input: Union[ExecutionMode, str] = (
-            execution_mode_override
-            if execution_mode_override is not None
-            else cast(Union[ExecutionMode, str], "next_open")
-        )
+    if has_fill_policy_override:
         resolved_policy_warm_start = _resolve_execution_policy(
-            execution_mode=policy_input,
-            timer_execution_policy=timer_execution_policy_override,
+            execution_mode="next_open",
+            timer_execution_policy="same_cycle",
             fill_policy=fill_policy_override,
             logger=logger,
         )
-        engine.set_execution_mode(resolved_policy_warm_start.execution_mode)
-        if hasattr(engine, "set_timer_execution_policy"):
-            cast(Any, engine).set_timer_execution_policy(
-                resolved_policy_warm_start.temporal
+        if not hasattr(engine, "set_fill_policy"):
+            raise RuntimeError(
+                "Engine binary does not expose set_fill_policy; please rebuild bindings"
             )
+        cast(Any, engine).set_fill_policy(
+            resolved_policy_warm_start.price_basis,
+            resolved_policy_warm_start.bar_offset,
+            resolved_policy_warm_start.temporal,
+        )
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(

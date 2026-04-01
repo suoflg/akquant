@@ -692,7 +692,6 @@ def test_policy_resolver_next_close_same_cycle_sets_timer_same_cycle() -> None:
         fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"},
         logger=backtest_engine.get_logger(),
     )
-    assert resolved.execution_mode == akquant.ExecutionMode.NextClose
     assert resolved.bar_offset == 1
     assert resolved.temporal == "same_cycle"
     assert resolved.price_basis == "close"
@@ -707,7 +706,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
         fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "next_event"},
         logger=backtest_engine.get_logger(),
     )
-    assert resolved.execution_mode == akquant.ExecutionMode.NextClose
     assert resolved.bar_offset == 1
     assert resolved.temporal == "next_event"
     assert resolved.price_basis == "close"
@@ -719,7 +717,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
         "execution_mode",
         "timer_execution_policy",
         "fill_policy",
-        "expected_mode",
         "expected_basis",
         "expected_temporal",
         "expected_source",
@@ -729,7 +726,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
             "next_open",
             "same_cycle",
             None,
-            akquant.ExecutionMode.NextOpen,
             "open",
             "same_cycle",
             "legacy",
@@ -738,7 +734,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
             "current_close",
             "next_event",
             None,
-            akquant.ExecutionMode.CurrentClose,
             "close",
             "next_event",
             "legacy",
@@ -747,7 +742,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
             "next_close",
             "same_cycle",
             None,
-            akquant.ExecutionMode.NextClose,
             "close",
             "same_cycle",
             "legacy",
@@ -756,7 +750,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
             "next_open",
             "same_cycle",
             {"price_basis": "ohlc4", "temporal": "next_event"},
-            akquant.ExecutionMode.NextAverage,
             "ohlc4",
             "next_event",
             "fill_policy",
@@ -765,7 +758,6 @@ def test_policy_resolver_next_close_next_event_sets_timer_next_event() -> None:
             "current_close",
             "next_event",
             {"price_basis": "hl2", "temporal": "same_cycle"},
-            akquant.ExecutionMode.NextHighLowMid,
             "hl2",
             "same_cycle",
             "fill_policy",
@@ -776,7 +768,6 @@ def test_policy_resolver_matrix(
     execution_mode: str,
     timer_execution_policy: str,
     fill_policy: Any,
-    expected_mode: akquant.ExecutionMode,
     expected_basis: str,
     expected_temporal: str,
     expected_source: str,
@@ -788,7 +779,6 @@ def test_policy_resolver_matrix(
         fill_policy=fill_policy,
         logger=backtest_engine.get_logger(),
     )
-    assert resolved.execution_mode == expected_mode
     assert resolved.price_basis == expected_basis
     assert resolved.temporal == expected_temporal
     assert resolved.source == expected_source
@@ -1335,7 +1325,7 @@ def test_engine_run_with_configured_slot_strategy() -> None:
     symbol = "SLOT_RUN"
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    engine.set_execution_mode(akquant.ExecutionMode.CurrentClose)
+    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
 
@@ -1363,7 +1353,7 @@ def test_backtest_regression_baseline() -> None:
     engine = akquant.Engine()
     engine.use_simple_market(0.0)
     engine.set_force_session_continuous(True)
-    engine.set_execution_mode(akquant.ExecutionMode.CurrentClose)
+    cast(Any, engine).set_fill_policy("close", 0, "same_cycle")
     engine.set_cash(100000.0)
     engine.set_stock_fee_rules(0.0, 0.0, 0.0, 0.0)
     engine.set_t_plus_one(False)
@@ -1415,6 +1405,29 @@ def test_backtest_regression_baseline() -> None:
     assert trade.return_pct == pytest.approx(10.0, rel=1e-9)
     assert trade.commission == pytest.approx(0.0, rel=1e-9)
     assert trade.duration_bars == 2
+
+
+def test_engine_set_fill_policy_roundtrip() -> None:
+    """Engine fill policy API should expose three-axis tuple."""
+    engine = akquant.Engine()
+    if not hasattr(engine, "set_fill_policy"):
+        pytest.skip("Engine binary does not expose fill policy methods")
+    cast(Any, engine).set_fill_policy("close", 1, "next_event")
+    basis, bar_offset, temporal = cast(
+        tuple[str, int, str], cast(Any, engine).get_fill_policy()
+    )
+    assert basis == "close"
+    assert int(bar_offset) == 1
+    assert temporal == "next_event"
+
+
+def test_engine_set_fill_policy_invalid_combo() -> None:
+    """Engine fill policy should reject invalid basis/offset combos."""
+    engine = akquant.Engine()
+    if not hasattr(engine, "set_fill_policy"):
+        pytest.skip("Engine binary does not expose fill policy methods")
+    with pytest.raises(ValueError, match="requires bar_offset=1"):
+        cast(Any, engine).set_fill_policy("open", 0, "same_cycle")
 
 
 def test_backtest_performance_baseline() -> None:
@@ -3987,8 +4000,8 @@ def test_china_futures_session_profile_accepts_cffex_presets() -> None:
     assert config_bond.session_profile == "CN_FUTURES_CFFEX_BOND_DAY"
 
 
-def test_run_grid_search_parallel_normalizes_execution_mode_enum() -> None:
-    """Parallel grid search should accept ExecutionMode enum via normalization."""
+def test_run_grid_search_parallel_accepts_fill_policy() -> None:
+    """Parallel grid search should accept fill_policy in kwargs."""
     data = _build_benchmark_data(n=40, symbol="OPT_EXEC_MODE_ENUM")
 
     results = akquant.run_grid_search(
@@ -3996,7 +4009,7 @@ def test_run_grid_search_parallel_normalizes_execution_mode_enum() -> None:
         param_grid={"dummy": [1, 2]},
         data=data,
         symbol="OPT_EXEC_MODE_ENUM",
-        execution_mode=akquant.ExecutionMode.CurrentClose,
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
         max_workers=2,
         return_df=True,
         show_progress=False,
@@ -4225,24 +4238,21 @@ def test_run_grid_search_single_worker_accepts_camelcase_execution_mode() -> Non
         }
     )
 
-    results = akquant.run_grid_search(
-        strategy=SingleBuyStrategy,
-        param_grid={},
-        data=data,
-        symbols=[symbol],
-        execution_mode="CurrentClose",
-        initial_cash=15.0,
-        max_workers=1,
-        return_df=True,
-        show_progress=False,
-    )
-
-    assert isinstance(results, pd.DataFrame)
-    assert len(results) == 1
-    assert "error" in results.columns
-    assert "no longer accepts execution_mode/timer_execution_policy" in str(
-        results.iloc[0]["error"]
-    )
+    with pytest.raises(
+        ValueError,
+        match="run_grid_search no longer accepts execution_mode/timer_execution_policy",
+    ):
+        _ = akquant.run_grid_search(
+            strategy=SingleBuyStrategy,
+            param_grid={},
+            data=data,
+            symbols=[symbol],
+            execution_mode="CurrentClose",
+            initial_cash=15.0,
+            max_workers=1,
+            return_df=True,
+            show_progress=False,
+        )
 
 
 def test_run_grid_search_external_strategy_current_close_effective(
@@ -4290,23 +4300,21 @@ def test_run_grid_search_external_strategy_current_close_effective(
         }
     )
 
-    results = akquant.run_grid_search(
-        strategy=cast(type[akquant.Strategy], strategy_cls),
-        param_grid={"dummy": [1]},
-        data=data,
-        symbols=[symbol],
-        execution_mode="current_close",
-        initial_cash=15.0,
-        max_workers=1,
-        return_df=True,
-        show_progress=False,
-    )
-    assert isinstance(results, pd.DataFrame)
-    assert len(results) == 1
-    assert "error" in results.columns
-    assert "no longer accepts execution_mode/timer_execution_policy" in str(
-        results.iloc[0]["error"]
-    )
+    with pytest.raises(
+        ValueError,
+        match="run_grid_search no longer accepts execution_mode/timer_execution_policy",
+    ):
+        _ = akquant.run_grid_search(
+            strategy=cast(type[akquant.Strategy], strategy_cls),
+            param_grid={"dummy": [1]},
+            data=data,
+            symbols=[symbol],
+            execution_mode="current_close",
+            initial_cash=15.0,
+            max_workers=1,
+            return_df=True,
+            show_progress=False,
+        )
 
 
 def test_run_grid_search_db_path_serializes_timestamp_metrics(

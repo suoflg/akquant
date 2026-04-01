@@ -24,7 +24,6 @@ def run_backtest(
     min_commission: float = 0.0,
     slippage: Optional[float] = None,
     volume_limit_pct: Optional[float] = None,
-    execution_mode: Union[ExecutionMode, str] = ExecutionMode.NextOpen,
     timezone: Optional[str] = None,
     t_plus_one: bool = False,
     initialize: Optional[Callable[[Any], None]] = None,
@@ -57,8 +56,7 @@ def run_backtest(
     risk_budget_reset_daily: bool = False,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     broker_profile: Optional[str] = None,
-    timer_execution_policy: Literal["same_cycle", "next_event"] = "same_cycle",
-    fill_policy: Optional[Dict[str, str]] = None,
+    fill_policy: Optional[Dict[str, Any]] = None,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult
@@ -71,14 +69,15 @@ def run_backtest(
 *   `initialize` / `on_start` / `on_stop`: Functional-strategy lifecycle callbacks for initialization, start, and stop stages.
 *   `symbols`: Preferred parameter. Symbol or list of symbols.
 *   `initial_cash`: Initial cash (default 1,000,000.0).
-*   `execution_mode`: Removed. Use `fill_policy.price_basis`.
-*   `timer_execution_policy`: Removed. Use `fill_policy.temporal`.
+*   Legacy price-basis parameter: Removed.
+*   Legacy timer-temporal parameter: Removed.
 *   `fill_policy`: Unified fill semantics.
-    *   `price_basis`: `next_open`, `current_close`, `ohlc4` (OHLC average), or `hl2` (high-low midpoint).
+    *   `price_basis`: `open`, `close`, `ohlc4` (OHLC average), or `hl2` (high-low midpoint).
+    *   `bar_offset`: `0` or `1`. Required for full three-axis semantics.
     *   Reserved (not implemented yet): `mid_quote`, `vwap_window`, `twap_window` (currently raises `NotImplementedError`).
     *   `temporal`: `same_cycle` or `next_event`.
 *   `legacy_execution_policy_compat` (via `**kwargs`): Removed.
-*   Migration hint: `execution_mode`/`timer_execution_policy` are no longer accepted; use `fill_policy`.
+*   Migration hint: legacy execution parameters are no longer accepted; use `fill_policy`.
 *   `strict_strategy_params`: Whether to strictly validate strategy constructor parameters (default `True`).
     *   Raises immediately if unsupported constructor parameters are provided.
     *   Recommended to keep enabled to avoid silent parameter mismatch and distorted backtest results.
@@ -110,7 +109,7 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "same_cycle"},
 )
 
 # Current-close price with next-event temporal matching
@@ -118,19 +117,19 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "next_event"},
 )
 ```
 
-**Execution semantics migration map (legacy -> fill_policy):**
+**Execution semantics quick map (three-axis only):**
 
-| Legacy parameters | New style |
+| Scenario | `fill_policy` |
 | :--- | :--- |
-| `execution_mode="next_open"` | `fill_policy={"price_basis":"open","temporal":"same_cycle"}` |
-| `execution_mode="current_close", timer_execution_policy="same_cycle"` | `fill_policy={"price_basis":"close","temporal":"same_cycle"}` |
-| `execution_mode="current_close", timer_execution_policy="next_event"` | `fill_policy={"price_basis":"close","temporal":"next_event"}` |
-| `execution_mode="next_average"` | `fill_policy={"price_basis":"ohlc4","temporal":"same_cycle"}` |
-| `execution_mode="next_high_low_mid"` | `fill_policy={"price_basis":"hl2","temporal":"same_cycle"}` |
+| Next-open style fill | `{"price_basis":"open","bar_offset":1,"temporal":"same_cycle"}` |
+| Current-close style fill | `{"price_basis":"close","bar_offset":0,"temporal":"same_cycle"}` |
+| Next-bar close fill | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
+| Next-bar OHLC average fill | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
+| Next-bar HL2 fill | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
 
 ### `akquant.run_grid_search`
 
@@ -270,8 +269,8 @@ result = aq.run_backtest(
 *   Prefer migrating realtime UI/logging/alerting to `run_backtest(..., on_event=...)`.
 *   Stream use cases are unified under `run_backtest(..., on_event=...)`.
 *   Legacy execution policy compatibility gate has been removed.
-*   `execution_mode`/`timer_execution_policy` and `legacy_execution_policy_compat` are no longer accepted.
-*   Use `fill_policy` for all execution semantics.
+*   Legacy execution parameters and `legacy_execution_policy_compat` are no longer accepted.
+*   Use `fill_policy` for all public execution configuration.
 *   Cutover playbook: [Execution Policy Cutover Checklist](../advanced/execution_policy_cutover.md).
 *   Since Phase 5, runtime rollback flags are removed; use release-level rollback when needed.
 *   Phase-4 observation window and go/no-go gates are documented in [Unified Stream Core Checklist](../advanced/stream_observability.md).
@@ -738,7 +737,8 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 
 *   `set_timezone(offset: int)`: Set timezone offset.
 *   `use_simulated_execution()` / `use_realtime_execution()`: Set execution environment.
-*   `set_execution_mode(mode)`: Set matching mode.
+*   `set_fill_policy(price_basis, bar_offset, temporal)`: Set unified three-axis execution policy (recommended).
+*   `get_fill_policy()`: Get current three-axis execution policy.
 *   `set_history_depth(depth)`: Set history data cache length.
 
 **Market & Fee Configuration:**

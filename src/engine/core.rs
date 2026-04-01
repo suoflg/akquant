@@ -19,7 +19,7 @@ use crate::execution::ExecutionClient;
 use crate::history::HistoryBuffer;
 use crate::market::corporate_action::CorporateActionManager;
 use crate::market::manager::MarketManager;
-use crate::model::{ExecutionMode, Instrument, Order, OrderSide, Timer, Trade};
+use crate::model::{ExecutionMode, ExecutionPolicyCore, Instrument, Order, OrderSide, Timer, Trade};
 use crate::pipeline::PipelineRunner;
 use crate::pipeline::stages::{
     ChannelProcessor, CleanupProcessor, DataProcessor, ExecutionPhase, ExecutionProcessor,
@@ -130,8 +130,17 @@ pub(crate) struct PendingStreamEvent {
 
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
+    pub(crate) fn execution_policy_core(&self) -> ExecutionPolicyCore {
+        ExecutionPolicyCore::from_legacy(self.execution_mode, &self.timer_execution_policy)
+    }
+
+    pub(crate) fn set_execution_policy_core(&mut self, policy: ExecutionPolicyCore) {
+        self.execution_mode = policy.to_legacy_mode();
+        self.timer_execution_policy = policy.temporal_as_str().to_string();
+    }
+
     pub(crate) fn timer_same_cycle_enabled(&self) -> bool {
-        self.timer_execution_policy == "same_cycle"
+        self.execution_policy_core().temporal_as_str() == "same_cycle"
     }
 
     pub(crate) fn normalized_order_strategy_id(order: &Order) -> Option<String> {
