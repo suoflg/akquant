@@ -133,7 +133,7 @@ def test_report_contains_new_analysis_sections(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -161,7 +161,7 @@ def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -192,7 +192,7 @@ def test_report_includes_benchmark_comparison_sections(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -228,7 +228,7 @@ def test_report_handles_string_benchmark_with_notice(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -255,7 +255,7 @@ def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -278,7 +278,7 @@ def test_plot_functions_return_figures_for_non_empty_result() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -306,7 +306,7 @@ def test_daily_curve_properties_reduce_intraday_points() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -331,7 +331,7 @@ def test_report_accepts_curve_freq_daily(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -352,7 +352,7 @@ def test_report_rejects_invalid_curve_freq(tmp_path: Path) -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -402,7 +402,7 @@ def test_report_contains_forced_liquidation_audit_section(tmp_path: Path) -> Non
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
         risk_config=RiskConfig(

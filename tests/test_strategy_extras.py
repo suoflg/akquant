@@ -1456,6 +1456,254 @@ def test_run_warm_start_accepts_strategy_runtime_config(tmp_path: Path) -> None:
     assert strategy.errors == ["on_bar", "on_bar"]
 
 
+def test_run_warm_start_exposes_resolved_execution_policy(tmp_path: Path) -> None:
+    """run_warm_start should expose resolved execution policy when overridden."""
+    checkpoint = tmp_path / "snapshot_policy_meta.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    result2 = run_warm_start(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="TEST",
+        show_progress=False,
+        fill_policy={"price_basis": "next_close", "temporal": "next_event"},
+    )
+
+    policy = result2.resolved_execution_policy
+    assert policy is not None
+    assert policy["price_basis"] == "next_close"
+    assert policy["temporal"] == "next_event"
+    assert str(policy["execution_mode"]).endswith("NextClose")
+    assert policy["source"] == "fill_policy"
+
+
+def test_run_warm_start_rejects_legacy_execution_overrides_without_fill_policy(
+    tmp_path: Path,
+) -> None:
+    """run_warm_start should reject legacy execution overrides."""
+    checkpoint = tmp_path / "snapshot_policy_warn.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+    ):
+        legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            **legacy_kwargs,
+        )
+
+
+def test_run_warm_start_rejects_legacy_timer_override_without_fill_policy(
+    tmp_path: Path,
+) -> None:
+    """run_warm_start should reject legacy timer policy override."""
+    checkpoint = tmp_path / "snapshot_timer_warn.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+    ):
+        legacy_kwargs: dict[str, Any] = {"timer_execution_policy": "next_event"}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            **legacy_kwargs,
+        )
+
+
+def test_run_warm_start_rejects_legacy_execution_overrides_when_compat_disabled(
+    tmp_path: Path,
+) -> None:
+    """Reject legacy warm_start execution overrides."""
+    checkpoint = tmp_path / "snapshot_legacy_off.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+    ):
+        legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            **legacy_kwargs,
+        )
+
+
+def test_run_warm_start_rejects_non_bool_legacy_execution_policy_compat(
+    tmp_path: Path,
+) -> None:
+    """legacy_execution_policy_compat should be removed in warm_start."""
+    checkpoint = tmp_path / "snapshot_legacy_type.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(
+        TypeError, match="legacy_execution_policy_compat is no longer supported"
+    ):
+        compat_kwargs: dict[str, Any] = {"legacy_execution_policy_compat": "false"}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            **compat_kwargs,
+        )
+
+
+def test_run_warm_start_rejects_legacy_by_env_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy env var should not re-enable removed warm_start legacy overrides."""
+    monkeypatch.setenv("AKQ_LEGACY_EXECUTION_POLICY_COMPAT", "false")
+    checkpoint = tmp_path / "snapshot_legacy_env_off.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+
+    with pytest.raises(
+        ValueError,
+        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+    ):
+        legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            **legacy_kwargs,
+        )
+
+
+def test_run_warm_start_rejects_invalid_legacy_env_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invalid legacy compat env value should not affect fill_policy path."""
+    checkpoint = tmp_path / "snapshot_legacy_env_bad.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    monkeypatch.setenv("AKQ_LEGACY_EXECUTION_POLICY_COMPAT", "bad")
+    result2 = run_warm_start(
+        checkpoint_path=str(checkpoint),
+        data=phase2,
+        symbols="TEST",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        show_progress=False,
+    )
+    assert result2.resolved_execution_policy is not None
+    assert result2.resolved_execution_policy["source"] == "fill_policy"
+
+
+def test_run_warm_start_explicit_compat_overrides_env_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Removed compat flag should fail in warm_start even when env is set."""
+    checkpoint = tmp_path / "snapshot_legacy_env_override.pkl"
+    phase1 = _make_bars("2023-01-01", 2, symbol="TEST")
+    phase2 = _make_bars("2023-01-03", 2, symbol="TEST", start_price=102.0)
+    result1 = run_backtest(
+        data=phase1,
+        strategy=WarmStartE2EStrategy,
+        symbols="TEST",
+        show_progress=False,
+    )
+    save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]
+    monkeypatch.setenv("AKQ_LEGACY_EXECUTION_POLICY_COMPAT", "false")
+    with pytest.raises(
+        ValueError,
+        match="run_warm_start no longer accepts execution_mode/timer_execution_policy",
+    ):
+        legacy_kwargs: dict[str, Any] = {"execution_mode": "current_close"}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            **legacy_kwargs,
+        )
+    with pytest.raises(
+        TypeError, match="legacy_execution_policy_compat is no longer supported"
+    ):
+        compat_kwargs: dict[str, Any] = {"legacy_execution_policy_compat": True}
+        _ = run_warm_start(
+            checkpoint_path=str(checkpoint),
+            data=phase2,
+            symbols="TEST",
+            show_progress=False,
+            fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+            **compat_kwargs,
+        )
+
+
 def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
     """Warm start should preserve strategy-level risk state across snapshots."""
     checkpoint = tmp_path / "snapshot_risk_state.pkl"
@@ -1467,7 +1715,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
         initial_cash=100000.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -1480,7 +1728,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
     )
     engine = result2.engine
@@ -1516,7 +1764,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
         initial_cash=100000.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -1527,7 +1775,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -1562,7 +1810,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
     )
@@ -1572,7 +1820,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
     )
@@ -1605,7 +1853,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
     )
@@ -1615,7 +1863,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
         strategy_max_order_size={"alpha": 20.0, "beta": 5.0},
@@ -2044,7 +2292,7 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
         strategy=WarmStartEventIdempotencyStrategy,
         symbols="BENCHMARK",
         initial_cash=100000.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]

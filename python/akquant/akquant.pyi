@@ -222,6 +222,7 @@ class BacktestResult:
     executions: list[Trade]
     metrics_df: typing.Any
     orders_df: typing.Any
+    resolved_execution_policy: typing.Optional[dict[str, typing.Any]]
     def get_trades_ipc(self) -> bytes:
         r"""Get trades as Arrow IPC bytes (Zero-Copy-ish to Python)."""
         ...

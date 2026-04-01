@@ -62,7 +62,7 @@ def test_account_max_drawdown_rule_rejects_new_orders() -> None:
         symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(max_account_drawdown=0.01),
     )
@@ -85,7 +85,7 @@ def test_account_max_daily_loss_rule_rejects_new_orders_same_day() -> None:
         symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(max_daily_loss=0.01),
     )
@@ -108,7 +108,7 @@ def test_account_stop_loss_threshold_rule_rejects_new_orders() -> None:
         symbols="RISK",
         initial_cash=100000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(stop_loss_threshold=0.99),
     )
@@ -184,7 +184,7 @@ def test_short_option_margin_is_checked_and_account_margin_updates() -> None:
         data={"PUT_OPT": data_opt, "UL": data_ul},
         strategy=ShortPutStrategy,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         config=BacktestConfig(
             strategy_config=StrategyConfig(
                 initial_cash=50000.0,
@@ -242,7 +242,7 @@ def test_margin_account_allows_short_sell_when_enabled() -> None:
         symbols="SHORTABLE",
         initial_cash=100000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(account_mode="margin", enable_short_sell=True),
     )
@@ -286,7 +286,7 @@ def test_margin_account_stock_buy_uses_initial_margin_ratio() -> None:
         symbols="MARGIN_BUY",
         initial_cash=100000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",
@@ -339,7 +339,7 @@ def test_margin_account_daily_financing_interest_is_deducted() -> None:
         symbols="INTEREST",
         initial_cash=10000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",
@@ -391,7 +391,7 @@ def test_margin_account_force_liquidation_on_maintenance_breach() -> None:
         symbols="LIQ",
         initial_cash=10000.0,
         show_progress=False,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         risk_config=RiskConfig(
             account_mode="margin",

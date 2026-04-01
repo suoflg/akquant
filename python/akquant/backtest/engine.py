@@ -86,6 +86,21 @@ class ResolvedExecutionPolicy:
     price_basis: str
     temporal: str
     execution_mode: ExecutionMode
+    source: Literal["fill_policy", "legacy"]
+
+
+@dataclass
+class PreparedStreamRuntime:
+    """Prepared stream runtime components shared by backtest/warm_start."""
+
+    stream_on_event: Callable[[BacktestStreamEvent], None]
+    event_stats_snapshot: Dict[str, Any]
+    stream_progress_interval: int
+    stream_equity_interval: int
+    stream_batch_size: int
+    stream_max_buffer: int
+    stream_error_mode: str
+    stream_mode: str
 
 
 _SUPPORTED_FILL_PRICE_BASIS_TO_MODE: Dict[str, ExecutionMode] = {
@@ -108,6 +123,7 @@ def _resolve_execution_policy(
     resolved_execution_mode = execution_mode
     resolved_timer_policy = str(timer_execution_policy).strip().lower()
     resolved_price_basis = "next_open"
+    resolved_source: Literal["fill_policy", "legacy"] = "legacy"
     if fill_policy is not None:
         if not isinstance(fill_policy, dict):
             raise TypeError("fill_policy must be a dict")
@@ -142,6 +158,7 @@ def _resolve_execution_policy(
         resolved_execution_mode = basis_mode
         resolved_timer_policy = raw_temporal
         resolved_price_basis = raw_basis
+        resolved_source = "fill_policy"
 
     if isinstance(resolved_execution_mode, str):
         mode_text = str(resolved_execution_mode).strip()
@@ -193,6 +210,18 @@ def _resolve_execution_policy(
         price_basis=resolved_price_basis,
         temporal=resolved_timer_policy,
         execution_mode=resolved_mode_enum,
+        source=resolved_source,
+    )
+
+
+def _raise_if_legacy_execution_policy_used(
+    *, legacy_mode_used: bool, legacy_timer_used: bool, api_name: str
+) -> None:
+    if not (legacy_mode_used or legacy_timer_used):
+        return
+    raise ValueError(
+        f"{api_name} no longer accepts execution_mode/timer_execution_policy; "
+        "please use fill_policy"
     )
 
 
@@ -263,6 +292,119 @@ def _parse_stream_mode(value: Any) -> str:
 
 def _noop_stream_event_handler(_event: BacktestStreamEvent) -> None:
     return None
+
+
+def _prepare_stream_runtime(
+    *,
+    on_event: Optional[Callable[[BacktestStreamEvent], None]],
+    kwargs: Dict[str, Any],
+    owner_strategy_id: Optional[str] = None,
+    patch_owner_strategy_id: bool = False,
+) -> PreparedStreamRuntime:
+    stream_on_event = on_event
+    internal_stream_callback = kwargs.pop("_stream_on_event", None)
+    if internal_stream_callback is not None and stream_on_event is not None:
+        raise TypeError("on_event and _stream_on_event cannot be provided together")
+    if internal_stream_callback is not None:
+        stream_on_event = internal_stream_callback
+    if stream_on_event is not None and not callable(stream_on_event):
+        raise TypeError("on_event must be callable when provided")
+    if stream_on_event is None:
+        stream_on_event = _noop_stream_event_handler
+    original_stream_handler = stream_on_event
+    event_stats_snapshot: Dict[str, Any] = {}
+
+    def wrapped_stream_on_event(event: BacktestStreamEvent) -> None:
+        event_type = str(event.get("event_type", ""))
+        if event_type == "finished":
+            payload_obj = event.get("payload", {})
+            if isinstance(payload_obj, dict):
+                for key in (
+                    "processed_events",
+                    "dropped_event_count",
+                    "callback_error_count",
+                    "backpressure_policy",
+                    "stream_mode",
+                    "sampling_enabled",
+                    "sampling_rate",
+                    "reason",
+                ):
+                    if key in payload_obj:
+                        event_stats_snapshot[key] = payload_obj.get(key)
+        if patch_owner_strategy_id and owner_strategy_id is not None:
+            if event_type in {"order", "trade", "risk"}:
+                payload_obj = event.get("payload", {})
+                if isinstance(payload_obj, dict):
+                    current_owner = payload_obj.get("owner_strategy_id")
+                    if current_owner is None or str(current_owner) == "":
+                        patched_event = dict(event)
+                        patched_payload = dict(payload_obj)
+                        patched_payload["owner_strategy_id"] = owner_strategy_id
+                        patched_event["payload"] = cast(Dict[str, str], patched_payload)
+                        original_stream_handler(
+                            cast(BacktestStreamEvent, patched_event)
+                        )
+                        return
+        original_stream_handler(event)
+
+    stream_progress_interval = _parse_positive_int_option(
+        "stream_progress_interval", kwargs.pop("stream_progress_interval", 1)
+    )
+    stream_equity_interval = _parse_positive_int_option(
+        "stream_equity_interval", kwargs.pop("stream_equity_interval", 1)
+    )
+    stream_batch_size = _parse_positive_int_option(
+        "stream_batch_size", kwargs.pop("stream_batch_size", 1)
+    )
+    stream_max_buffer = _parse_positive_int_option(
+        "stream_max_buffer", kwargs.pop("stream_max_buffer", 1024)
+    )
+    stream_error_mode = _parse_stream_error_mode(
+        kwargs.pop("stream_error_mode", "continue")
+    )
+    stream_mode = _parse_stream_mode(kwargs.pop("stream_mode", "observability"))
+    if "legacy_execution_policy_compat" in kwargs:
+        raise TypeError(
+            "legacy_execution_policy_compat is no longer supported; "
+            "please use fill_policy"
+        )
+    return PreparedStreamRuntime(
+        stream_on_event=wrapped_stream_on_event,
+        event_stats_snapshot=event_stats_snapshot,
+        stream_progress_interval=stream_progress_interval,
+        stream_equity_interval=stream_equity_interval,
+        stream_batch_size=stream_batch_size,
+        stream_max_buffer=stream_max_buffer,
+        stream_error_mode=stream_error_mode,
+        stream_mode=stream_mode,
+    )
+
+
+def _attach_result_runtime_metadata(
+    *,
+    result: BacktestResult,
+    engine_summary: Any,
+    event_stats_snapshot: Dict[str, Any],
+    owner_strategy_id: str,
+    resolved_policy: Optional[ResolvedExecutionPolicy],
+) -> None:
+    setattr(result, "_engine_summary", engine_summary)
+    setattr(result, "_event_stats", dict(event_stats_snapshot))
+    setattr(result, "_owner_strategy_id", owner_strategy_id)
+    if resolved_policy is not None:
+        setattr(
+            result,
+            "_resolved_execution_policy",
+            {
+                "price_basis": resolved_policy.price_basis,
+                "temporal": resolved_policy.temporal,
+                "execution_mode": str(resolved_policy.execution_mode),
+                "source": resolved_policy.source,
+            },
+        )
+        result.resolved_execution_policy = cast(
+            Dict[str, Any], getattr(result, "_resolved_execution_policy")
+        )
 
 
 def _normalize_symbols_argument(
@@ -1224,15 +1366,14 @@ def run_backtest(
     :param min_commission: 最低佣金 (默认 0.0)
     :param slippage: 滑点 (默认 0.0)
     :param volume_limit_pct: 成交量限制比例 (默认 0.25)
-    :param execution_mode: 执行模式 (如 ExecutionMode.NextOpen/NextClose 或字符串)
-    :param timer_execution_policy: 定时器下单撮合策略:
-        "same_cycle" 表示在当前 timer 事件撮合（CurrentClose 模式）；
-        "next_event" 表示延后到下一条行情事件撮合。
+    :param execution_mode: 已移除（仅保留默认值）。请使用 fill_policy.price_basis。
+    :param timer_execution_policy: 已移除（仅保留默认值）。请使用 fill_policy.temporal。
     :param fill_policy: 统一成交语义配置（可选），格式:
         {"price_basis": "next_open|current_close|next_close|ohlc4|hl2",
          "temporal": "same_cycle|next_event"}。
         预留未实现 price_basis: mid_quote、vwap_window、twap_window。
         若提供该参数，则其语义优先于 execution_mode 与 timer_execution_policy。
+    :param legacy_execution_policy_compat: 已移除，不再支持。
     :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
                                    False 时保持兼容行为（忽略未知参数并在失败时
                                    回退无参构造）。
@@ -1396,67 +1537,21 @@ def run_backtest(
         risk_budget_mode=risk_budget_mode,
     )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
-    stream_on_event = on_event
-    internal_stream_callback = kwargs.pop("_stream_on_event", None)
-    if internal_stream_callback is not None and stream_on_event is not None:
-        raise TypeError("on_event and _stream_on_event cannot be provided together")
-    if internal_stream_callback is not None:
-        stream_on_event = internal_stream_callback
-    if stream_on_event is not None and not callable(stream_on_event):
-        raise TypeError("on_event must be callable when provided")
-    if stream_on_event is None:
-        stream_on_event = _noop_stream_event_handler
     effective_strategy_id = strategy_id or "_default"
-    original_stream_handler = stream_on_event
-    event_stats_snapshot: Dict[str, Any] = {}
-
-    def wrapped_stream_on_event(event: BacktestStreamEvent) -> None:
-        event_type = str(event.get("event_type", ""))
-        if event_type == "finished":
-            payload_obj = event.get("payload", {})
-            if isinstance(payload_obj, dict):
-                for key in (
-                    "processed_events",
-                    "dropped_event_count",
-                    "callback_error_count",
-                    "backpressure_policy",
-                    "stream_mode",
-                    "sampling_enabled",
-                    "sampling_rate",
-                    "reason",
-                ):
-                    if key in payload_obj:
-                        event_stats_snapshot[key] = payload_obj.get(key)
-        if event_type in {"order", "trade", "risk"}:
-            payload_obj = event.get("payload", {})
-            if isinstance(payload_obj, dict):
-                owner_strategy_id = payload_obj.get("owner_strategy_id")
-                if owner_strategy_id is None or str(owner_strategy_id) == "":
-                    patched_event = dict(event)
-                    patched_payload = dict(payload_obj)
-                    patched_payload["owner_strategy_id"] = effective_strategy_id
-                    patched_event["payload"] = cast(Dict[str, str], patched_payload)
-                    original_stream_handler(cast(BacktestStreamEvent, patched_event))
-                    return
-        original_stream_handler(event)
-
-    stream_on_event = wrapped_stream_on_event
-    stream_progress_interval = _parse_positive_int_option(
-        "stream_progress_interval", kwargs.pop("stream_progress_interval", 1)
+    prepared_stream_runtime = _prepare_stream_runtime(
+        on_event=on_event,
+        kwargs=kwargs,
+        owner_strategy_id=effective_strategy_id,
+        patch_owner_strategy_id=True,
     )
-    stream_equity_interval = _parse_positive_int_option(
-        "stream_equity_interval", kwargs.pop("stream_equity_interval", 1)
-    )
-    stream_batch_size = _parse_positive_int_option(
-        "stream_batch_size", kwargs.pop("stream_batch_size", 1)
-    )
-    stream_max_buffer = _parse_positive_int_option(
-        "stream_max_buffer", kwargs.pop("stream_max_buffer", 1024)
-    )
-    stream_error_mode = _parse_stream_error_mode(
-        kwargs.pop("stream_error_mode", "continue")
-    )
-    stream_mode = _parse_stream_mode(kwargs.pop("stream_mode", "observability"))
+    stream_on_event = prepared_stream_runtime.stream_on_event
+    event_stats_snapshot = prepared_stream_runtime.event_stats_snapshot
+    stream_progress_interval = prepared_stream_runtime.stream_progress_interval
+    stream_equity_interval = prepared_stream_runtime.stream_equity_interval
+    stream_batch_size = prepared_stream_runtime.stream_batch_size
+    stream_max_buffer = prepared_stream_runtime.stream_max_buffer
+    stream_error_mode = prepared_stream_runtime.stream_error_mode
+    stream_mode = prepared_stream_runtime.stream_mode
 
     # 0. 设置默认值 (如果未传入且未在 Config 中设置)
     # 优先级: 参数 > Config > 默认值
@@ -2420,6 +2515,11 @@ def run_backtest(
         fill_policy=fill_policy,
         logger=logger,
     )
+    _raise_if_legacy_execution_policy_used(
+        legacy_mode_used=execution_mode != ExecutionMode.NextOpen,
+        legacy_timer_used=str(timer_execution_policy).strip().lower() != "same_cycle",
+        api_name="run_backtest",
+    )
     resolved_mode_enum = resolved_policy.execution_mode
     engine.set_execution_mode(resolved_mode_enum)
     timer_policy = resolved_policy.temporal
@@ -3093,8 +3193,13 @@ def run_backtest(
         strategy=strategy_instance,
         engine=engine,
     )
-    setattr(result, "_engine_summary", engine_summary)
-    setattr(result, "_event_stats", dict(event_stats_snapshot))
+    _attach_result_runtime_metadata(
+        result=result,
+        engine_summary=engine_summary,
+        event_stats_snapshot=event_stats_snapshot,
+        owner_strategy_id=effective_strategy_id,
+        resolved_policy=resolved_policy,
+    )
     analyzer_outputs: Dict[str, Dict[str, Any]] = {}
     if analyzer_manager.plugins:
         try:
@@ -3113,7 +3218,6 @@ def run_backtest(
         except Exception as e:
             logger.error(f"Analyzer on_finish error: {e}")
     result.analyzer_outputs = analyzer_outputs
-    setattr(result, "_owner_strategy_id", effective_strategy_id)
     return result
 
 
@@ -3222,55 +3326,25 @@ def run_warm_start(
         risk_budget_mode=risk_budget_mode,
     )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
-    stream_on_event = on_event
-    internal_stream_callback = kwargs.pop("_stream_on_event", None)
-    if internal_stream_callback is not None and stream_on_event is not None:
-        raise TypeError("on_event and _stream_on_event cannot be provided together")
-    if internal_stream_callback is not None:
-        stream_on_event = internal_stream_callback
-    if stream_on_event is not None and not callable(stream_on_event):
-        raise TypeError("on_event must be callable when provided")
-    if stream_on_event is None:
-        stream_on_event = _noop_stream_event_handler
-    original_stream_handler = stream_on_event
-    event_stats_snapshot: Dict[str, Any] = {}
-
-    def wrapped_stream_on_event(event: BacktestStreamEvent) -> None:
-        event_type = str(event.get("event_type", ""))
-        if event_type == "finished":
-            payload_obj = event.get("payload", {})
-            if isinstance(payload_obj, dict):
-                for key in (
-                    "processed_events",
-                    "dropped_event_count",
-                    "callback_error_count",
-                    "backpressure_policy",
-                    "stream_mode",
-                    "sampling_enabled",
-                    "sampling_rate",
-                    "reason",
-                ):
-                    if key in payload_obj:
-                        event_stats_snapshot[key] = payload_obj.get(key)
-        original_stream_handler(event)
-
-    stream_on_event = wrapped_stream_on_event
-    stream_progress_interval = _parse_positive_int_option(
-        "stream_progress_interval", kwargs.pop("stream_progress_interval", 1)
+    prepared_stream_runtime = _prepare_stream_runtime(on_event=on_event, kwargs=kwargs)
+    stream_on_event = prepared_stream_runtime.stream_on_event
+    event_stats_snapshot = prepared_stream_runtime.event_stats_snapshot
+    stream_progress_interval = prepared_stream_runtime.stream_progress_interval
+    stream_equity_interval = prepared_stream_runtime.stream_equity_interval
+    stream_batch_size = prepared_stream_runtime.stream_batch_size
+    stream_max_buffer = prepared_stream_runtime.stream_max_buffer
+    stream_error_mode = prepared_stream_runtime.stream_error_mode
+    stream_mode = prepared_stream_runtime.stream_mode
+    has_execution_mode_override = "execution_mode" in kwargs
+    has_timer_policy_override = "timer_execution_policy" in kwargs
+    has_fill_policy_override = "fill_policy" in kwargs
+    execution_mode_override = cast(
+        Optional[Union[ExecutionMode, str]], kwargs.pop("execution_mode", None)
     )
-    stream_equity_interval = _parse_positive_int_option(
-        "stream_equity_interval", kwargs.pop("stream_equity_interval", 1)
+    timer_execution_policy_override = cast(
+        str, kwargs.pop("timer_execution_policy", "same_cycle")
     )
-    stream_batch_size = _parse_positive_int_option(
-        "stream_batch_size", kwargs.pop("stream_batch_size", 1)
-    )
-    stream_max_buffer = _parse_positive_int_option(
-        "stream_max_buffer", kwargs.pop("stream_max_buffer", 1024)
-    )
-    stream_error_mode = _parse_stream_error_mode(
-        kwargs.pop("stream_error_mode", "continue")
-    )
-    stream_mode = _parse_stream_mode(kwargs.pop("stream_mode", "observability"))
+    fill_policy_override = cast(Optional[FillPolicy], kwargs.pop("fill_policy", None))
     timezone_name = str(kwargs.get("timezone") or "Asia/Shanghai")
     symbols, effective_symbols = _resolve_effective_symbols(
         symbols=symbols,
@@ -3831,6 +3905,33 @@ def run_warm_start(
     if hasattr(engine, "set_stock_fee_rules"):
         engine.set_stock_fee_rules(commission, stamp_tax, transfer_fee, min_commission)
         logger.info(f"Re-configured market fees: comm={commission}, stamp={stamp_tax}")
+    resolved_policy_warm_start: Optional[ResolvedExecutionPolicy] = None
+    if (
+        has_execution_mode_override
+        or has_timer_policy_override
+        or has_fill_policy_override
+    ):
+        _raise_if_legacy_execution_policy_used(
+            legacy_mode_used=has_execution_mode_override,
+            legacy_timer_used=has_timer_policy_override,
+            api_name="run_warm_start",
+        )
+        policy_input: Union[ExecutionMode, str] = (
+            execution_mode_override
+            if execution_mode_override is not None
+            else cast(Union[ExecutionMode, str], "next_open")
+        )
+        resolved_policy_warm_start = _resolve_execution_policy(
+            execution_mode=policy_input,
+            timer_execution_policy=timer_execution_policy_override,
+            fill_policy=fill_policy_override,
+            logger=logger,
+        )
+        engine.set_execution_mode(resolved_policy_warm_start.execution_mode)
+        if hasattr(engine, "set_timer_execution_policy"):
+            cast(Any, engine).set_timer_execution_policy(
+                resolved_policy_warm_start.temporal
+            )
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(
@@ -3913,7 +4014,11 @@ def run_warm_start(
         strategy=strategy_instance,
         engine=engine,
     )
-    setattr(result, "_engine_summary", engine_summary)
-    setattr(result, "_event_stats", dict(event_stats_snapshot))
-    setattr(result, "_owner_strategy_id", effective_strategy_id)
+    _attach_result_runtime_metadata(
+        result=result,
+        engine_summary=engine_summary,
+        event_stats_snapshot=event_stats_snapshot,
+        owner_strategy_id=effective_strategy_id,
+        resolved_policy=resolved_policy_warm_start,
+    )
     return result

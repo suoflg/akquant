@@ -58,7 +58,7 @@ def main() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        execution_mode="current_close",
+        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
         strategy_id="alpha",

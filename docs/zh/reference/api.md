@@ -16,8 +16,7 @@
 def run_backtest(
     data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
-    symbol: Union[str, List[str]] = "BENCHMARK",
-    symbols: Optional[Union[str, List[str]]] = None,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
     initial_cash: Optional[float] = None,
     commission_rate: Optional[float] = None,
     stamp_tax_rate: float = 0.0,
@@ -155,16 +154,14 @@ def run_warm_start(
 *   `initialize` / `on_start` / `on_stop`: 函数式策略生命周期回调，分别对应初始化、启动、停止阶段。
 *   `symbols`: 标的代码或代码列表。
 *   `initial_cash`: 初始资金 (默认 100,000.0)。
-*   `execution_mode`: 执行模式。
-    *   `ExecutionMode.NextOpen`: 下一 Bar 开盘价成交 (默认)。
-    *   `ExecutionMode.CurrentClose`: 当前 Bar 收盘价成交。
-*   `timer_execution_policy`: 定时器事件成交时序策略（主要用于 `CurrentClose`）。
-    *   `"same_cycle"`: 在当前 `timer` 事件周期内撮合。
-    *   `"next_event"`: 延后到下一条行情事件再撮合。
-*   `fill_policy`: 统一成交语义配置（优先级高于 `execution_mode` 与 `timer_execution_policy`）。
+*   `execution_mode`: 已移除。请使用 `fill_policy.price_basis`。
+*   `timer_execution_policy`: 已移除。请使用 `fill_policy.temporal`。
+*   `fill_policy`: 统一成交语义配置。
     *   `price_basis`: `next_open`、`current_close`、`ohlc4`（OHLC 平均价）或 `hl2`（高低中价）。
     *   预留（暂未实现）: `mid_quote`、`vwap_window`、`twap_window`（当前会抛出 `NotImplementedError`）。
     *   `temporal`: `same_cycle` 或 `next_event`。
+*   `legacy_execution_policy_compat`（通过 `**kwargs`）: 已移除。
+*   迁移建议：`execution_mode`/`timer_execution_policy` 已不再接受，统一使用 `fill_policy`。
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
@@ -183,7 +180,27 @@ def run_warm_start(
 *   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
 *   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数等默认值。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
 
-**执行语义迁移映射：**
+**fill_policy 推荐示例（主路径）：**
+
+```python
+# 下一根 K 线收盘价成交
+result = aq.run_backtest(
+    data=data,
+    strategy=MyStrategy,
+    symbols="000001",
+    fill_policy={"price_basis": "next_close", "temporal": "same_cycle"},
+)
+
+# 当前收盘价 + next_event 时序
+result = aq.run_backtest(
+    data=data,
+    strategy=MyStrategy,
+    symbols="000001",
+    fill_policy={"price_basis": "current_close", "temporal": "next_event"},
+)
+```
+
+**执行语义迁移映射（legacy -> fill_policy）：**
 
 | 旧参数组合 | 新参数写法 |
 | :--- | :--- |
@@ -220,13 +237,16 @@ result = aq.run_backtest(
 *   `align="session"`: 按交易日分区，可叠加 `session_windows`。
 *   `align="day"`: 按日分区，不接收 `session_windows`；`day_mode` 支持 `trading/calendar`。
 *   `align="global"`: 按全局时间轴聚合，不按交易日切段。
-*   参数建议：优先使用 `symbols`。若同时传入 `symbol` 和 `symbols`，仅当 `symbol="BENCHMARK"` 时视作兼容写法，其它情况会报错。
-*   弃用进度：当前版本中，仅传 `symbol` 会触发 `DeprecationWarning`；后续小版本将移除 `symbol` 参数，请提前迁移到 `symbols`。
+*   参数建议：统一使用 `symbols`。`run_backtest`/`run_warm_start` 已不再接受 `symbol` 参数。
 
 **兼容与迁移说明:**
 
 *   推荐逐步将实时 UI / 日志 / 告警接入迁移到 `run_backtest(..., on_event=...)`。
 *   流式场景统一使用 `run_backtest(..., on_event=...)`。
+*   legacy 执行语义兼容开关已移除。
+*   `execution_mode`/`timer_execution_policy` 与 `legacy_execution_policy_compat` 不再接受。
+*   全量统一使用 `fill_policy`。
+*   切换执行清单：见[执行语义切换清单](../advanced/execution_policy_cutover.md)。
 *   在 PyCharm 中若未开启终端仿真，原生进度条可能不可见；可开启 `Emulate terminal in output console` 或改用 `on_event` 的 `progress` 事件输出文本进度。
 *   阶段 5 后不再提供运行时参数级回滚开关；如需回滚请使用版本级回滚策略。
 *   阶段 4 观察窗口与推进门槛请参考：[流式统一内核观察清单](../advanced/stream_observability.md)。
@@ -237,13 +257,13 @@ result = aq.run_backtest(
 *   `run_backtest` 是否仍可不传 `on_event`？可以，不传时仍返回同样的结果对象语义。
 *   PyCharm 看不到进度条怎么办？先确认 `show_progress=True`，并在 Run 配置中开启 `Emulate terminal in output console`；若仍不可见，使用 `on_event` 消费 `progress` 事件打印文本进度。
 *   线上出现问题如何回退？使用版本级回滚，不再支持 `_engine_mode` 参数级回切。
-*   还可以继续用 `symbol` 吗？可以但已进入弃用阶段，会有 `DeprecationWarning`，建议尽快替换为 `symbols`。
+*   还可以继续用 `symbol` 吗？不可以。请统一迁移到 `symbols`。
 
 ### 流式参数与事件 (`run_backtest`)
 
 **关键参数:**
 
-*   `on_event`: 流式事件回调函数（必传），参数为 `BacktestStreamEvent`。
+*   `on_event`: 流式事件回调函数（可选），参数为 `BacktestStreamEvent`；不传时内部使用 no-op 回调。
 *   `stream_progress_interval`: `progress` 事件采样间隔（正整数）。
 *   `stream_equity_interval`: `equity` 事件采样间隔（正整数）。
 *   `stream_batch_size`: 事件批量刷新阈值（正整数）。

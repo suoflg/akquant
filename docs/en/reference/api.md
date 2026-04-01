@@ -16,8 +16,7 @@ The most commonly used backtest entry function, encapsulating the initialization
 def run_backtest(
     data: Optional[Union[pd.DataFrame, Dict[str, pd.DataFrame], List[Bar]]] = None,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = None,
-    symbol: Union[str, List[str]] = "BENCHMARK",
-    symbols: Optional[Union[str, List[str]]] = None,
+    symbols: Union[str, List[str], Tuple[str, ...], set[str]] = "BENCHMARK",
     initial_cash: Optional[float] = None,
     commission_rate: Optional[float] = None,
     stamp_tax_rate: float = 0.0,
@@ -71,18 +70,15 @@ def run_backtest(
 *   `strategy`: Strategy class or instance. Also supports passing an `on_bar` function (functional style).
 *   `initialize` / `on_start` / `on_stop`: Functional-strategy lifecycle callbacks for initialization, start, and stop stages.
 *   `symbols`: Preferred parameter. Symbol or list of symbols.
-*   `symbol`: Compatibility parameter. Used only when `symbols` is not provided.
 *   `initial_cash`: Initial cash (default 1,000,000.0).
-*   `execution_mode`: Execution mode.
-    *   `ExecutionMode.NextOpen`: Match at next Bar Open (Default).
-    *   `ExecutionMode.CurrentClose`: Match at current Bar Close.
-*   `timer_execution_policy`: Temporal matching policy for timer-triggered orders (mainly under `CurrentClose`).
-    *   `"same_cycle"`: Match within the current timer event cycle.
-    *   `"next_event"`: Defer matching to the next market event.
-*   `fill_policy`: Unified fill semantics (higher priority than `execution_mode` and `timer_execution_policy`).
+*   `execution_mode`: Removed. Use `fill_policy.price_basis`.
+*   `timer_execution_policy`: Removed. Use `fill_policy.temporal`.
+*   `fill_policy`: Unified fill semantics.
     *   `price_basis`: `next_open`, `current_close`, `ohlc4` (OHLC average), or `hl2` (high-low midpoint).
     *   Reserved (not implemented yet): `mid_quote`, `vwap_window`, `twap_window` (currently raises `NotImplementedError`).
     *   `temporal`: `same_cycle` or `next_event`.
+*   `legacy_execution_policy_compat` (via `**kwargs`): Removed.
+*   Migration hint: `execution_mode`/`timer_execution_policy` are no longer accepted; use `fill_policy`.
 *   `strict_strategy_params`: Whether to strictly validate strategy constructor parameters (default `True`).
     *   Raises immediately if unsupported constructor parameters are provided.
     *   Recommended to keep enabled to avoid silent parameter mismatch and distorted backtest results.
@@ -106,7 +102,27 @@ def run_backtest(
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
 *   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size). Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
 
-**Execution semantics migration map:**
+**Recommended fill_policy examples (primary path):**
+
+```python
+# Next bar close fill
+result = aq.run_backtest(
+    data=data,
+    strategy=MyStrategy,
+    symbols="000001",
+    fill_policy={"price_basis": "next_close", "temporal": "same_cycle"},
+)
+
+# Current-close price with next-event temporal matching
+result = aq.run_backtest(
+    data=data,
+    strategy=MyStrategy,
+    symbols="000001",
+    fill_policy={"price_basis": "current_close", "temporal": "next_event"},
+)
+```
+
+**Execution semantics migration map (legacy -> fill_policy):**
 
 | Legacy parameters | New style |
 | :--- | :--- |
@@ -246,13 +262,17 @@ result = aq.run_backtest(
 *   `align="session"`: Partition by trading day, optionally with `session_windows`.
 *   `align="day"`: Partition by day without `session_windows`; `day_mode` supports `trading/calendar`.
 *   `align="global"`: Aggregate on the full timeline without day partitioning.
-*   Parameter recommendation: prefer `symbols`. If both `symbol` and `symbols` are provided, compatibility is allowed only when `symbol="BENCHMARK"`; otherwise a validation error is raised.
-*   Deprecation timeline: in current versions, using only `symbol` emits `DeprecationWarning`; a later minor release will remove `symbol`, so migrate to `symbols` early.
+*   Parameter recommendation: always use `symbols`. `run_backtest`/`run_warm_start` no longer accept `symbol`.
+*   Migration status: `symbol` has been removed from `run_backtest`/`run_warm_start`; migrate all calls to `symbols`.
 
 **Compatibility & Migration Notes:**
 
 *   Prefer migrating realtime UI/logging/alerting to `run_backtest(..., on_event=...)`.
 *   Stream use cases are unified under `run_backtest(..., on_event=...)`.
+*   Legacy execution policy compatibility gate has been removed.
+*   `execution_mode`/`timer_execution_policy` and `legacy_execution_policy_compat` are no longer accepted.
+*   Use `fill_policy` for all execution semantics.
+*   Cutover playbook: [Execution Policy Cutover Checklist](../advanced/execution_policy_cutover.md).
 *   Since Phase 5, runtime rollback flags are removed; use release-level rollback when needed.
 *   Phase-4 observation window and go/no-go gates are documented in [Unified Stream Core Checklist](../advanced/stream_observability.md).
 
@@ -261,13 +281,13 @@ result = aq.run_backtest(
 *   Is `run_backtest` renamed? No, the public entry name stays unchanged.
 *   Can `run_backtest` still be called without `on_event`? Yes, and result-return semantics stay the same.
 *   How do we roll back in production? Use release-level rollback; `_engine_mode` runtime fallback is removed.
-*   Can we still use `symbol`? Yes for compatibility, but it is deprecated and emits `DeprecationWarning`; migrate to `symbols`.
+*   Can we still use `symbol`? No. Migrate to `symbols`.
 
 ### Stream Parameters & Events (`run_backtest`)
 
 **Key Parameters:**
 
-*   `on_event`: Stream callback receiving `BacktestStreamEvent` (required).
+*   `on_event`: Optional stream callback receiving `BacktestStreamEvent`; if omitted, an internal no-op callback is used.
 *   `stream_progress_interval`: Sampling interval for `progress` events (positive int).
 *   `stream_equity_interval`: Sampling interval for `equity` events (positive int).
 *   `stream_batch_size`: Flush threshold for buffered events (positive int).
