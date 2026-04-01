@@ -139,7 +139,7 @@ if __name__ == "__main__":
         strategy=WalkForwardStrategy,
         symbols="TEST",
         lot_size=1,
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         history_depth=60,
         warmup_period=50,
     )

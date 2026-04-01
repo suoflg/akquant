@@ -55,7 +55,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   `execution_mode`: `ExecutionMode.NextOpen` (default) or `CurrentClose`.
         *   `timer_execution_policy`: `"same_cycle"` or `"next_event"` (for timer matching timing).
         *   `fill_policy`: Preferred unified semantics, e.g.
-            `{"price_basis": "current_close", "temporal": "next_event"}`.
+            `{"price_basis": "close", "temporal": "next_event"}`.
         *   `timezone`: Default "Asia/Shanghai".
         *   `risk_config`: Use `engine.risk_manager` to set pre-trade checks (Position Limit, Sector Limit, Leverage).
         *   `risk_config.account_mode`: `"cash"`（默认）或 `"margin"`，信用账户回测需设置为 `"margin"`。

@@ -113,7 +113,7 @@ def test_exposure_df_and_capacity_df_basic_properties() -> None:
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         lot_size=1,
         show_progress=False,
     )
@@ -167,7 +167,7 @@ def test_attribution_df_keeps_total_pnl_consistent() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         lot_size=1,
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         history_depth=2,
         show_progress=False,
     )

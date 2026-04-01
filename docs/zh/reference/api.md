@@ -188,7 +188,7 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "next_close", "temporal": "same_cycle"},
+    fill_policy={"price_basis": "close", "temporal": "next_event"},
 )
 
 # 当前收盘价 + next_event 时序
@@ -196,7 +196,7 @@ result = aq.run_backtest(
     data=data,
     strategy=MyStrategy,
     symbols="000001",
-    fill_policy={"price_basis": "current_close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "temporal": "next_event"},
 )
 ```
 
@@ -204,9 +204,9 @@ result = aq.run_backtest(
 
 | 旧参数组合 | 新参数写法 |
 | :--- | :--- |
-| `execution_mode="next_open"` | `fill_policy={"price_basis":"next_open","temporal":"same_cycle"}` |
-| `execution_mode="current_close", timer_execution_policy="same_cycle"` | `fill_policy={"price_basis":"current_close","temporal":"same_cycle"}` |
-| `execution_mode="current_close", timer_execution_policy="next_event"` | `fill_policy={"price_basis":"current_close","temporal":"next_event"}` |
+| `execution_mode="next_open"` | `fill_policy={"price_basis":"open","temporal":"same_cycle"}` |
+| `execution_mode="current_close", timer_execution_policy="same_cycle"` | `fill_policy={"price_basis":"close","temporal":"same_cycle"}` |
+| `execution_mode="current_close", timer_execution_policy="next_event"` | `fill_policy={"price_basis":"close","temporal":"next_event"}` |
 | `execution_mode="next_average"` | `fill_policy={"price_basis":"ohlc4","temporal":"same_cycle"}` |
 | `execution_mode="next_high_low_mid"` | `fill_policy={"price_basis":"hl2","temporal":"same_cycle"}` |
 

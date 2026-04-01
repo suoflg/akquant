@@ -1475,12 +1475,13 @@ def test_run_warm_start_exposes_resolved_execution_policy(tmp_path: Path) -> Non
         data=phase2,
         symbols="TEST",
         show_progress=False,
-        fill_policy={"price_basis": "next_close", "temporal": "next_event"},
+        fill_policy={"price_basis": "close", "bar_offset": 1, "temporal": "next_event"},
     )
 
     policy = result2.resolved_execution_policy
     assert policy is not None
-    assert policy["price_basis"] == "next_close"
+    assert policy["price_basis"] == "close"
+    assert int(policy["bar_offset"]) == 1
     assert policy["temporal"] == "next_event"
     assert str(policy["execution_mode"]).endswith("NextClose")
     assert policy["source"] == "fill_policy"
@@ -1656,7 +1657,7 @@ def test_run_warm_start_rejects_invalid_legacy_env_default(
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
     )
     assert result2.resolved_execution_policy is not None
@@ -1699,7 +1700,7 @@ def test_run_warm_start_explicit_compat_overrides_env_default(
             data=phase2,
             symbols="TEST",
             show_progress=False,
-            fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+            fill_policy={"price_basis": "close", "temporal": "same_cycle"},
             **compat_kwargs,
         )
 
@@ -1715,7 +1716,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
         initial_cash=100000.0,
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -1728,7 +1729,7 @@ def test_run_warm_start_restores_strategy_risk_state(tmp_path: Path) -> None:
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
     )
     engine = result2.engine
@@ -1764,7 +1765,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
         initial_cash=100000.0,
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -1775,7 +1776,7 @@ def test_run_warm_start_accepts_multi_slot_risk_overrides(tmp_path: Path) -> Non
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         strategy_id="alpha",
         strategies_by_slot={"beta": WarmStartRiskStateStrategy},
@@ -1810,7 +1811,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
     )
@@ -1820,7 +1821,7 @@ def test_run_warm_start_accepts_multi_slot_risk_from_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
     )
@@ -1853,7 +1854,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         data=phase1,
         strategy=WarmStartRiskStateStrategy,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
     )
@@ -1863,7 +1864,7 @@ def test_run_warm_start_explicit_slot_risk_overrides_config(tmp_path: Path) -> N
         checkpoint_path=str(checkpoint),
         data=phase2,
         symbols="TEST",
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
         config=config,
         strategy_max_order_size={"alpha": 20.0, "beta": 5.0},
@@ -2292,7 +2293,7 @@ def test_run_warm_start_multi_symbol_event_idempotency(tmp_path: Path) -> None:
         strategy=WarmStartEventIdempotencyStrategy,
         symbols="BENCHMARK",
         initial_cash=100000.0,
-        fill_policy={"price_basis": "current_close", "temporal": "same_cycle"},
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
         show_progress=False,
     )
     save_snapshot(result1.engine, result1.strategy, str(checkpoint))  # type: ignore[arg-type]

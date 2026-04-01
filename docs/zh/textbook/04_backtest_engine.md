@@ -486,7 +486,7 @@ stateDiagram-v2
 result = akquant.run_backtest(
     data=data,
     strategy=MyStrategy,
-    fill_policy={"price_basis": "current_close", "temporal": "next_event"},
+    fill_policy={"price_basis": "close", "temporal": "next_event"},
 )
 ```
 

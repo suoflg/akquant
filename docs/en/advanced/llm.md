@@ -54,7 +54,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   `execution_mode`: `ExecutionMode.NextOpen` (default) or `CurrentClose`.
         *   `timer_execution_policy`: `"same_cycle"` or `"next_event"` (timer fill timing).
         *   `fill_policy`: Preferred unified semantics, e.g.
-            `{"price_basis": "current_close", "temporal": "next_event"}`.
+            `{"price_basis": "close", "temporal": "next_event"}`.
         *   `timezone`: Default "Asia/Shanghai".
         *   `risk_config.account_mode`: `"cash"` (default) or `"margin"` for margin-account backtests.
         *   `risk_config.enable_short_sell`: Whether stock short opening is allowed in margin mode.

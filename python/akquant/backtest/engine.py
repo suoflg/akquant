@@ -77,6 +77,20 @@ class FillPolicy(TypedDict, total=False):
 
     price_basis: str
     temporal: str
+    bar_offset: int
+
+
+def make_fill_policy(
+    *,
+    price_basis: str,
+    temporal: str,
+    bar_offset: Optional[int] = None,
+) -> FillPolicy:
+    """Build a fill policy payload."""
+    policy: FillPolicy = {"price_basis": price_basis, "temporal": temporal}
+    if bar_offset is not None:
+        policy["bar_offset"] = bar_offset
+    return policy
 
 
 @dataclass(frozen=True)
@@ -84,6 +98,7 @@ class ResolvedExecutionPolicy:
     """Resolved execution semantics for matching."""
 
     price_basis: str
+    bar_offset: int
     temporal: str
     execution_mode: ExecutionMode
     source: Literal["fill_policy", "legacy"]
@@ -103,15 +118,16 @@ class PreparedStreamRuntime:
     stream_mode: str
 
 
-_SUPPORTED_FILL_PRICE_BASIS_TO_MODE: Dict[str, ExecutionMode] = {
-    "next_open": ExecutionMode.NextOpen,
-    "current_close": ExecutionMode.CurrentClose,
-    "next_close": ExecutionMode.NextClose,
-    "ohlc4": ExecutionMode.NextAverage,
-    "hl2": ExecutionMode.NextHighLowMid,
-}
+_SUPPORTED_FILL_PRICE_BASIS: set[str] = {"open", "close", "ohlc4", "hl2"}
 _RESERVED_FILL_PRICE_BASIS: set[str] = {"mid_quote", "vwap_window", "twap_window"}
 _SUPPORTED_FILL_TEMPORAL: set[str] = {"same_cycle", "next_event"}
+_SUPPORTED_FILL_BAR_OFFSET: set[int] = {0, 1}
+_DEFAULT_FILL_BAR_OFFSET: Dict[str, int] = {
+    "open": 1,
+    "close": 0,
+    "ohlc4": 1,
+    "hl2": 1,
+}
 
 
 def _resolve_execution_policy(
@@ -122,15 +138,15 @@ def _resolve_execution_policy(
 ) -> ResolvedExecutionPolicy:
     resolved_execution_mode = execution_mode
     resolved_timer_policy = str(timer_execution_policy).strip().lower()
-    resolved_price_basis = "next_open"
+    resolved_price_basis = "open"
+    resolved_bar_offset = 1
     resolved_source: Literal["fill_policy", "legacy"] = "legacy"
     if fill_policy is not None:
         if not isinstance(fill_policy, dict):
             raise TypeError("fill_policy must be a dict")
-        raw_basis = str(fill_policy.get("price_basis", "next_open")).strip().lower()
+        raw_basis = str(fill_policy.get("price_basis", "open")).strip().lower()
         raw_temporal = str(fill_policy.get("temporal", "same_cycle")).strip().lower()
-        basis_mode = _SUPPORTED_FILL_PRICE_BASIS_TO_MODE.get(raw_basis)
-        if basis_mode is None:
+        if raw_basis not in _SUPPORTED_FILL_PRICE_BASIS:
             if raw_basis in _RESERVED_FILL_PRICE_BASIS:
                 raise NotImplementedError(
                     "fill_policy.price_basis='%s' is reserved but not implemented yet"
@@ -138,13 +154,40 @@ def _resolve_execution_policy(
                 )
             raise ValueError(
                 "fill_policy.price_basis must be one of: "
-                "next_open, current_close, next_close, ohlc4, hl2; "
+                "open, close, ohlc4, hl2; "
                 "reserved: mid_quote, vwap_window, twap_window"
             )
         if raw_temporal not in _SUPPORTED_FILL_TEMPORAL:
             raise ValueError(
                 "fill_policy.temporal must be one of: same_cycle, next_event"
             )
+        raw_offset_value = fill_policy.get(
+            "bar_offset", _DEFAULT_FILL_BAR_OFFSET.get(raw_basis, 1)
+        )
+        try:
+            raw_offset = int(raw_offset_value)
+        except (TypeError, ValueError):
+            raise ValueError("fill_policy.bar_offset must be 0 or 1") from None
+        if raw_offset not in _SUPPORTED_FILL_BAR_OFFSET:
+            raise ValueError("fill_policy.bar_offset must be 0 or 1")
+        if raw_basis == "open":
+            if raw_offset != 1:
+                raise ValueError("fill_policy(open) requires bar_offset=1")
+            basis_mode = ExecutionMode.NextOpen
+        elif raw_basis == "close":
+            basis_mode = (
+                ExecutionMode.CurrentClose
+                if raw_offset == 0
+                else ExecutionMode.NextClose
+            )
+        elif raw_basis == "ohlc4":
+            if raw_offset != 1:
+                raise ValueError("fill_policy(ohlc4) requires bar_offset=1")
+            basis_mode = ExecutionMode.NextAverage
+        else:
+            if raw_offset != 1:
+                raise ValueError("fill_policy(hl2) requires bar_offset=1")
+            basis_mode = ExecutionMode.NextHighLowMid
         if execution_mode != ExecutionMode.NextOpen:
             logger.warning(
                 "fill_policy overrides execution_mode=%s",
@@ -158,6 +201,7 @@ def _resolve_execution_policy(
         resolved_execution_mode = basis_mode
         resolved_timer_policy = raw_temporal
         resolved_price_basis = raw_basis
+        resolved_bar_offset = raw_offset
         resolved_source = "fill_policy"
 
     if isinstance(resolved_execution_mode, str):
@@ -166,18 +210,20 @@ def _resolve_execution_policy(
         mode_compact = mode_raw.replace(" ", "").replace("-", "_")
         mode_key = mode_compact.lower()
         mode_map = {
-            "next_open": (ExecutionMode.NextOpen, "next_open"),
-            "nextopen": (ExecutionMode.NextOpen, "next_open"),
-            "current_close": (ExecutionMode.CurrentClose, "current_close"),
-            "currentclose": (ExecutionMode.CurrentClose, "current_close"),
-            "next_close": (ExecutionMode.NextClose, "next_close"),
-            "nextclose": (ExecutionMode.NextClose, "next_close"),
-            "next_average": (ExecutionMode.NextAverage, "ohlc4"),
-            "nextaverage": (ExecutionMode.NextAverage, "ohlc4"),
-            "next_high_low_mid": (ExecutionMode.NextHighLowMid, "hl2"),
-            "nexthighlowmid": (ExecutionMode.NextHighLowMid, "hl2"),
-            "ohlc4": (ExecutionMode.NextAverage, "ohlc4"),
-            "hl2": (ExecutionMode.NextHighLowMid, "hl2"),
+            "open": (ExecutionMode.NextOpen, "open", 1),
+            "close": (ExecutionMode.CurrentClose, "close", 0),
+            "next_open": (ExecutionMode.NextOpen, "open", 1),
+            "nextopen": (ExecutionMode.NextOpen, "open", 1),
+            "current_close": (ExecutionMode.CurrentClose, "close", 0),
+            "currentclose": (ExecutionMode.CurrentClose, "close", 0),
+            "next_close": (ExecutionMode.NextClose, "close", 1),
+            "nextclose": (ExecutionMode.NextClose, "close", 1),
+            "next_average": (ExecutionMode.NextAverage, "ohlc4", 1),
+            "nextaverage": (ExecutionMode.NextAverage, "ohlc4", 1),
+            "next_high_low_mid": (ExecutionMode.NextHighLowMid, "hl2", 1),
+            "nexthighlowmid": (ExecutionMode.NextHighLowMid, "hl2", 1),
+            "ohlc4": (ExecutionMode.NextAverage, "ohlc4", 1),
+            "hl2": (ExecutionMode.NextHighLowMid, "hl2", 1),
         }
         mode_tuple = mode_map.get(mode_key)
         if not mode_tuple:
@@ -185,21 +231,26 @@ def _resolve_execution_policy(
                 "Unknown execution mode '%s', defaulting to NextOpen",
                 resolved_execution_mode,
             )
-            mode_tuple = (ExecutionMode.NextOpen, "next_open")
-        resolved_mode_enum, mapped_basis = mode_tuple
+            mode_tuple = (ExecutionMode.NextOpen, "open", 1)
+        resolved_mode_enum, mapped_basis, mapped_offset = mode_tuple
         if fill_policy is None:
             resolved_price_basis = mapped_basis
+            resolved_bar_offset = mapped_offset
     else:
         resolved_mode_enum = resolved_execution_mode
         if fill_policy is None:
             reverse_mode_map = {
-                ExecutionMode.NextOpen: "next_open",
-                ExecutionMode.CurrentClose: "current_close",
-                ExecutionMode.NextClose: "next_close",
-                ExecutionMode.NextAverage: "ohlc4",
-                ExecutionMode.NextHighLowMid: "hl2",
+                ExecutionMode.NextOpen: ("open", 1),
+                ExecutionMode.CurrentClose: ("close", 0),
+                ExecutionMode.NextClose: ("close", 1),
+                ExecutionMode.NextAverage: ("ohlc4", 1),
+                ExecutionMode.NextHighLowMid: ("hl2", 1),
             }
-            resolved_price_basis = reverse_mode_map.get(resolved_mode_enum, "next_open")
+            mapped_basis, mapped_offset = reverse_mode_map.get(
+                resolved_mode_enum, ("open", 1)
+            )
+            resolved_price_basis = mapped_basis
+            resolved_bar_offset = mapped_offset
 
     if resolved_timer_policy not in _SUPPORTED_FILL_TEMPORAL:
         raise ValueError(
@@ -208,6 +259,7 @@ def _resolve_execution_policy(
 
     return ResolvedExecutionPolicy(
         price_basis=resolved_price_basis,
+        bar_offset=resolved_bar_offset,
         temporal=resolved_timer_policy,
         execution_mode=resolved_mode_enum,
         source=resolved_source,
@@ -397,6 +449,7 @@ def _attach_result_runtime_metadata(
             "_resolved_execution_policy",
             {
                 "price_basis": resolved_policy.price_basis,
+                "bar_offset": resolved_policy.bar_offset,
                 "temporal": resolved_policy.temporal,
                 "execution_mode": str(resolved_policy.execution_mode),
                 "source": resolved_policy.source,
@@ -1369,7 +1422,8 @@ def run_backtest(
     :param execution_mode: 已移除（仅保留默认值）。请使用 fill_policy.price_basis。
     :param timer_execution_policy: 已移除（仅保留默认值）。请使用 fill_policy.temporal。
     :param fill_policy: 统一成交语义配置（可选），格式:
-        {"price_basis": "next_open|current_close|next_close|ohlc4|hl2",
+        {"price_basis": "open|close|ohlc4|hl2",
+         "bar_offset": "0|1",
          "temporal": "same_cycle|next_event"}。
         预留未实现 price_basis: mid_quote、vwap_window、twap_window。
         若提供该参数，则其语义优先于 execution_mode 与 timer_execution_policy。

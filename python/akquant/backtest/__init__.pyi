@@ -13,8 +13,9 @@ from typing import (
 )
 
 import pandas as pd
+from typing_extensions import NotRequired
 
-from ..akquant import AssetType, Bar, DataFeed, ExecutionMode
+from ..akquant import AssetType, Bar, DataFeed
 from ..config import BacktestConfig, RiskConfig
 from ..feed_adapter import DataFeedAdapter
 from ..strategy import Strategy, StrategyRuntimeConfig
@@ -47,19 +48,33 @@ class BacktestStreamEvent(TypedDict):
     level: str
     payload: Dict[str, str]
 
-class FillPolicy(TypedDict, total=False):
-    price_basis: Literal[
-        "next_open",
-        "current_close",
-        "next_close",
-        "ohlc4",
-        "hl2",
-        "mid_quote",
-        "vwap_window",
-        "twap_window",
-    ]
+ImplementedPriceBasis = Literal[
+    "open",
+    "close",
+    "ohlc4",
+    "hl2",
+]
+
+ExperimentalPriceBasis = Literal["mid_quote", "vwap_window", "twap_window"]
+
+class FillPolicy(TypedDict):
+    price_basis: ImplementedPriceBasis
+    bar_offset: NotRequired[Literal[0, 1]]
     temporal: Literal["same_cycle", "next_event"]
 
+class ExperimentalFillPolicy(TypedDict):
+    price_basis: ExperimentalPriceBasis
+    bar_offset: NotRequired[Literal[0, 1]]
+    temporal: Literal["same_cycle", "next_event"]
+
+FillPolicyInput = Union[FillPolicy, Dict[str, Any]]
+
+def make_fill_policy(
+    *,
+    price_basis: ImplementedPriceBasis,
+    temporal: Literal["same_cycle", "next_event"],
+    bar_offset: Optional[Literal[0, 1]] = ...,
+) -> FillPolicy: ...
 def run_backtest(
     data: Optional[BacktestDataInput] = ...,
     strategy: Union[Type[Strategy], Strategy, Callable[[Any, Bar], None], None] = ...,
@@ -74,7 +89,6 @@ def run_backtest(
     min_commission: Optional[float] = ...,
     slippage: Optional[float] = ...,
     volume_limit_pct: Optional[float] = ...,
-    execution_mode: Union[ExecutionMode, str] = ...,
     timezone: Optional[str] = ...,
     t_plus_one: bool = ...,
     initialize: Optional[Callable[[Any], None]] = ...,
@@ -116,8 +130,7 @@ def run_backtest(
     risk_budget_reset_daily: bool = ...,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
     broker_profile: Optional[str] = ...,
-    timer_execution_policy: Literal["same_cycle", "next_event"] = ...,
-    fill_policy: Optional[FillPolicy] = ...,
+    fill_policy: Optional[FillPolicyInput] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
     strict_strategy_params: bool = True,
     **kwargs: Any,
