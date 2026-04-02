@@ -17,7 +17,7 @@ use crate::history::HistoryBuffer;
 use crate::market::corporate_action::CorporateActionManager;
 use crate::market::manager::MarketManager;
 use crate::model::{
-    Bar, ExecutionMode, ExecutionPolicyCore, Instrument, Order, PriceBasis, TemporalPolicy, Trade,
+    Bar, ExecutionPolicyCore, Instrument, Order, PriceBasis, TemporalPolicy, Trade,
     TradingSession, corporate_action::CorporateAction,
 };
 use crate::portfolio::Portfolio;
@@ -477,11 +477,10 @@ impl Engine {
             market_manager: MarketManager::new(),
             corporate_action_manager: CorporateActionManager::new(),
             execution_model: Box::new(SimulatedExecutionClient::new()),
-            execution_mode: ExecutionMode::NextOpen,
+            execution_policy_core_state: ExecutionPolicyCore::default(),
             clock: Clock::new(),
             timers: BinaryHeap::new(),
             force_session_continuous: false,
-            timer_execution_policy: "same_cycle".to_string(),
             risk_manager: RiskManager::new(),
             timezone_offset: 28800, // Default UTC+8
             history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE

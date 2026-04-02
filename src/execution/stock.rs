@@ -18,7 +18,7 @@ impl ExecutionMatcher for StockMatcher {
 mod tests {
     use super::*;
     use crate::model::{
-        ExecutionMode, Instrument, InstrumentEnum, OrderSide, OrderStatus, OrderType,
+        ExecutionPolicyCore, Instrument, InstrumentEnum, OrderSide, OrderStatus, OrderType,
         StockInstrument, TimeInForce,
     };
     use rust_decimal::Decimal;
@@ -77,6 +77,10 @@ mod tests {
         }
     }
 
+    fn default_policy_core() -> ExecutionPolicyCore {
+        ExecutionPolicyCore::default()
+    }
+
     #[test]
     fn test_buy_stop_in_bar() {
         let matcher = StockMatcher;
@@ -98,11 +102,7 @@ mod tests {
         let ctx = MatchContext {
             event: &event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
@@ -141,11 +141,7 @@ mod tests {
         let ctx = MatchContext {
             event: &event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
@@ -177,11 +173,7 @@ mod tests {
         let first_ctx = MatchContext {
             event: &first_event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
@@ -206,11 +198,7 @@ mod tests {
         let second_ctx = MatchContext {
             event: &second_event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 1,
@@ -242,11 +230,7 @@ mod tests {
         let first_ctx = MatchContext {
             event: &first_tick_event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,
@@ -261,11 +245,7 @@ mod tests {
         let second_ctx = MatchContext {
             event: &second_tick_event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 1,
@@ -280,11 +260,7 @@ mod tests {
         let third_ctx = MatchContext {
             event: &third_tick_event,
             instrument: &instr,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 2,

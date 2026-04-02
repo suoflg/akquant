@@ -1,13 +1,12 @@
 use crate::event::Event;
 use crate::execution::slippage::SlippageModel;
-use crate::model::{ExecutionMode, ExecutionPolicyCore, Instrument, Order};
+use crate::model::{ExecutionPolicyCore, Instrument, Order};
 use rust_decimal::Decimal;
 
 /// 撮合上下文
 pub struct MatchContext<'a> {
     pub event: &'a Event,
     pub instrument: &'a Instrument,
-    pub execution_mode: ExecutionMode,
     pub execution_policy_core: ExecutionPolicyCore,
     pub slippage: &'a dyn SlippageModel,
     pub volume_limit_pct: Decimal,

@@ -172,7 +172,10 @@ impl Default for FuturesMatcher {
 mod tests {
     use super::*;
     use crate::model::instrument::{FuturesInstrument, InstrumentEnum};
-    use crate::model::{AssetType, ExecutionMode, Instrument, OrderRole, OrderSide, TimeInForce};
+    use crate::model::{
+        AssetType, ExecutionPolicyCore, Instrument, OrderRole, OrderSide,
+        TimeInForce,
+    };
     use rust_decimal::prelude::FromStr;
     use rust_decimal_macros::dec;
 
@@ -225,11 +228,7 @@ mod tests {
         crate::execution::matcher::MatchContext {
             event,
             instrument,
-            execution_mode: ExecutionMode::NextOpen,
-            execution_policy_core: crate::model::ExecutionPolicyCore::from_legacy(
-                ExecutionMode::NextOpen,
-                "same_cycle",
-            ),
+            execution_policy_core: ExecutionPolicyCore::default(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
             bar_index: 0,

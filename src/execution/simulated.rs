@@ -2,7 +2,7 @@ use crate::event::Event;
 use crate::execution::matcher::{ExecutionMatcher, MatchContext};
 use crate::execution::slippage::{SlippageModel, ZeroSlippage};
 use crate::execution::{ExecutionClient, crypto, forex, futures, option, stock};
-use crate::model::{AssetType, ExecutionPolicyCore, Order, OrderStatus, TimeInForce, TradingSession};
+use crate::model::{AssetType, Order, OrderStatus, TimeInForce, TradingSession};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
@@ -203,11 +203,7 @@ impl ExecutionClient for SimulatedExecutionClient {
                         let match_ctx = MatchContext {
                             event,
                             instrument,
-                            execution_mode: ctx.execution_mode,
-                            execution_policy_core: ExecutionPolicyCore::from_legacy(
-                                ctx.execution_mode,
-                                "same_cycle",
-                            ),
+                            execution_policy_core: ctx.execution_policy_core,
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
                             bar_index: ctx.bar_index,
@@ -371,7 +367,9 @@ impl ExecutionClient for SimulatedExecutionClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AssetType, Bar, ExecutionMode, Instrument, TimeInForce};
+    use crate::model::{
+        AssetType, Bar, ExecutionPolicyCore, Instrument, PriceBasis, TemporalPolicy, TimeInForce,
+    };
     use std::collections::HashMap;
 
     fn create_test_instruments() -> HashMap<String, Instrument> {
@@ -487,7 +485,7 @@ mod tests {
             portfolio: &portfolio,
             last_prices: &last_prices,
             market_model: market_model.as_ref(),
-            execution_mode: ExecutionMode::NextOpen,
+            execution_policy_core: ExecutionPolicyCore::default(),
             bar_index: 0,
             current_time: 0,
             session: TradingSession::Continuous,
@@ -566,7 +564,11 @@ mod tests {
             portfolio: &portfolio,
             last_prices: &last_prices,
             market_model: market_model.as_ref(),
-            execution_mode: ExecutionMode::NextClose,
+            execution_policy_core: ExecutionPolicyCore {
+                price_basis: PriceBasis::Close,
+                bar_offset: 1,
+                temporal: TemporalPolicy::SameCycle,
+            },
             bar_index: 0,
             current_time: 0,
             session: TradingSession::Continuous,
@@ -634,7 +636,7 @@ mod tests {
             portfolio: &portfolio,
             last_prices: &last_prices,
             market_model: market_model.as_ref(),
-            execution_mode: ExecutionMode::NextOpen,
+            execution_policy_core: ExecutionPolicyCore::default(),
             bar_index: 0,
             current_time: 0,
             session: TradingSession::Continuous,
@@ -703,7 +705,7 @@ mod tests {
             portfolio: &portfolio,
             last_prices: &last_prices,
             market_model: market_model.as_ref(),
-            execution_mode: ExecutionMode::NextOpen,
+            execution_policy_core: ExecutionPolicyCore::default(),
             bar_index: 0,
             current_time: 0,
             session: TradingSession::Continuous,
@@ -772,7 +774,7 @@ mod tests {
             portfolio: &portfolio,
             last_prices: &last_prices,
             market_model: market_model.as_ref(),
-            execution_mode: ExecutionMode::NextOpen,
+            execution_policy_core: ExecutionPolicyCore::default(),
             bar_index: 0,
             current_time: 0,
             session: TradingSession::Continuous,

@@ -4,7 +4,7 @@ use crate::history::HistoryBuffer;
 use crate::market::MarketModel;
 use crate::model::market_data::extract_decimal;
 use crate::model::{
-    ExecutionMode, Instrument, Order, OrderSide, OrderType, TimeInForce, Timer, Trade,
+    ExecutionPolicyCore, Instrument, Order, OrderSide, OrderType, TimeInForce, Timer, Trade,
     TradingSession,
 };
 use crate::portfolio::Portfolio;
@@ -26,7 +26,7 @@ pub struct EngineContext<'a> {
     pub portfolio: &'a Portfolio,
     pub last_prices: &'a HashMap<String, Decimal>,
     pub market_model: &'a dyn MarketModel,
-    pub execution_mode: ExecutionMode,
+    pub execution_policy_core: ExecutionPolicyCore,
     pub bar_index: usize,
     pub current_time: i64,
     pub session: TradingSession,
