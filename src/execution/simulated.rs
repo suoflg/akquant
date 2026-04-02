@@ -203,7 +203,9 @@ impl ExecutionClient for SimulatedExecutionClient {
                         let match_ctx = MatchContext {
                             event,
                             instrument,
-                            execution_policy_core: ctx.execution_policy_core,
+                            execution_policy_core: order
+                                .fill_policy_override
+                                .unwrap_or(ctx.execution_policy_core),
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
                             bar_index: ctx.bar_index,
@@ -397,30 +399,12 @@ mod tests {
         price: Option<Decimal>,
     ) -> Order {
         use uuid::Uuid;
-        Order {
-            id: Uuid::new_v4().to_string(),
-            symbol: symbol.to_string(),
-            side,
-            order_type,
-            quantity,
-            price,
-            time_in_force: TimeInForce::Day,
-            trigger_price: None,
-            trail_offset: None,
-            trail_reference_price: None,
-            graph_id: None,
-            parent_order_id: None,
-            order_role: crate::model::OrderRole::Standalone,
-            status: OrderStatus::New,
-            filled_quantity: Decimal::ZERO,
-            average_filled_price: None,
-            created_at: 0,
-            updated_at: 0,
-            commission: Decimal::ZERO,
-            tag: String::new(),
-            reject_reason: String::new(),
-            owner_strategy_id: None,
-        }
+        let mut order =
+            Order::test_new(&Uuid::new_v4().to_string(), symbol, side, order_type, quantity);
+        order.price = price;
+        order.time_in_force = TimeInForce::Day;
+        order.status = OrderStatus::New;
+        order
     }
 
     fn create_test_bar(

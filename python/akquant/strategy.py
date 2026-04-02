@@ -1541,6 +1541,9 @@ class Strategy:
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
+        fill_policy: Optional[Dict[str, Any]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
+        commission: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         买入下单.
@@ -1557,7 +1560,16 @@ class Strategy:
             str: 订单 ID
         """
         return _buy_impl(
-            self, symbol, quantity, price, time_in_force, trigger_price, tag
+            self,
+            symbol,
+            quantity,
+            price,
+            time_in_force,
+            trigger_price,
+            tag,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
         )
 
     def sell(
@@ -1568,6 +1580,9 @@ class Strategy:
         time_in_force: Optional[TimeInForce] = None,
         trigger_price: Optional[float] = None,
         tag: Optional[str] = None,
+        fill_policy: Optional[Dict[str, Any]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
+        commission: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         卖出下单.
@@ -1584,7 +1599,16 @@ class Strategy:
             str: 订单 ID
         """
         return _sell_impl(
-            self, symbol, quantity, price, time_in_force, trigger_price, tag
+            self,
+            symbol,
+            quantity,
+            price,
+            time_in_force,
+            trigger_price,
+            tag,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
         )
 
     def submit_order(
@@ -1602,6 +1626,9 @@ class Strategy:
         broker_options: Optional[Dict[str, Any]] = None,
         trail_offset: Optional[float] = None,
         trail_reference_price: Optional[float] = None,
+        fill_policy: Optional[Dict[str, Any]] = None,
+        slippage: Optional[Dict[str, Any]] = None,
+        commission: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         统一下单接口.
@@ -1623,6 +1650,9 @@ class Strategy:
             broker_options=broker_options,
             trail_offset=trail_offset,
             trail_reference_price=trail_reference_price,
+            fill_policy=fill_policy,
+            slippage=slippage,
+            commission=commission,
         )
 
     def can_submit_client_order(self, client_order_id: str) -> bool:

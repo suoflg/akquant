@@ -96,6 +96,18 @@ def run_backtest(
 *   `strategy_max_daily_loss` / `strategy_max_drawdown`: Optional strategy-level stop maps keyed by strategy id.
 *   `strategy_reduce_only_after_risk` / `strategy_risk_cooldown_bars`: Optional post-risk behavior maps keyed by strategy id.
 *   `strategy_priority` / `strategy_risk_budget` / `portfolio_risk_budget`: Optional scheduling/budget controls.
+*   `strategy_fill_policy`: Optional strategy-level default fill policy map keyed by strategy id.
+    Resolution order at submit time: order-level `fill_policy` > `strategy_fill_policy[strategy_id]` > run-level `fill_policy`.
+*   `strategy_slippage`: Optional strategy-level default slippage map keyed by strategy id.
+    Resolution order at submit time: order-level `slippage` > `strategy_slippage[strategy_id]` > run-level `slippage`.
+*   `strategy_commission`: Optional strategy-level default commission map keyed by strategy id.
+    Resolution order at submit time: order-level `commission` > `strategy_commission[strategy_id]` > run-level commission model.
+*   Configuration layers (recommended mental model):
+    1) order-level (`buy/sell/submit_order` args);
+    2) strategy-map level (`strategy_*`, keyed by `strategy_id/slot`);
+    3) run-level (`run_backtest` args);
+    4) market defaults (built-in market-model defaults).
+*   T+1 scope note: `t_plus_one` is currently a run/market-level switch, not a per-`strategy_id` layered setting.
 *   `risk_budget_mode` / `risk_budget_reset_daily`: Risk budget accounting mode and reset policy.
 *   `analyzer_plugins`: Optional analyzer plugin list. Plugins receive `on_start/on_bar/on_trade/on_finish` callbacks and final outputs are stored in `result.analyzer_outputs`.
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
@@ -130,6 +142,11 @@ result = aq.run_backtest(
 | Next-bar close fill | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
 | Next-bar OHLC average fill | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
 | Next-bar HL2 fill | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
+
+Notes:
+* For `open/ohlc4/hl2`, `bar_offset` is fixed to `1` (`0` is not supported).
+* For `close + bar_offset=1` (next-bar close), the primary time-shift semantics come from `bar_offset`; keep `temporal="same_cycle"` to avoid confusion.
+* `temporal` differences are mainly meaningful for `close + bar_offset=0` (current-close) scenarios.
 
 ### `akquant.run_grid_search`
 

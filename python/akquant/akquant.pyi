@@ -2470,6 +2470,13 @@ class StrategyContext:
         order_type: typing.Optional[akquant.OrderType] = ...,
         trail_offset: typing.Optional[float] = ...,
         trail_reference_price: typing.Optional[float] = ...,
+        fill_price_basis: typing.Optional[str] = ...,
+        fill_bar_offset: typing.Optional[int] = ...,
+        fill_temporal: typing.Optional[str] = ...,
+        fill_slippage_type: typing.Optional[str] = ...,
+        fill_slippage_value: typing.Optional[float] = ...,
+        fill_commission_type: typing.Optional[str] = ...,
+        fill_commission_value: typing.Optional[float] = ...,
     ) -> str:
         r"""
         买入下单.
@@ -2495,6 +2502,13 @@ class StrategyContext:
         order_type: typing.Optional[akquant.OrderType] = ...,
         trail_offset: typing.Optional[float] = ...,
         trail_reference_price: typing.Optional[float] = ...,
+        fill_price_basis: typing.Optional[str] = ...,
+        fill_bar_offset: typing.Optional[int] = ...,
+        fill_temporal: typing.Optional[str] = ...,
+        fill_slippage_type: typing.Optional[str] = ...,
+        fill_slippage_value: typing.Optional[float] = ...,
+        fill_commission_type: typing.Optional[str] = ...,
+        fill_commission_value: typing.Optional[float] = ...,
     ) -> str:
         r"""
         卖出下单.

@@ -69,6 +69,18 @@ class ExperimentalFillPolicy(TypedDict):
 
 FillPolicyInput = Union[FillPolicy, Dict[str, Any]]
 
+class SlippagePolicy(TypedDict):
+    type: Literal["percent", "fixed"]
+    value: float
+
+SlippagePolicyInput = Union[SlippagePolicy, Dict[str, Any]]
+
+class CommissionPolicy(TypedDict):
+    type: Literal["percent", "fixed"]
+    value: float
+
+CommissionPolicyInput = Union[CommissionPolicy, Dict[str, Any]]
+
 def make_fill_policy(
     *,
     price_basis: ImplementedPriceBasis,
@@ -125,6 +137,9 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = ...,
     strategy_priority: Optional[Dict[str, int]] = ...,
     strategy_risk_budget: Optional[Dict[str, float]] = ...,
+    strategy_fill_policy: Optional[Dict[str, FillPolicyInput]] = ...,
+    strategy_slippage: Optional[Dict[str, SlippagePolicyInput]] = ...,
+    strategy_commission: Optional[Dict[str, CommissionPolicyInput]] = ...,
     portfolio_risk_budget: Optional[float] = ...,
     risk_budget_mode: Literal["order_notional", "trade_notional"] = ...,
     risk_budget_reset_daily: bool = ...,
@@ -157,6 +172,9 @@ def run_warm_start(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = ...,
     strategy_priority: Optional[Dict[str, int]] = ...,
     strategy_risk_budget: Optional[Dict[str, float]] = ...,
+    strategy_fill_policy: Optional[Dict[str, FillPolicyInput]] = ...,
+    strategy_slippage: Optional[Dict[str, SlippagePolicyInput]] = ...,
+    strategy_commission: Optional[Dict[str, CommissionPolicyInput]] = ...,
     portfolio_risk_budget: Optional[float] = ...,
     risk_budget_mode: Literal["order_notional", "trade_notional"] = ...,
     risk_budget_reset_daily: bool = ...,

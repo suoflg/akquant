@@ -92,6 +92,20 @@ class FillPolicy(TypedDict, total=False):
     bar_offset: int
 
 
+class SlippagePolicy(TypedDict, total=False):
+    """Per-order slippage semantics."""
+
+    type: str
+    value: float
+
+
+class CommissionPolicy(TypedDict, total=False):
+    """Per-order commission semantics."""
+
+    type: str
+    value: float
+
+
 def make_fill_policy(
     *,
     price_basis: str,
@@ -676,6 +690,9 @@ def _apply_strategy_config_overrides(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]],
     strategy_priority: Optional[Dict[str, int]],
     strategy_risk_budget: Optional[Dict[str, float]],
+    strategy_fill_policy: Optional[Dict[str, FillPolicy]],
+    strategy_slippage: Optional[Dict[str, SlippagePolicy]],
+    strategy_commission: Optional[Dict[str, CommissionPolicy]],
     portfolio_risk_budget: Optional[float],
     strategy_runtime_config: Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]],
     strategy_source: Optional[Union[str, bytes, os.PathLike[str]]],
@@ -693,6 +710,9 @@ def _apply_strategy_config_overrides(
     Optional[Dict[str, int]],
     Optional[Dict[str, int]],
     Optional[Dict[str, float]],
+    Optional[Dict[str, FillPolicy]],
+    Optional[Dict[str, SlippagePolicy]],
+    Optional[Dict[str, CommissionPolicy]],
     Optional[float],
     Optional[Union[StrategyRuntimeConfig, Dict[str, Any]]],
     Optional[Union[str, bytes, os.PathLike[str]]],
@@ -712,6 +732,9 @@ def _apply_strategy_config_overrides(
             strategy_risk_cooldown_bars,
             strategy_priority,
             strategy_risk_budget,
+            strategy_fill_policy,
+            strategy_slippage,
+            strategy_commission,
             portfolio_risk_budget,
             strategy_runtime_config,
             strategy_source,
@@ -773,6 +796,21 @@ def _apply_strategy_config_overrides(
             Optional[Dict[str, float]],
             getattr(strategy_config, "strategy_risk_budget", None),
         )
+    if strategy_fill_policy is None:
+        strategy_fill_policy = cast(
+            Optional[Dict[str, FillPolicy]],
+            getattr(strategy_config, "strategy_fill_policy", None),
+        )
+    if strategy_slippage is None:
+        strategy_slippage = cast(
+            Optional[Dict[str, SlippagePolicy]],
+            getattr(strategy_config, "strategy_slippage", None),
+        )
+    if strategy_commission is None:
+        strategy_commission = cast(
+            Optional[Dict[str, CommissionPolicy]],
+            getattr(strategy_config, "strategy_commission", None),
+        )
     if portfolio_risk_budget is None:
         portfolio_risk_budget = cast(
             Optional[float],
@@ -810,6 +848,9 @@ def _apply_strategy_config_overrides(
         strategy_risk_cooldown_bars,
         strategy_priority,
         strategy_risk_budget,
+        strategy_fill_policy,
+        strategy_slippage,
+        strategy_commission,
         portfolio_risk_budget,
         strategy_runtime_config,
         strategy_source,
@@ -879,6 +920,133 @@ def _validate_strategy_risk_inputs(
             "risk_budget_mode must be 'order_notional' or 'trade_notional'"
         )
     return portfolio_risk_budget, normalized_mode
+
+
+def _normalize_strategy_fill_policy_map(
+    strategy_fill_policy: Optional[Dict[str, FillPolicy]],
+    configured_slot_ids: Sequence[str],
+    logger: logging.Logger,
+) -> Optional[Dict[str, FillPolicy]]:
+    if not strategy_fill_policy:
+        return None
+    if not isinstance(strategy_fill_policy, dict):
+        raise TypeError("strategy_fill_policy must be a dict when provided")
+    normalized: Dict[str, FillPolicy] = {}
+    for strategy_key, raw_policy in strategy_fill_policy.items():
+        strategy_key_str = str(strategy_key).strip()
+        if not strategy_key_str:
+            raise ValueError("strategy_fill_policy contains empty strategy id")
+        if not isinstance(raw_policy, dict):
+            raise TypeError(
+                f"strategy_fill_policy[{strategy_key_str}] must be a dict FillPolicy"
+            )
+        resolved = _resolve_execution_policy(
+            execution_mode="next_open",
+            timer_execution_policy="same_cycle",
+            fill_policy=cast(FillPolicy, raw_policy),
+            logger=logger,
+        )
+        normalized[strategy_key_str] = {
+            "price_basis": resolved.price_basis,
+            "bar_offset": int(resolved.bar_offset),
+            "temporal": resolved.temporal,
+        }
+    unknown_keys = sorted(set(normalized.keys()).difference(set(configured_slot_ids)))
+    if unknown_keys:
+        raise ValueError(
+            "strategy_fill_policy contains unknown strategy id(s): "
+            + ",".join(unknown_keys)
+        )
+    return normalized
+
+
+def _normalize_strategy_slippage_map(
+    strategy_slippage: Optional[Dict[str, SlippagePolicy]],
+    configured_slot_ids: Sequence[str],
+) -> Optional[Dict[str, SlippagePolicy]]:
+    if not strategy_slippage:
+        return None
+    if not isinstance(strategy_slippage, dict):
+        raise TypeError("strategy_slippage must be a dict when provided")
+    normalized: Dict[str, SlippagePolicy] = {}
+    for strategy_key, raw_slippage in strategy_slippage.items():
+        strategy_key_str = str(strategy_key).strip()
+        if not strategy_key_str:
+            raise ValueError("strategy_slippage contains empty strategy id")
+        if not isinstance(raw_slippage, dict):
+            raise TypeError(
+                f"strategy_slippage[{strategy_key_str}] must be a dict SlippagePolicy"
+            )
+        raw_type = str(raw_slippage.get("type", "percent")).strip().lower()
+        if raw_type not in {"percent", "fixed"}:
+            raise ValueError(
+                f"strategy_slippage[{strategy_key_str}].type must be one of: "
+                "percent, fixed"
+            )
+        raw_value = raw_slippage.get("value", 0.0)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"strategy_slippage[{strategy_key_str}].value must be a number >= 0"
+            ) from None
+        if value < 0:
+            raise ValueError(
+                f"strategy_slippage[{strategy_key_str}].value must be >= 0"
+            )
+        normalized[strategy_key_str] = {"type": raw_type, "value": value}
+    unknown_keys = sorted(set(normalized.keys()).difference(set(configured_slot_ids)))
+    if unknown_keys:
+        raise ValueError(
+            "strategy_slippage contains unknown strategy id(s): "
+            + ",".join(unknown_keys)
+        )
+    return normalized
+
+
+def _normalize_strategy_commission_map(
+    strategy_commission: Optional[Dict[str, CommissionPolicy]],
+    configured_slot_ids: Sequence[str],
+) -> Optional[Dict[str, CommissionPolicy]]:
+    if not strategy_commission:
+        return None
+    if not isinstance(strategy_commission, dict):
+        raise TypeError("strategy_commission must be a dict when provided")
+    normalized: Dict[str, CommissionPolicy] = {}
+    for strategy_key, raw_commission in strategy_commission.items():
+        strategy_key_str = str(strategy_key).strip()
+        if not strategy_key_str:
+            raise ValueError("strategy_commission contains empty strategy id")
+        if not isinstance(raw_commission, dict):
+            raise TypeError(
+                f"strategy_commission[{strategy_key_str}] must be a dict "
+                "CommissionPolicy"
+            )
+        raw_type = str(raw_commission.get("type", "percent")).strip().lower()
+        if raw_type not in {"percent", "fixed"}:
+            raise ValueError(
+                f"strategy_commission[{strategy_key_str}].type must be one of: "
+                "percent, fixed"
+            )
+        raw_value = raw_commission.get("value", 0.0)
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"strategy_commission[{strategy_key_str}].value must be a number >= 0"
+            ) from None
+        if value < 0:
+            raise ValueError(
+                f"strategy_commission[{strategy_key_str}].value must be >= 0"
+            )
+        normalized[strategy_key_str] = {"type": raw_type, "value": value}
+    unknown_keys = sorted(set(normalized.keys()).difference(set(configured_slot_ids)))
+    if unknown_keys:
+        raise ValueError(
+            "strategy_commission contains unknown strategy id(s): "
+            + ",".join(unknown_keys)
+        )
+    return normalized
 
 
 def _parse_asset_type_name(value: Any) -> Literal["futures", "stock", "fund", "option"]:
@@ -1389,6 +1557,9 @@ def run_backtest(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_slippage: Optional[Dict[str, SlippagePolicy]] = None,
+    strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
@@ -1477,6 +1648,15 @@ def run_backtest(
                                         （strategy_id->cooldown_bars）
     :param strategy_priority: 可选策略级执行优先级映射（strategy_id->priority）
     :param strategy_risk_budget: 可选策略级累计风险预算映射（strategy_id->budget）
+    :param strategy_fill_policy: 可选策略级默认成交策略映射
+                                 （strategy_id->fill_policy）。
+                                 下单优先级：订单级 > 策略级 > 运行级。
+    :param strategy_slippage: 可选策略级默认滑点映射
+                              （strategy_id->slippage）。
+                              下单优先级：订单级 > 策略级 > 引擎级。
+    :param strategy_commission: 可选策略级默认佣金映射
+                                （strategy_id->commission）。
+                                下单优先级：订单级 > 策略级 > 引擎级。
     :param portfolio_risk_budget: 可选账户级累计风险预算上限
     :param risk_budget_mode: 风险预算口径，支持 order_notional/trade_notional
     :param risk_budget_reset_daily: 风险预算是否按交易日重置
@@ -1530,6 +1710,9 @@ def run_backtest(
         strategy_risk_cooldown_bars,
         strategy_priority,
         strategy_risk_budget,
+        strategy_fill_policy,
+        strategy_slippage,
+        strategy_commission,
         portfolio_risk_budget,
         strategy_runtime_config,
         strategy_source,
@@ -1548,6 +1731,9 @@ def run_backtest(
         strategy_risk_cooldown_bars=strategy_risk_cooldown_bars,
         strategy_priority=strategy_priority,
         strategy_risk_budget=strategy_risk_budget,
+        strategy_fill_policy=strategy_fill_policy,
+        strategy_slippage=strategy_slippage,
+        strategy_commission=strategy_commission,
         portfolio_risk_budget=portfolio_risk_budget,
         strategy_runtime_config=strategy_runtime_config,
         strategy_source=strategy_source,
@@ -1805,11 +1991,45 @@ def run_backtest(
     for slot_key in slot_strategy_instances.keys():
         if slot_key not in configured_slot_ids:
             configured_slot_ids.append(slot_key)
+    normalized_strategy_fill_policy = _normalize_strategy_fill_policy_map(
+        strategy_fill_policy,
+        configured_slot_ids,
+        logger,
+    )
+    normalized_strategy_slippage = _normalize_strategy_slippage_map(
+        strategy_slippage,
+        configured_slot_ids,
+    )
+    normalized_strategy_commission = _normalize_strategy_commission_map(
+        strategy_commission,
+        configured_slot_ids,
+    )
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
+    if normalized_strategy_fill_policy is not None:
+        for current_strategy in all_strategy_instances:
+            setattr(
+                current_strategy,
+                "_strategy_fill_policy_map",
+                dict(normalized_strategy_fill_policy),
+            )
+    if normalized_strategy_slippage is not None:
+        for current_strategy in all_strategy_instances:
+            setattr(
+                current_strategy,
+                "_strategy_slippage_map",
+                dict(normalized_strategy_slippage),
+            )
+    if normalized_strategy_commission is not None:
+        for current_strategy in all_strategy_instances:
+            setattr(
+                current_strategy,
+                "_strategy_commission_map",
+                dict(normalized_strategy_commission),
+            )
 
     if strategy_runtime_config is not None and isinstance(strategy_instance, Strategy):
         _apply_strategy_runtime_config(
@@ -3309,6 +3529,9 @@ def run_warm_start(
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None,
     strategy_priority: Optional[Dict[str, int]] = None,
     strategy_risk_budget: Optional[Dict[str, float]] = None,
+    strategy_fill_policy: Optional[Dict[str, FillPolicy]] = None,
+    strategy_slippage: Optional[Dict[str, SlippagePolicy]] = None,
+    strategy_commission: Optional[Dict[str, CommissionPolicy]] = None,
     portfolio_risk_budget: Optional[float] = None,
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
@@ -3353,6 +3576,9 @@ def run_warm_start(
         strategy_risk_cooldown_bars,
         strategy_priority,
         strategy_risk_budget,
+        strategy_fill_policy,
+        strategy_slippage,
+        strategy_commission,
         portfolio_risk_budget,
         strategy_runtime_config,
         _ignored_strategy_source,
@@ -3371,6 +3597,9 @@ def run_warm_start(
         strategy_risk_cooldown_bars=strategy_risk_cooldown_bars,
         strategy_priority=strategy_priority,
         strategy_risk_budget=strategy_risk_budget,
+        strategy_fill_policy=strategy_fill_policy,
+        strategy_slippage=strategy_slippage,
+        strategy_commission=strategy_commission,
         portfolio_risk_budget=portfolio_risk_budget,
         strategy_runtime_config=strategy_runtime_config,
         strategy_source=None,
@@ -3577,12 +3806,46 @@ def run_warm_start(
     for slot_key in source_slot_ids:
         if slot_key not in configured_slot_ids:
             configured_slot_ids.append(slot_key)
+    normalized_strategy_fill_policy = _normalize_strategy_fill_policy_map(
+        strategy_fill_policy,
+        configured_slot_ids,
+        logger,
+    )
+    normalized_strategy_slippage = _normalize_strategy_slippage_map(
+        strategy_slippage,
+        configured_slot_ids,
+    )
+    normalized_strategy_commission = _normalize_strategy_commission_map(
+        strategy_commission,
+        configured_slot_ids,
+    )
 
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
+    if normalized_strategy_fill_policy is not None:
+        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+            setattr(
+                current_strategy,
+                "_strategy_fill_policy_map",
+                dict(normalized_strategy_fill_policy),
+            )
+    if normalized_strategy_slippage is not None:
+        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+            setattr(
+                current_strategy,
+                "_strategy_slippage_map",
+                dict(normalized_strategy_slippage),
+            )
+    if normalized_strategy_commission is not None:
+        for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+            setattr(
+                current_strategy,
+                "_strategy_commission_map",
+                dict(normalized_strategy_commission),
+            )
 
     if configured_slot_ids and hasattr(engine, "set_strategy_slots"):
         cast(Any, engine).set_strategy_slots(configured_slot_ids)

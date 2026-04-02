@@ -542,6 +542,9 @@ class StrategyConfig:
     strategy_risk_cooldown_bars: Optional[Dict[str, int]] = None
     strategy_priority: Optional[Dict[str, int]] = None
     strategy_risk_budget: Optional[Dict[str, float]] = None
+    strategy_fill_policy: Optional[Dict[str, Dict[str, Any]]] = None
+    strategy_slippage: Optional[Dict[str, Dict[str, Any]]] = None
+    strategy_commission: Optional[Dict[str, Dict[str, Any]]] = None
     portfolio_risk_budget: Optional[float] = None
 
 

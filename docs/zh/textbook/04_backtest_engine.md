@@ -502,6 +502,19 @@ $$ \text{Final Price} = \text{Execution Price} \times (1 \pm \text{Slippage Rate
 
 此外，你还可以设置 **Volume Limit**（例如 10%），限制策略在单根 Bar 上的成交量不超过市场总成交量的 10%，以模拟流动性限制。
 
+### 4.10.5 配置分层与覆盖优先级
+
+`akquant` 在成交相关参数上采用统一的四层覆盖模型（从高到低）：
+
+1.  **订单级**：`buy/sell/submit_order` 传入 `fill_policy/slippage/commission`。
+2.  **策略映射级**：`strategy_fill_policy/strategy_slippage/strategy_commission`（按 `strategy_id/slot`）。
+3.  **运行级**：`run_backtest(...)` 全局参数（例如 `fill_policy/slippage`）。
+4.  **市场默认**：market model 的内建默认规则（费率、制度等）。
+
+实务建议：
+*   单策略场景可先用运行级，局部例外再用订单级覆盖。
+*   多策略槽位场景优先使用 `strategy_*`，避免不同策略互相覆盖全局参数。
+
 ## 4.11 资金与风控管理 (Portfolio & Risk)
 
 ### 4.11.1 资金校验 (Pre-trade Check)
@@ -523,6 +536,10 @@ $$ \text{Final Price} = \text{Execution Price} \times (1 \pm \text{Slippage Rate
 *   **卖出检查**: 卖出时检查 `available_positions` 而非总持仓。
 
 这意味着如果你在 T 日买入，尝试在 T 日卖出，订单会被拒绝，错误信息提示 "Insufficient available position"。
+
+当前范围说明：
+*   `t_plus_one` 是**运行级/市场级**开关，不是按 `strategy_id` 的分层参数。
+*   即使启用了多策略槽位，不同策略仍共享同一市场制度与可用持仓结算口径。
 
 ## 4.12 多标的与时间流 (Time Flow & Multi-Asset)
 

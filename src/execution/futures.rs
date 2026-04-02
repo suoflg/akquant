@@ -195,30 +195,12 @@ mod tests {
     }
 
     fn create_order(side: OrderSide) -> Order {
-        Order {
-            id: "1".to_string(),
-            symbol: "RB2310".to_string(),
-            side,
-            order_type: OrderType::Limit,
-            quantity: dec!(1),
-            price: Some(dec!(3500.0)),
-            trigger_price: None,
-            trail_offset: None,
-            trail_reference_price: None,
-            graph_id: None,
-            parent_order_id: None,
-            order_role: OrderRole::Standalone,
-            status: OrderStatus::New,
-            filled_quantity: Decimal::ZERO,
-            average_filled_price: None,
-            time_in_force: TimeInForce::Day,
-            created_at: 0,
-            updated_at: 0,
-            commission: Decimal::ZERO,
-            tag: String::new(),
-            reject_reason: String::new(),
-            owner_strategy_id: None,
-        }
+        let mut order = Order::test_new("1", "RB2310", side, OrderType::Limit, dec!(1));
+        order.price = Some(dec!(3500.0));
+        order.time_in_force = TimeInForce::Day;
+        order.status = OrderStatus::New;
+        order.order_role = OrderRole::Standalone;
+        order
     }
 
     fn create_context<'a>(

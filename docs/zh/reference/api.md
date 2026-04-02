@@ -175,6 +175,18 @@ def run_warm_start(
 *   `custom_matchers`: 自定义撮合器字典。
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
 *   `strategies_by_slot`: 可选多策略映射。键为 slot id，值为策略类/实例/函数式 on_bar 回调；用于启用 slot 迭代执行。
+*   `strategy_fill_policy`: 可选策略级默认成交策略映射（`strategy_id -> fill_policy`）。
+    下单时优先级：订单级 `fill_policy` > `strategy_fill_policy[strategy_id]` > 运行级 `fill_policy`。
+*   `strategy_slippage`: 可选策略级默认滑点映射（`strategy_id -> slippage`）。
+    下单时优先级：订单级 `slippage` > `strategy_slippage[strategy_id]` > 运行级 `slippage`。
+*   `strategy_commission`: 可选策略级默认佣金映射（`strategy_id -> commission`）。
+    下单时优先级：订单级 `commission` > `strategy_commission[strategy_id]` > 运行级佣金模型。
+*   配置分层（推荐心智模型）：
+    1) 订单级（`buy/sell/submit_order` 传参）；
+    2) 策略映射级（`strategy_*`，按 `strategy_id/slot`）；
+    3) 运行级（`run_backtest` 参数）；
+    4) 市场默认（market model 内建默认规则）。
+*   T+1 范围说明：当前 `t_plus_one` 仍是运行级/市场级开关，不支持按 `strategy_id` 分层配置。
 *   `analyzer_plugins`: 可选 Analyzer 插件列表。插件接收 `on_start/on_bar/on_trade/on_finish` 生命周期回调，结果汇总到 `result.analyzer_outputs`。
 *   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
 *   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数等默认值。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
@@ -208,6 +220,11 @@ result = aq.run_backtest(
 | 下一根收盘价成交 | `{"price_basis":"close","bar_offset":1,"temporal":"same_cycle"}` |
 | 下一根 OHLC 均价成交 | `{"price_basis":"ohlc4","bar_offset":1,"temporal":"same_cycle"}` |
 | 下一根 HL2 成交 | `{"price_basis":"hl2","bar_offset":1,"temporal":"same_cycle"}` |
+
+说明：
+* 对 `open/ohlc4/hl2` 这三种 `price_basis`，`bar_offset` 固定为 `1`（不支持 `0`）。
+* 对 `close + bar_offset=1`（下一根收盘价）场景，核心时间位移语义由 `bar_offset` 决定；`temporal` 建议固定写 `same_cycle` 以减少歧义。
+* `temporal` 的差异主要体现在 `close + bar_offset=0`（当前收盘价）场景。
 
 **DataFeedAdapter 用法（多时间框）:**
 

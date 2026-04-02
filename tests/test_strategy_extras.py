@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Iterator, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -20,6 +20,14 @@ from akquant.akquant import Bar, OrderStatus, StrategyContext, Tick, TimeInForce
 from akquant.backtest import FunctionalStrategy
 from akquant.config import RiskConfig
 from akquant.strategy import Strategy, StrategyRuntimeConfig
+
+
+@pytest.fixture(autouse=True)
+def _reset_logger_console_state() -> Iterator[None]:
+    try:
+        yield
+    finally:
+        register_logger(console=False, level="INFO")
 
 
 class MyStrategy(Strategy):
@@ -3353,6 +3361,9 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
+            fill_policy: dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
+            commission: dict[str, Any] | None = None,
         ) -> str:
             _ = price
             _ = time_in_force
@@ -3364,6 +3375,9 @@ def test_strategy_buy_sell_delegate_to_submit_order() -> None:
             _ = broker_options
             _ = trail_offset
             _ = trail_reference_price
+            _ = fill_policy
+            _ = slippage
+            _ = commission
             assert symbol is not None
             assert quantity is not None
             self.calls.append((side, symbol, quantity))
@@ -3425,6 +3439,331 @@ def test_strategy_submit_order_records_broker_options_in_backtest_mode() -> None
     }
 
 
+class _OrderLevelFillPolicyStrategy(Strategy):
+    """Submit two market orders with different order-level fill_policy."""
+
+    def __init__(self) -> None:
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.sent:
+            return
+        self.sent = True
+        self.submit_order(
+            symbol=bar.symbol,
+            side="Buy",
+            quantity=1.0,
+            tag="order-open",
+            fill_policy={
+                "price_basis": "open",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+        )
+        self.submit_order(
+            symbol=bar.symbol,
+            side="Buy",
+            quantity=1.0,
+            tag="order-close",
+            fill_policy={
+                "price_basis": "close",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+        )
+
+
+def test_order_level_fill_policy_overrides_engine_fill_policy() -> None:
+    """Order-level fill_policy should override engine-level fill_policy for fills."""
+    register_logger(console=False, level="INFO")
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "open": [10.0, 20.0, 30.0],
+            "high": [11.0, 21.0, 31.0],
+            "low": [9.0, 19.0, 29.0],
+            "close": [100.0, 200.0, 300.0],
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+        }
+    )
+    result = run_backtest(
+        data=data,
+        strategy=_OrderLevelFillPolicyStrategy,
+        symbols="AAPL",
+        initial_cash=100000.0,
+        show_progress=False,
+        fill_policy={"price_basis": "open", "bar_offset": 1, "temporal": "same_cycle"},
+    )
+    filled_orders = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    open_row = filled_orders[filled_orders["tag"] == "order-open"].iloc[0]
+    close_row = filled_orders[filled_orders["tag"] == "order-close"].iloc[0]
+    assert float(open_row["avg_price"]) == pytest.approx(20.0)
+    assert float(close_row["avg_price"]) == pytest.approx(200.0)
+    register_logger(console=False, level="INFO")
+
+
+class _StrategyLevelFillPolicyStrategy(Strategy):
+    """Submit one market order without order-level fill_policy override."""
+
+    def __init__(self) -> None:
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.sent:
+            return
+        self.sent = True
+        self.buy(symbol=bar.symbol, quantity=1.0, tag="strategy-level-policy")
+
+
+def test_strategy_level_fill_policy_applies_when_order_policy_missing() -> None:
+    """Strategy-level fill policy map should apply when order-level policy is absent."""
+    register_logger(console=False, level="INFO")
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "open": [10.0, 20.0, 30.0],
+            "high": [11.0, 21.0, 31.0],
+            "low": [9.0, 19.0, 29.0],
+            "close": [100.0, 200.0, 300.0],
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+        }
+    )
+    result = run_backtest(
+        data=data,
+        strategy=_StrategyLevelFillPolicyStrategy,
+        symbols="AAPL",
+        initial_cash=100000.0,
+        show_progress=False,
+        fill_policy={"price_basis": "open", "bar_offset": 1, "temporal": "same_cycle"},
+        strategy_fill_policy={
+            "_default": {
+                "price_basis": "close",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            }
+        },
+    )
+    filled_orders = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    row = filled_orders[filled_orders["tag"] == "strategy-level-policy"].iloc[0]
+    assert float(row["avg_price"]) == pytest.approx(200.0)
+    register_logger(console=False, level="INFO")
+
+
+class _OrderLevelSlippageStrategy(Strategy):
+    def __init__(self) -> None:
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.sent:
+            return
+        self.sent = True
+        self.submit_order(
+            symbol=bar.symbol,
+            side="Buy",
+            quantity=1.0,
+            tag="slippage-fixed",
+            fill_policy={
+                "price_basis": "open",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+            slippage={"type": "fixed", "value": 0.5},
+        )
+        self.submit_order(
+            symbol=bar.symbol,
+            side="Buy",
+            quantity=1.0,
+            tag="slippage-percent",
+            fill_policy={
+                "price_basis": "open",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+            slippage={"type": "percent", "value": 0.1},
+        )
+
+
+def test_order_level_slippage_overrides_engine_slippage() -> None:
+    """Order-level slippage should override engine-level slippage model."""
+    register_logger(console=False, level="INFO")
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "open": [10.0, 20.0, 30.0],
+            "high": [11.0, 21.0, 31.0],
+            "low": [9.0, 19.0, 29.0],
+            "close": [100.0, 200.0, 300.0],
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+        }
+    )
+    result = run_backtest(
+        data=data,
+        strategy=_OrderLevelSlippageStrategy,
+        symbols="AAPL",
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+    filled_orders = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    fixed_row = filled_orders[filled_orders["tag"] == "slippage-fixed"].iloc[0]
+    percent_row = filled_orders[filled_orders["tag"] == "slippage-percent"].iloc[0]
+    assert float(fixed_row["avg_price"]) == pytest.approx(20.5)
+    assert float(percent_row["avg_price"]) == pytest.approx(22.0)
+
+
+class _StrategyLevelSlippageStrategy(Strategy):
+    def __init__(self) -> None:
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.sent:
+            return
+        self.sent = True
+        self.buy(symbol=bar.symbol, quantity=1.0, tag="strategy-slippage")
+
+
+def test_strategy_level_slippage_applies_when_order_slippage_missing() -> None:
+    """Strategy-level slippage overrides engine-level when order slippage is missing."""
+    register_logger(console=False, level="INFO")
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "open": [10.0, 20.0, 30.0],
+            "high": [11.0, 21.0, 31.0],
+            "low": [9.0, 19.0, 29.0],
+            "close": [100.0, 200.0, 300.0],
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+        }
+    )
+    result = run_backtest(
+        data=data,
+        strategy=_StrategyLevelSlippageStrategy,
+        symbols="AAPL",
+        initial_cash=100000.0,
+        show_progress=False,
+        slippage=0.2,
+        strategy_slippage={"_default": {"type": "fixed", "value": 0.5}},
+    )
+    filled_orders = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    row = filled_orders[filled_orders["tag"] == "strategy-slippage"].iloc[0]
+    assert float(row["avg_price"]) == pytest.approx(20.5)
+
+
+class _OrderLevelCommissionStrategy(Strategy):
+    def __init__(self) -> None:
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.sent:
+            return
+        self.sent = True
+        self.submit_order(
+            symbol=bar.symbol,
+            side="Buy",
+            quantity=1.0,
+            tag="commission-fixed",
+            fill_policy={
+                "price_basis": "open",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+            commission={"type": "fixed", "value": 3.0},
+        )
+        self.submit_order(
+            symbol=bar.symbol,
+            side="Buy",
+            quantity=1.0,
+            tag="commission-percent",
+            fill_policy={
+                "price_basis": "open",
+                "bar_offset": 1,
+                "temporal": "same_cycle",
+            },
+            commission={"type": "percent", "value": 0.01},
+        )
+
+
+def test_order_level_commission_overrides_market_model() -> None:
+    """Order-level commission should override market-model commission calculation."""
+    register_logger(console=False, level="INFO")
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "open": [10.0, 20.0, 30.0],
+            "high": [11.0, 21.0, 31.0],
+            "low": [9.0, 19.0, 29.0],
+            "close": [100.0, 200.0, 300.0],
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+        }
+    )
+    result = run_backtest(
+        data=data,
+        strategy=_OrderLevelCommissionStrategy,
+        symbols="AAPL",
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+    filled_orders = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    fixed_row = filled_orders[filled_orders["tag"] == "commission-fixed"].iloc[0]
+    percent_row = filled_orders[filled_orders["tag"] == "commission-percent"].iloc[0]
+    assert float(fixed_row["commission"]) == pytest.approx(3.0)
+    assert float(percent_row["commission"]) == pytest.approx(0.2)
+
+
+class _StrategyLevelCommissionStrategy(Strategy):
+    def __init__(self) -> None:
+        self.sent = False
+
+    def on_bar(self, bar: Bar) -> None:
+        if self.sent:
+            return
+        self.sent = True
+        self.buy(symbol=bar.symbol, quantity=1.0, tag="strategy-commission")
+
+
+def test_strategy_level_commission_applies_when_order_commission_missing() -> None:
+    """Strategy-level commission applies when order-level commission is omitted."""
+    register_logger(console=False, level="INFO")
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2023-01-01", periods=3, freq="D", tz="UTC"),
+            "open": [10.0, 20.0, 30.0],
+            "high": [11.0, 21.0, 31.0],
+            "low": [9.0, 19.0, 29.0],
+            "close": [100.0, 200.0, 300.0],
+            "volume": [10000.0, 10000.0, 10000.0],
+            "symbol": ["AAPL", "AAPL", "AAPL"],
+        }
+    )
+    result = run_backtest(
+        data=data,
+        strategy=_StrategyLevelCommissionStrategy,
+        symbols="AAPL",
+        initial_cash=100000.0,
+        show_progress=False,
+        strategy_commission={"_default": {"type": "fixed", "value": 0.5}},
+    )
+    filled_orders = result.orders_df[
+        result.orders_df["status"].astype(str).str.lower() == "filled"
+    ]
+    row = filled_orders[filled_orders["tag"] == "strategy-commission"].iloc[0]
+    assert float(row["commission"]) == pytest.approx(0.5)
+
+
 def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
     """Trailing helper APIs should call unified submit_order with trailing args."""
 
@@ -3447,12 +3786,18 @@ def test_strategy_trailing_helpers_delegate_to_submit_order() -> None:
             broker_options: dict[str, Any] | None = None,
             trail_offset: float | None = None,
             trail_reference_price: float | None = None,
+            fill_policy: dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
+            commission: dict[str, Any] | None = None,
         ) -> str:
             _ = time_in_force
             _ = trigger_price
             _ = client_order_id
             _ = extra
             _ = broker_options
+            _ = fill_policy
+            _ = slippage
+            _ = commission
             self.calls.append(
                 {
                     "symbol": symbol,
@@ -3668,6 +4013,9 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
+            fill_policy: dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
+            commission: dict[str, Any] | None = None,
         ) -> str:
             self.buy_calls.append(
                 {
@@ -3677,6 +4025,9 @@ def test_bracket_prefers_engine_registration_when_available() -> None:
                     "time_in_force": time_in_force,
                     "trigger_price": trigger_price,
                     "tag": tag,
+                    "fill_policy": fill_policy,
+                    "slippage": slippage,
+                    "commission": commission,
                 }
             )
             return "entry-1"
@@ -3734,8 +4085,21 @@ def test_bracket_falls_back_to_deferred_engine_queue_on_runtime_error() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
+            fill_policy: dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
+            commission: dict[str, Any] | None = None,
         ) -> str:
-            _ = (symbol, quantity, price, time_in_force, trigger_price, tag)
+            _ = (
+                symbol,
+                quantity,
+                price,
+                time_in_force,
+                trigger_price,
+                tag,
+                fill_policy,
+                slippage,
+                commission,
+            )
             return "entry-1"
 
     strategy = _BracketEngineStrategy()
@@ -3777,6 +4141,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
+            fill_policy: dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
+            commission: dict[str, Any] | None = None,
         ) -> str:
             self.buy_calls.append(
                 {
@@ -3786,6 +4153,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
                     "time_in_force": time_in_force,
                     "trigger_price": trigger_price,
                     "tag": tag,
+                    "fill_policy": fill_policy,
+                    "slippage": slippage,
+                    "commission": commission,
                 }
             )
             return "entry-1"
@@ -3798,6 +4168,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             time_in_force: Any = None,
             trigger_price: float | None = None,
             tag: str | None = None,
+            fill_policy: dict[str, Any] | None = None,
+            slippage: dict[str, Any] | None = None,
+            commission: dict[str, Any] | None = None,
         ) -> str:
             self._sell_counter += 1
             order_id = f"exit-{self._sell_counter}"
@@ -3810,6 +4183,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
                     "time_in_force": time_in_force,
                     "trigger_price": trigger_price,
                     "tag": tag,
+                    "fill_policy": fill_policy,
+                    "slippage": slippage,
+                    "commission": commission,
                 }
             )
             return order_id
@@ -3837,6 +4213,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             "time_in_force": None,
             "trigger_price": None,
             "tag": "entry",
+            "fill_policy": None,
+            "slippage": None,
+            "commission": None,
         }
     ]
     assert strategy.sell_calls == [
@@ -3848,6 +4227,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             "time_in_force": None,
             "trigger_price": 95.0,
             "tag": "stop",
+            "fill_policy": None,
+            "slippage": None,
+            "commission": None,
         },
         {
             "order_id": "exit-2",
@@ -3857,6 +4239,9 @@ def test_bracket_places_exit_orders_and_builds_oco() -> None:
             "time_in_force": None,
             "trigger_price": None,
             "tag": "take",
+            "fill_policy": None,
+            "slippage": None,
+            "commission": None,
         },
     ]
     assert strategy._pending_brackets == {}

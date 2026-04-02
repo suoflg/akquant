@@ -30,30 +30,12 @@ mod tests {
         price: Option<Decimal>,
         stop: Option<Decimal>,
     ) -> Order {
-        Order {
-            id: "1".to_string(),
-            symbol: "AAPL".to_string(),
-            side,
-            order_type: type_,
-            quantity: dec!(100),
-            price,
-            trigger_price: stop,
-            trail_offset: None,
-            trail_reference_price: None,
-            graph_id: None,
-            parent_order_id: None,
-            order_role: crate::model::OrderRole::Standalone,
-            status: OrderStatus::New,
-            filled_quantity: Decimal::ZERO,
-            average_filled_price: None,
-            time_in_force: TimeInForce::Day,
-            created_at: 0,
-            updated_at: 0,
-            commission: Decimal::ZERO,
-            tag: "".to_string(),
-            reject_reason: "".to_string(),
-            owner_strategy_id: None,
-        }
+        let mut order = Order::test_new("1", "AAPL", side, type_, dec!(100));
+        order.price = price;
+        order.trigger_price = stop;
+        order.time_in_force = TimeInForce::Day;
+        order.status = OrderStatus::New;
+        order
     }
 
     fn create_instrument() -> Instrument {

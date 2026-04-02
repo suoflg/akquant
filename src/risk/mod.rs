@@ -25,30 +25,14 @@ mod tests {
     use std::sync::Arc;
 
     fn create_test_order(symbol: &str, quantity: Decimal, price: Option<Decimal>) -> Order {
-        Order {
-            id: "test_order".to_string(),
-            symbol: symbol.to_string(),
-            side: OrderSide::Buy,
-            order_type: OrderType::Limit,
-            quantity,
-            price,
-            status: OrderStatus::New,
-            time_in_force: TimeInForce::Day,
-            trigger_price: None,
-            trail_offset: None,
-            trail_reference_price: None,
-            graph_id: None,
-            parent_order_id: None,
-            order_role: crate::model::OrderRole::Standalone,
-            filled_quantity: Decimal::ZERO,
-            average_filled_price: None,
-            created_at: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-            updated_at: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-            commission: Decimal::ZERO,
-            tag: String::new(),
-            reject_reason: String::new(),
-            owner_strategy_id: None,
-        }
+        let mut order = Order::test_new("test_order", symbol, OrderSide::Buy, OrderType::Limit, quantity);
+        order.price = price;
+        order.status = OrderStatus::New;
+        order.time_in_force = TimeInForce::Day;
+        let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        order.created_at = now;
+        order.updated_at = now;
+        order
     }
 
     fn create_test_instrument(symbol: &str, asset_type: AssetType) -> Instrument {
