@@ -424,9 +424,11 @@ class BacktestResult:
                 # Margin Level = Equity / Used Margin
                 # Avoid division by zero
                 daily_agg["margin_level"] = daily_agg.apply(
-                    lambda row: row["equity"] / row["margin"]
-                    if row["margin"] > 0
-                    else float("inf"),
+                    lambda row: (
+                        row["equity"] / row["margin"]
+                        if row["margin"] > 0
+                        else float("inf")
+                    ),
                     axis=1,
                 )
                 # Filter out inf (no margin used)
