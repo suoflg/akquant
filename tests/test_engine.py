@@ -4415,6 +4415,285 @@ def test_run_grid_search_db_path_serializes_timestamp_metrics(
     assert isinstance(metrics.get("end_time"), str)
 
 
+def test_run_grid_search_infers_symbols_from_dict_data() -> None:
+    """Grid search should infer symbols from dict-form multisymbol data."""
+    data = {
+        "OPT_DICT_A": _build_benchmark_data(n=40, symbol="OPT_DICT_A"),
+        "OPT_DICT_B": _build_benchmark_data(n=40, symbol="OPT_DICT_B"),
+    }
+
+    results = akquant.run_grid_search(
+        strategy=NoopStrategy,
+        param_grid={"dummy": [1]},
+        data=data,
+        max_workers=1,
+        return_df=True,
+        show_progress=False,
+    )
+
+    assert isinstance(results, pd.DataFrame)
+    assert len(results) == 1
+    assert float(results.iloc[0]["total_bars"]) > 0.0
+    assert pd.isna(results.iloc[0].get("error"))
+
+
+def test_run_grid_search_dict_data_rejects_missing_symbols() -> None:
+    """Grid search should fail fast when requested symbols are absent."""
+    data = {
+        "OPT_DICT_A": _build_benchmark_data(n=20, symbol="OPT_DICT_A"),
+        "OPT_DICT_B": _build_benchmark_data(n=20, symbol="OPT_DICT_B"),
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="Requested symbols are not available in optimization data",
+    ):
+        _ = akquant.run_grid_search(
+            strategy=NoopStrategy,
+            param_grid={"dummy": [1]},
+            data=data,
+            symbols=["OPT_DICT_C"],
+            max_workers=1,
+            return_df=True,
+            show_progress=False,
+        )
+
+
+def test_run_walk_forward_supports_multisymbol_dict_data() -> None:
+    """Walk-forward should slice dict-form multisymbol data by timeline."""
+    data = {
+        "WFO_DICT_A": _build_benchmark_data(n=24, symbol="WFO_DICT_A"),
+        "WFO_DICT_B": _build_benchmark_data(n=24, symbol="WFO_DICT_B"),
+    }
+
+    results = akquant.run_walk_forward(
+        strategy=NoopStrategy,
+        param_grid={"dummy": [1]},
+        data=data,
+        train_period=10,
+        test_period=5,
+        initial_cash=100_000.0,
+        max_tasks_per_child=1,
+        show_progress=False,
+    )
+
+    assert isinstance(results, pd.DataFrame)
+    assert not results.empty
+    assert "equity" in results.columns
+    assert "train_start" in results.columns
+    assert "train_end" in results.columns
+    assert results["train_start"].iloc[0] < results["train_end"].iloc[0]
+
+
+def test_on_train_signal_runs_after_on_bar_for_trigger_bar() -> None:
+    """Rolling training should execute after the trigger bar callback."""
+
+    class RollingOrderProbeStrategy(akquant.Strategy):
+        """Capture callback ordering for rolling training."""
+
+        def __init__(self) -> None:
+            """Initialize rolling callback probe state."""
+            super().__init__()
+            self.set_rolling_window(train_window=4, step=2)
+            self.warmup_period = 4
+            self.events: list[tuple[str, int]] = []
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            """Record bar callback order."""
+            self.events.append(("bar", int(bar.close)))
+
+        def on_train_signal(self, context: Any) -> None:
+            """Record train callback order using the rolling window tail."""
+            df, _ = self.get_rolling_data()
+            closes = df["close"].dropna().astype(int).tolist()
+            self.events.append(("train", int(closes[-1])))
+
+    symbol = "ROLLING_ORDER"
+    data = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2020-01-01", periods=8, freq="min", tz="UTC"),
+            "open": np.arange(1, 9, dtype=float),
+            "high": np.arange(1, 9, dtype=float),
+            "low": np.arange(1, 9, dtype=float),
+            "close": np.arange(1, 9, dtype=float),
+            "volume": np.full(8, 1000.0),
+            "symbol": [symbol] * 8,
+        }
+    )
+    strategy = RollingOrderProbeStrategy()
+
+    _ = akquant.run_backtest(
+        data=data,
+        strategy=strategy,
+        symbols=[symbol],
+        history_depth=4,
+        show_progress=False,
+    )
+
+    assert strategy.events == [
+        ("bar", 4),
+        ("train", 4),
+        ("bar", 5),
+        ("bar", 6),
+        ("train", 6),
+        ("bar", 7),
+        ("bar", 8),
+        ("train", 8),
+    ]
+
+
+def test_ml_validation_training_schedule_uses_relative_rolling_step() -> None:
+    """ML validation should retrain relative to first eligible train bar."""
+    from akquant.ml.model import QuantModel, ValidationConfig
+
+    class RecordingModel(QuantModel):
+        """Minimal model stub that records fit calls."""
+
+        def __init__(self) -> None:
+            """Initialize validation config and fit recorder."""
+            super().__init__()
+            self.validation_config = ValidationConfig(
+                train_window=5,
+                test_window=2,
+                rolling_step=3,
+                frequency="1m",
+            )
+            self.fit_sizes: list[int] = []
+
+        def fit(self, X: Any, y: Any) -> None:
+            """Record fit sample size."""
+            self.fit_sizes.append(int(len(X)))
+
+        def predict(self, X: Any) -> np.ndarray:
+            """Return a deterministic empty prediction vector."""
+            return np.zeros(len(X))
+
+        def save(self, path: str) -> None:
+            """Satisfy abstract model API for tests."""
+            return
+
+        def load(self, path: str) -> None:
+            """Satisfy abstract model API for tests."""
+            return
+
+    class ValidationScheduleStrategy(akquant.Strategy):
+        """Capture ML train bars under validation config."""
+
+        def __init__(self) -> None:
+            """Initialize model and training recorder."""
+            super().__init__()
+            self.recording_model = RecordingModel()
+            self.model = self.recording_model
+            self.train_bars: list[int] = []
+
+        def prepare_features(
+            self, df: pd.DataFrame, mode: str = "training"
+        ) -> tuple[pd.DataFrame, pd.Series]:
+            """Return simple close-only features and aligned labels."""
+            features = pd.DataFrame({"close": df["close"].fillna(0.0)})
+            labels = pd.Series(np.zeros(len(features), dtype=int))
+            return features, labels
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            """Ignore trading logic for schedule test."""
+            return
+
+        def on_train_signal(self, context: Any) -> None:
+            """Record train bar index and delegate to default fit logic."""
+            self.train_bars.append(int(self._bar_count))
+            super().on_train_signal(context)
+
+    symbol = "ML_RELATIVE_STEP"
+    data = _build_benchmark_data(n=12, symbol=symbol)
+    strategy = ValidationScheduleStrategy()
+
+    _ = akquant.run_backtest(
+        data=data,
+        strategy=strategy,
+        symbols=[symbol],
+        show_progress=False,
+    )
+
+    assert strategy.train_bars == [5, 8, 11]
+    assert strategy.recording_model.fit_sizes == [5, 5, 5]
+
+
+def test_ml_validation_uses_test_window_when_rolling_step_is_zero() -> None:
+    """ML validation should fall back to test_window when rolling_step is zero."""
+    from akquant.ml.model import QuantModel, ValidationConfig
+
+    class RecordingModel(QuantModel):
+        """Minimal model stub that records fit calls."""
+
+        def __init__(self) -> None:
+            """Initialize validation config and fit recorder."""
+            super().__init__()
+            self.validation_config = ValidationConfig(
+                train_window=4,
+                test_window=2,
+                rolling_step=0,
+                frequency="1m",
+            )
+            self.fit_sizes: list[int] = []
+
+        def fit(self, X: Any, y: Any) -> None:
+            """Record fit sample size."""
+            self.fit_sizes.append(int(len(X)))
+
+        def predict(self, X: Any) -> np.ndarray:
+            """Return a deterministic empty prediction vector."""
+            return np.zeros(len(X))
+
+        def save(self, path: str) -> None:
+            """Satisfy abstract model API for tests."""
+            return
+
+        def load(self, path: str) -> None:
+            """Satisfy abstract model API for tests."""
+            return
+
+    class TestWindowFallbackStrategy(akquant.Strategy):
+        """Capture ML train bars under test_window fallback scheduling."""
+
+        def __init__(self) -> None:
+            """Initialize model and training recorder."""
+            super().__init__()
+            self.recording_model = RecordingModel()
+            self.model = self.recording_model
+            self.train_bars: list[int] = []
+
+        def prepare_features(
+            self, df: pd.DataFrame, mode: str = "training"
+        ) -> tuple[pd.DataFrame, pd.Series]:
+            """Return simple close-only features and aligned labels."""
+            features = pd.DataFrame({"close": df["close"].fillna(0.0)})
+            labels = pd.Series(np.zeros(len(features), dtype=int))
+            return features, labels
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            """Ignore trading logic for schedule test."""
+            return
+
+        def on_train_signal(self, context: Any) -> None:
+            """Record train bar index and delegate to default fit logic."""
+            self.train_bars.append(int(self._bar_count))
+            super().on_train_signal(context)
+
+    symbol = "ML_TEST_WINDOW_STEP"
+    data = _build_benchmark_data(n=8, symbol=symbol)
+    strategy = TestWindowFallbackStrategy()
+
+    _ = akquant.run_backtest(
+        data=data,
+        strategy=strategy,
+        symbols=[symbol],
+        show_progress=False,
+    )
+
+    assert strategy.train_bars == [4, 6, 8]
+    assert strategy.recording_model.fit_sizes == [4, 4, 4]
+
+
 def test_run_backtest_expiry_date_str_is_rejected() -> None:
     """expiry_date should reject string input."""
 
