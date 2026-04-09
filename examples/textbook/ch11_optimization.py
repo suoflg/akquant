@@ -133,9 +133,11 @@ if __name__ == "__main__":
 
     sorted_results = sorted(
         results,
-        key=lambda x: x.metrics.sharpe_ratio
-        if hasattr(x.metrics, "sharpe_ratio")
-        else x.metrics.get("sharpe_ratio", -999),
+        key=lambda x: (
+            x.metrics.sharpe_ratio
+            if hasattr(x.metrics, "sharpe_ratio")
+            else x.metrics.get("sharpe_ratio", -999)
+        ),
         reverse=True,
     )
 

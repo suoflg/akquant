@@ -16,7 +16,17 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as datetime_time
 from logging.handlers import QueueHandler, QueueListener
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Type, Union, cast
+from typing import (
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Type,
+    Union,
+    cast,
+)
 
 import numpy as np
 import pandas as pd
@@ -27,6 +37,7 @@ from .log import get_logger
 from .strategy import Strategy
 
 _WORKER_LOG_QUEUE: Any = None
+OptimizationData = Union[pd.DataFrame, Dict[str, pd.DataFrame]]
 
 
 def _normalize_backtest_symbol_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,6 +49,170 @@ def _normalize_backtest_symbol_kwargs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     if has_symbol:
         normalized["symbols"] = normalized.pop("symbol")
     return normalized
+
+
+def _normalize_symbol_values(symbols: Any) -> list[str]:
+    """标准化 symbols 参数."""
+    if symbols is None:
+        return []
+    if isinstance(symbols, str):
+        normalized = [symbols]
+    elif isinstance(symbols, (list, tuple, set)):
+        normalized = [str(item) for item in symbols]
+    else:
+        raise TypeError("symbols must be a string, list, tuple, or set")
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in normalized:
+        value = str(item).strip()
+        if not value:
+            raise ValueError("symbols cannot contain empty values")
+        if value in seen:
+            continue
+        seen.add(value)
+        cleaned.append(value)
+    return cleaned
+
+
+def _infer_symbols_from_data(data: Any) -> list[str]:
+    """从优化输入数据中推断 symbols."""
+    if isinstance(data, dict):
+        return [str(symbol).strip() for symbol in data.keys() if str(symbol).strip()]
+    if isinstance(data, pd.DataFrame) and "symbol" in data.columns:
+        symbol_series = data["symbol"].dropna().astype(str).str.strip()
+        return [symbol for symbol in symbol_series.unique().tolist() if symbol]
+    return []
+
+
+def _resolve_optimization_backtest_kwargs(
+    data: Any,
+    kwargs: Dict[str, Any],
+) -> Dict[str, Any]:
+    """解析优化入口的 symbols 参数并做数据一致性校验."""
+    normalized = _normalize_backtest_symbol_kwargs(kwargs)
+    requested_symbols = _normalize_symbol_values(normalized.get("symbols"))
+    inferred_symbols = _infer_symbols_from_data(data)
+    available_symbols = set(inferred_symbols)
+
+    if not requested_symbols:
+        if inferred_symbols:
+            normalized["symbols"] = inferred_symbols
+        return normalized
+
+    if available_symbols:
+        missing_symbols = [
+            symbol for symbol in requested_symbols if symbol not in available_symbols
+        ]
+        if missing_symbols:
+            raise ValueError(
+                "Requested symbols are not available in optimization data: "
+                f"{missing_symbols}"
+            )
+
+    normalized["symbols"] = requested_symbols
+    return normalized
+
+
+def _ensure_dataframe_time_index(df: pd.DataFrame) -> pd.DataFrame:
+    """确保 DataFrame 使用 DatetimeIndex 并按时间排序."""
+    prepared = df
+    if not isinstance(prepared.index, pd.DatetimeIndex):
+        for column in ["date", "timestamp", "datetime", "Date", "Timestamp"]:
+            if column in prepared.columns:
+                prepared = prepared.set_index(column)
+                break
+        prepared = prepared.copy()
+        prepared.index = pd.to_datetime(prepared.index)
+    elif not prepared.index.is_monotonic_increasing:
+        prepared = prepared.copy()
+
+    if not prepared.index.is_monotonic_increasing:
+        prepared = prepared.sort_index()
+    return cast(pd.DataFrame, prepared)
+
+
+def _filter_optimization_data_by_symbols(
+    data: OptimizationData,
+    symbols: Sequence[str],
+) -> OptimizationData:
+    """按 symbols 过滤优化数据."""
+    if not symbols:
+        return data
+
+    symbol_set = set(symbols)
+    if isinstance(data, pd.DataFrame):
+        if "symbol" not in data.columns:
+            return data
+        filtered = data[data["symbol"].astype(str).isin(symbol_set)]
+        return cast(pd.DataFrame, filtered.copy())
+
+    filtered_map: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        if symbol in data:
+            filtered_map[symbol] = data[symbol]
+    return filtered_map
+
+
+def _prepare_optimization_data(data: OptimizationData) -> OptimizationData:
+    """标准化优化数据的时间索引."""
+    if isinstance(data, pd.DataFrame):
+        return _ensure_dataframe_time_index(data)
+
+    prepared: dict[str, pd.DataFrame] = {}
+    for symbol, df in data.items():
+        prepared[str(symbol)] = _ensure_dataframe_time_index(df)
+    return prepared
+
+
+def _build_optimization_timeline(data: OptimizationData) -> pd.DatetimeIndex:
+    """提取优化切窗使用的统一时间轴."""
+    if isinstance(data, pd.DataFrame):
+        if not isinstance(data.index, pd.DatetimeIndex):
+            raise TypeError(
+                "Optimization data must use DatetimeIndex after preparation"
+            )
+        return cast(pd.DatetimeIndex, data.index.unique().sort_values())
+
+    timeline = pd.DatetimeIndex([])
+    for df in data.values():
+        if df.empty:
+            continue
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise TypeError(
+                "Optimization data must use DatetimeIndex after preparation"
+            )
+        timeline = cast(pd.DatetimeIndex, timeline.union(df.index.unique()))
+    return cast(pd.DatetimeIndex, timeline.sort_values())
+
+
+def _slice_dataframe_by_time(
+    df: pd.DataFrame,
+    start_time: pd.Timestamp,
+    end_time: Optional[pd.Timestamp],
+) -> pd.DataFrame:
+    """根据时间窗口切片 DataFrame."""
+    mask = df.index >= start_time
+    if end_time is not None:
+        mask = mask & (df.index < end_time)
+    return cast(pd.DataFrame, df.loc[mask].copy())
+
+
+def _slice_optimization_data(
+    data: OptimizationData,
+    start_time: pd.Timestamp,
+    end_time: Optional[pd.Timestamp],
+) -> OptimizationData:
+    """根据统一时间窗口切片优化数据."""
+    if isinstance(data, pd.DataFrame):
+        return _slice_dataframe_by_time(data, start_time, end_time)
+
+    sliced: dict[str, pd.DataFrame] = {}
+    for symbol, df in data.items():
+        window_df = _slice_dataframe_by_time(df, start_time, end_time)
+        if not window_df.empty:
+            sliced[symbol] = window_df
+    return sliced
 
 
 @dataclass
@@ -381,7 +556,7 @@ def run_grid_search(
     :param kwargs: 传递给 run_backtest 的其他参数 (symbol, cash, etc.)
     :return: 优化结果 (DataFrame 或 List[OptimizationResult])
     """
-    backtest_kwargs = _normalize_backtest_symbol_kwargs(dict(kwargs))
+    backtest_kwargs = _resolve_optimization_backtest_kwargs(data, dict(kwargs))
     backtest_kwargs.setdefault("strict_strategy_params", True)
     if (
         "execution_mode" in backtest_kwargs
@@ -648,7 +823,7 @@ def run_grid_search(
 def run_walk_forward(
     strategy: Type[Strategy],
     param_grid: Mapping[str, Sequence[Any]],
-    data: pd.DataFrame,
+    data: OptimizationData,
     train_period: int,
     test_period: int,
     metric: Union[str, List[str]] = "sharpe_ratio",
@@ -670,7 +845,7 @@ def run_walk_forward(
 
     :param strategy: 策略类
     :param param_grid: 参数网格
-    :param data: 回测数据 (必须是 DataFrame 且包含 DatetimeIndex)
+    :param data: 回测数据 (支持 DataFrame 或 Dict[str, DataFrame])
     :param train_period: 训练窗口长度 (Bar数量)
     :param test_period: 测试窗口长度 (Bar数量)
     :param metric: 优化目标指标 (默认: "sharpe_ratio")，支持多字段排序列表。
@@ -688,11 +863,15 @@ def run_walk_forward(
     :param kwargs: 透传给 run_grid_search 和 run_backtest 的其他参数
     :return: 包含拼接后资金曲线的 DataFrame
     """
-    if not isinstance(data, pd.DataFrame):
-        raise ValueError("run_walk_forward requires data to be a pandas DataFrame.")
-    kwargs = _normalize_backtest_symbol_kwargs(kwargs)
-
-    total_len = len(data)
+    kwargs = _resolve_optimization_backtest_kwargs(data, kwargs)
+    requested_symbols = _normalize_symbol_values(kwargs.get("symbols"))
+    prepared_data = _prepare_optimization_data(data)
+    prepared_data = _filter_optimization_data_by_symbols(
+        prepared_data,
+        requested_symbols,
+    )
+    timeline = _build_optimization_timeline(prepared_data)
+    total_len = len(timeline)
     if total_len < train_period + test_period:
         raise ValueError(
             f"Data length ({total_len}) is too short for "
@@ -710,14 +889,28 @@ def run_walk_forward(
     # 滚动窗口循环
     # Step size is test_period
     for i in range(0, total_len - train_period - test_period + 1, test_period):
-        # 1. 切分训练数据 (In-Sample)
         train_start_idx = i
         train_end_idx = i + train_period
-        train_data = data.iloc[train_start_idx:train_end_idx]
+        oos_start_idx = train_end_idx
+        oos_end_idx = min(oos_start_idx + test_period, total_len)
+
+        train_start_time = timeline[train_start_idx]
+        train_end_exclusive = (
+            timeline[train_end_idx] if train_end_idx < total_len else None
+        )
+        train_end_time = timeline[train_end_idx - 1]
+        oos_start_time = timeline[oos_start_idx]
+        oos_end_exclusive = timeline[oos_end_idx] if oos_end_idx < total_len else None
+        oos_end_time = timeline[oos_end_idx - 1]
+        train_data = _slice_optimization_data(
+            prepared_data,
+            train_start_time,
+            train_end_exclusive,
+        )
 
         print(
             f"\n=== Window {i // test_period + 1}: "
-            f"Train [{train_data.index[0]} - {train_data.index[-1]}] ==="
+            f"Train [{train_start_time} - {train_end_time}] ==="
         )
 
         # 2. 样本内优化 (Optimization)
@@ -756,10 +949,6 @@ def run_walk_forward(
 
         print(f"  Best Params: {best_params} ({metric_str})")
 
-        # 3. 切分测试数据 (Out-of-Sample)
-        oos_start_idx = train_end_idx
-        oos_end_idx = min(oos_start_idx + test_period, total_len)
-
         # 计算实际需要的预热期
         current_warmup = warmup_period
         if warmup_calc:
@@ -768,9 +957,13 @@ def run_walk_forward(
             except Exception:
                 pass
 
-        # 确保预热数据存在
-        slice_start = max(0, oos_start_idx - current_warmup)
-        test_data_with_warmup = data.iloc[slice_start:oos_end_idx]
+        slice_start_idx = max(0, oos_start_idx - current_warmup)
+        slice_start_time = timeline[slice_start_idx]
+        test_data_with_warmup = _slice_optimization_data(
+            prepared_data,
+            slice_start_time,
+            oos_end_exclusive,
+        )
 
         # 4. 样本外验证 (Backtest)
         # 使用最佳参数运行回测
@@ -780,10 +973,7 @@ def run_walk_forward(
         backtest_kwargs["initial_cash"] = initial_cash
         backtest_kwargs["warmup_period"] = current_warmup
 
-        print(
-            f"  Test [{data.index[oos_start_idx]} - {data.index[oos_end_idx - 1]}] "
-            f"(Warmup: {current_warmup})"
-        )
+        print(f"  Test [{oos_start_time} - {oos_end_time}] (Warmup: {current_warmup})")
 
         bt_result = run_backtest(
             strategy=strategy, data=test_data_with_warmup, **backtest_kwargs
@@ -792,12 +982,6 @@ def run_walk_forward(
         # 5. 提取并拼接结果
         equity_curve = bt_result.equity_curve
 
-        # 截取 OOS 真正的时间段 (去除预热期)
-        # 使用时间戳过滤
-        oos_start_time = data.index[oos_start_idx]
-
-        # 确保 equity_curve 索引是 datetime 且有时区信息 (BacktestResult 已经处理了)
-        # data.index 通常是 naive 或 aware，需要匹配
         if equity_curve.empty:
             print("  Warning: Empty equity curve in OOS.")
             continue
@@ -870,8 +1054,8 @@ def run_walk_forward(
             current_capital = adjusted_equity.iloc[-1]
 
         # 添加元数据
-        segment_df["train_start"] = data.index[train_start_idx]
-        segment_df["train_end"] = data.index[train_end_idx]
+        segment_df["train_start"] = train_start_time
+        segment_df["train_end"] = train_end_time
         for k, v in best_params.items():
             segment_df[k] = v
 
