@@ -32,6 +32,16 @@ impl Default for StatisticsManager {
 }
 
 impl StatisticsManager {
+    fn upsert_timestamped_value<T>(series: &mut Vec<(i64, T)>, timestamp: i64, value: T) {
+        if let Some((last_ts, last_value)) = series.last_mut()
+            && *last_ts == timestamp
+        {
+            *last_value = value;
+            return;
+        }
+        series.push((timestamp, value));
+    }
+
     /// 创建新的统计管理器
     pub fn new() -> Self {
         Self {
@@ -45,9 +55,9 @@ impl StatisticsManager {
 
     /// 更新权益和现金曲线
     pub fn update(&mut self, timestamp: i64, equity: Decimal, cash: Decimal, margin: Decimal) {
-        self.equity_curve.push((timestamp, equity));
-        self.cash_curve.push((timestamp, cash));
-        self.margin_curve.push((timestamp, margin));
+        Self::upsert_timestamped_value(&mut self.equity_curve, timestamp, equity);
+        Self::upsert_timestamped_value(&mut self.cash_curve, timestamp, cash);
+        Self::upsert_timestamped_value(&mut self.margin_curve, timestamp, margin);
     }
 
     /// 记录持仓快照
@@ -60,7 +70,7 @@ impl StatisticsManager {
         trade_tracker: &crate::analysis::TradeTracker,
     ) {
         let snapshots = Self::create_snapshot(portfolio, instruments, last_prices, trade_tracker);
-        self.snapshots.push((timestamp, snapshots));
+        Self::upsert_timestamped_value(&mut self.snapshots, timestamp, snapshots);
     }
 
     pub fn record_liquidation_audit(&mut self, audit: LiquidationAudit) {
@@ -150,32 +160,20 @@ impl StatisticsManager {
         // Add final snapshot if needed
         if let Some(ts) = now_ns {
             let equity = portfolio.calculate_equity(last_prices, instruments);
+            let margin = portfolio.calculate_used_margin(last_prices, instruments);
+            let snap = Self::create_snapshot(
+                portfolio,
+                instruments,
+                last_prices,
+                &order_manager.trade_tracker,
+            );
 
-            // Append final equity point if not present
-            if equity_curve.last().is_none_or(|(t, _)| *t != ts) {
-                equity_curve.push((ts, equity));
-            }
-
-            // Append final cash point if not present
-            if cash_curve.last().is_none_or(|(t, _)| *t != ts) {
-                cash_curve.push((ts, portfolio.cash));
-            }
-
-            if margin_curve.last().is_none_or(|(t, _)| *t != ts) {
-                let margin = portfolio.calculate_used_margin(last_prices, instruments);
-                margin_curve.push((ts, margin));
-            }
-
-            // Append final position snapshot if not present
-            if snapshots.last().is_none_or(|(t, _)| *t != ts) {
-                let snap = Self::create_snapshot(
-                    portfolio,
-                    instruments,
-                    last_prices,
-                    &order_manager.trade_tracker,
-                );
-                snapshots.push((ts, snap));
-            }
+            // Always overwrite the terminal point at the same timestamp so the
+            // final result reflects the fully updated portfolio state.
+            Self::upsert_timestamped_value(&mut equity_curve, ts, equity);
+            Self::upsert_timestamped_value(&mut cash_curve, ts, portfolio.cash);
+            Self::upsert_timestamped_value(&mut margin_curve, ts, margin);
+            Self::upsert_timestamped_value(&mut snapshots, ts, snap);
         }
 
         BacktestResult::calculate(crate::analysis::CalculatorInput {
