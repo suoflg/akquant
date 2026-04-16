@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-04-16
+
+### Fixed
+- Fixed non-deterministic backtest metrics in multi-symbol runs when bars share the same timestamp.
+- Ensured terminal equity/cash/margin snapshots are overwritten with the fully updated portfolio state before final metric calculation.
+
 ## [0.2.10] - 2026-04-15
 
 ### Added

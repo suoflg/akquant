@@ -1329,6 +1329,81 @@ def test_run_backtest_dataframe_multisymbol_preserves_bar_symbol() -> None:
     assert strategy.seen_symbols.count("IF2402.CFX") == 2
 
 
+def test_run_backtest_dataframe_multisymbol_row_order_keeps_metrics_stable() -> None:
+    """Metrics should not drift when same-timestamp symbol row order changes."""
+
+    class BuyOncePerSymbolStrategy(akquant.Strategy):
+        """Buy each symbol once and hold so equity depends on multi-symbol marking."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.bought_symbols: set[str] = set()
+
+        def on_bar(self, bar: akquant.Bar) -> None:
+            symbol = str(bar.symbol)
+            if symbol in self.bought_symbols:
+                return
+            self.buy(symbol=symbol, quantity=1)
+            self.bought_symbols.add(symbol)
+
+    rows = [
+        ("2024-01-02", "AAA", 10.0),
+        ("2024-01-02", "BBB", 20.0),
+        ("2024-01-03", "AAA", 11.0),
+        ("2024-01-03", "BBB", 19.0),
+        ("2024-01-04", "AAA", 12.0),
+        ("2024-01-04", "BBB", 21.0),
+        ("2024-01-05", "AAA", 13.0),
+        ("2024-01-05", "BBB", 23.0),
+    ]
+    frame = pd.DataFrame(rows, columns=["timestamp", "symbol", "close"])
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"])
+    frame["open"] = frame["close"]
+    frame["high"] = frame["close"]
+    frame["low"] = frame["close"]
+    frame["volume"] = 1000.0
+
+    ascending = frame.sort_values(["timestamp", "symbol"]).reset_index(drop=True)
+    descending = frame.sort_values(
+        ["timestamp", "symbol"], ascending=[True, False]
+    ).reset_index(drop=True)
+
+    common_args: dict[str, Any] = dict(
+        strategy=BuyOncePerSymbolStrategy,
+        symbols=["AAA", "BBB"],
+        start_time="2024-01-02",
+        end_time="2024-01-05",
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        initial_cash=100000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        lot_size=1,
+        show_progress=False,
+    )
+
+    result_ascending = akquant.run_backtest(data=ascending, **common_args)
+    result_descending = akquant.run_backtest(data=descending, **common_args)
+
+    assert len(result_ascending.orders_df) == len(result_descending.orders_df) == 2
+    assert result_ascending.metrics.end_market_value == pytest.approx(
+        result_descending.metrics.end_market_value, rel=1e-12
+    )
+    assert result_ascending.metrics.total_return == pytest.approx(
+        result_descending.metrics.total_return, rel=1e-12
+    )
+    assert result_ascending.metrics.sharpe_ratio == pytest.approx(
+        result_descending.metrics.sharpe_ratio, rel=1e-12
+    )
+    assert result_ascending.metrics.volatility == pytest.approx(
+        result_descending.metrics.volatility, rel=1e-12
+    )
+    assert float(result_ascending.equity_curve.iloc[-1]) == pytest.approx(
+        float(result_descending.equity_curve.iloc[-1]), rel=1e-12
+    )
+
+
 def test_engine_run_empty() -> None:
     """Test running engine with no data."""
     engine = akquant.Engine()
