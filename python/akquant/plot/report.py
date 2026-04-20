@@ -998,11 +998,89 @@ def _select_plot_symbol(
         keys = [str(k) for k in market_data.keys()]
         if keys:
             return keys[0]
-    if isinstance(market_data, pd.DataFrame) and "symbol" in market_data.columns:
-        symbols = market_data["symbol"].dropna().astype(str)
-        if not symbols.empty:
-            return str(symbols.iloc[0])
+    if isinstance(market_data, pd.DataFrame):
+        symbol_col = _resolve_market_data_column(
+            market_data, ["symbol", "code", "ticker", "ts_code", "股票代码"]
+        )
+        if symbol_col is not None:
+            symbols = market_data[symbol_col].dropna().astype(str).str.strip()
+            if not symbols.empty:
+                return str(symbols.iloc[0])
     return None
+
+
+def _resolve_market_data_column(
+    data: pd.DataFrame, candidates: list[str]
+) -> Optional[str]:
+    """Resolve a market-data column name with case-insensitive matching."""
+    columns = list(data.columns)
+    lowered = {str(col).lower(): str(col) for col in columns}
+    for candidate in candidates:
+        if candidate in columns:
+            return candidate
+        resolved = lowered.get(candidate.lower())
+        if resolved is not None:
+            return resolved
+    return None
+
+
+def _normalize_market_data_frame(data: pd.DataFrame) -> pd.DataFrame:
+    """Normalize report market data into a canonical OHLCV schema."""
+    normalized = data.copy()
+    resolved_columns = {
+        "timestamp": _resolve_market_data_column(
+            normalized,
+            ["date", "timestamp", "datetime", "time", "trade_date", "日期", "时间"],
+        ),
+        "open": _resolve_market_data_column(normalized, ["open", "open_price", "开盘"]),
+        "high": _resolve_market_data_column(normalized, ["high", "high_price", "最高"]),
+        "low": _resolve_market_data_column(normalized, ["low", "low_price", "最低"]),
+        "close": _resolve_market_data_column(
+            normalized, ["close", "close_price", "收盘"]
+        ),
+        "volume": _resolve_market_data_column(normalized, ["volume", "vol", "成交量"]),
+        "symbol": _resolve_market_data_column(
+            normalized, ["symbol", "code", "ticker", "ts_code", "股票代码"]
+        ),
+    }
+    rename_map = {
+        source: target
+        for target, source in resolved_columns.items()
+        if source is not None and source != target
+    }
+    if rename_map:
+        normalized = normalized.rename(columns=rename_map)
+
+    if "symbol" in normalized.columns:
+        normalized["symbol"] = normalized["symbol"].astype(str).str.strip()
+
+    if not isinstance(normalized.index, pd.DatetimeIndex):
+        if "timestamp" in normalized.columns:
+            normalized = normalized.set_index("timestamp")
+        else:
+            normalized.index = pd.to_datetime(normalized.index, errors="coerce")
+
+    normalized.index = pd.to_datetime(normalized.index, errors="coerce")
+    valid_index_mask = ~normalized.index.to_series().isna()
+    normalized = normalized.loc[valid_index_mask].copy()
+    if normalized.empty:
+        return cast(pd.DataFrame, normalized)
+
+    numeric_columns = ["open", "high", "low", "close", "volume"]
+    for column in numeric_columns:
+        if column in normalized.columns:
+            normalized[column] = pd.to_numeric(normalized[column], errors="coerce")
+
+    required_cols = {"open", "high", "low", "close"}
+    if not required_cols.issubset(set(normalized.columns)):
+        return pd.DataFrame()
+
+    normalized = normalized.dropna(subset=list(required_cols), how="any")
+    if normalized.empty:
+        return cast(pd.DataFrame, normalized)
+
+    normalized = normalized.sort_index()
+    return cast(pd.DataFrame, normalized)
 
 
 def _extract_symbol_market_data(
@@ -1011,27 +1089,27 @@ def _extract_symbol_market_data(
     if market_data is None:
         return pd.DataFrame()
     if isinstance(market_data, dict):
-        data = market_data.get(symbol, pd.DataFrame()).copy()
+        matched_key = None
+        target_symbol = str(symbol).strip()
+        for key in market_data.keys():
+            if str(key).strip() == target_symbol:
+                matched_key = key
+                break
+        if matched_key is None:
+            return pd.DataFrame()
+        data = market_data.get(matched_key, pd.DataFrame()).copy()
     elif isinstance(market_data, pd.DataFrame):
         data = market_data.copy()
-        if "symbol" in data.columns:
-            data = data[data["symbol"].astype(str) == symbol].copy()
     else:
         return pd.DataFrame()
+
+    data = _normalize_market_data_frame(data)
     if data.empty:
         return cast(pd.DataFrame, data)
-    if not isinstance(data.index, pd.DatetimeIndex):
-        for col in ["date", "timestamp", "datetime", "Date", "Timestamp"]:
-            if col in data.columns:
-                data = data.set_index(col)
-                break
-        data.index = pd.to_datetime(data.index, errors="coerce")
-    valid_index_mask = ~data.index.to_series().isna()
-    data = data.loc[valid_index_mask].copy()
-    required_cols = {"open", "high", "low", "close"}
-    if not required_cols.issubset(set(data.columns)):
-        return pd.DataFrame()
-    data = data.sort_index()
+    if "symbol" in data.columns:
+        target_symbol = str(symbol).strip()
+        symbol_mask = data["symbol"].astype(str).str.strip() == target_symbol
+        data = data[symbol_mask].copy()
     return cast(pd.DataFrame, data)
 
 

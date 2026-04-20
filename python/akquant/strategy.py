@@ -897,7 +897,10 @@ class Strategy:
                 )
             return []
 
-        ranking = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+        ranking = sorted(
+            scores.items(),
+            key=lambda item: (-float(item[1]), str(item[0])),
+        )
         threshold = min_score
         if threshold is None and long_only:
             threshold = 0.0

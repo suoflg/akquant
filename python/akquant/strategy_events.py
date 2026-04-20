@@ -7,6 +7,7 @@ from .akquant import Bar, StrategyContext, Tick
 from .strategy_framework_hooks import (
     call_user_callback,
     dispatch_boundary_timer,
+    dispatch_daily_rebalance_timer,
     dispatch_portfolio_update,
     dispatch_time_hooks,
     ensure_framework_state,
@@ -164,6 +165,9 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
 
     dispatch_time_hooks(strategy)
     dispatch_portfolio_update(strategy)
+
+    if dispatch_daily_rebalance_timer(strategy, payload):
+        return
 
     if dispatch_boundary_timer(strategy, payload):
         return

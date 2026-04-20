@@ -31,8 +31,10 @@ class FactorEngine:
         pattern = str(self.catalog.root / "**" / "*.parquet")
 
         try:
-            # use_pyarrow=True often helps with nested paths compatibility
-            lf = pl.scan_parquet(pattern)
+            lf = pl.scan_parquet(
+                pattern,
+                cast_options=pl.ScanCastOptions(integer_cast="allow-float"),
+            )
             return lf
         except Exception as e:
             logger.warning(f"Failed to scan parquet files: {e}")
