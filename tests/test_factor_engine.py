@@ -205,6 +205,49 @@ class TestFactorEngineNewOps(unittest.TestCase):
         res_d = df.filter(pl.col("symbol") == "D")
         self.assertEqual(len(res_d), 5)
 
+    def test_mixed_numeric_schema_catalog_scan(self) -> None:
+        """Allow integer/float parquet schema drift when scanning the whole catalog."""
+        if self.catalog_path.exists():
+            shutil.rmtree(self.catalog_path)
+        self.catalog = ParquetDataCatalog(root_path=str(self.catalog_path))
+        self.engine = FactorEngine(self.catalog)
+
+        dates = pd.date_range("2023-01-01", periods=3)
+
+        df_float = pd.DataFrame(
+            {
+                "date": dates,
+                "low": [1.1, 2.2, 3.3],
+                "close": [1.5, 2.5, 3.5],
+                "symbol": "FLOAT",
+            }
+        ).set_index("date")
+        df_int = pd.DataFrame(
+            {
+                "date": dates,
+                "low": [1, 2, 3],
+                "close": [4, 5, 6],
+                "symbol": "INT",
+            }
+        ).set_index("date")
+
+        self.catalog.write("FLOAT", df_float)
+        self.catalog.write("INT", df_int)
+
+        low_result = self.engine.run("Low").sort(["symbol", "date"])
+        self.assertEqual(low_result["factor_value"].dtype, pl.Float64)
+        self.assertEqual(low_result.height, 6)
+        self.assertEqual(
+            low_result.filter(pl.col("symbol") == "INT")["factor_value"].to_list(),
+            [1.0, 2.0, 3.0],
+        )
+
+        ts_result = self.engine.run("Ts_ArgMin(Low, 2)").sort(["symbol", "date"])
+        self.assertEqual(ts_result.height, 6)
+        self.assertIsNone(
+            ts_result.filter(pl.col("symbol") == "FLOAT")["factor_value"].to_list()[0]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

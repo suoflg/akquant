@@ -115,6 +115,40 @@ def _build_market_df(symbol: str = "TEST", n: int = 5) -> pd.DataFrame:
     return cast(pd.DataFrame, df)
 
 
+def _build_market_df_uppercase(symbol: str = "TEST", n: int = 5) -> pd.DataFrame:
+    rows = []
+    for bar in _build_data(symbol=symbol, n=n):
+        rows.append(
+            {
+                "Timestamp": pd.Timestamp(bar.timestamp),
+                "Open": bar.open,
+                "High": bar.high,
+                "Low": bar.low,
+                "Close": bar.close,
+                "Volume": bar.volume,
+                "Symbol": bar.symbol,
+            }
+        )
+    return cast(pd.DataFrame, pd.DataFrame(rows))
+
+
+def _build_market_df_aliases(symbol: str = "TEST", n: int = 5) -> pd.DataFrame:
+    rows = []
+    for bar in _build_data(symbol=symbol, n=n):
+        rows.append(
+            {
+                "trade_date": pd.Timestamp(bar.timestamp),
+                "open_price": bar.open,
+                "high_price": bar.high,
+                "low_price": bar.low,
+                "close_price": bar.close,
+                "vol": bar.volume,
+                "code": bar.symbol,
+            }
+        )
+    return cast(pd.DataFrame, pd.DataFrame(rows))
+
+
 def _skip_if_no_plotly() -> None:
     """Skip tests if plotly is unavailable."""
     if importlib.util.find_spec("plotly") is None:
@@ -178,6 +212,64 @@ def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
     assert "Strategy Analysis: TEST" in html
     assert "entry" in html
     assert "exit" in html
+
+
+def test_report_accepts_uppercase_market_data_columns(tmp_path: Path) -> None:
+    """Report should accept DuckDB-like uppercase OHLCV column names."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RoundTripStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    report_path = tmp_path / "report_with_uppercase_market_data.html"
+    result.report(
+        filename=str(report_path),
+        show=False,
+        market_data=_build_market_df_uppercase(symbol="TEST"),
+        plot_symbol="TEST",
+    )
+    html = report_path.read_text(encoding="utf-8")
+    assert "Strategy Analysis: TEST" in html
+    assert "行情数据不完整，无法绘制 K 线复盘图" not in html
+
+
+def test_report_accepts_market_data_alias_columns(tmp_path: Path) -> None:
+    """Report should accept alias columns such as trade_date/code/open_price."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=RoundTripStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    report_path = tmp_path / "report_with_alias_market_data.html"
+    result.report(
+        filename=str(report_path),
+        show=False,
+        market_data=_build_market_df_aliases(symbol="TEST"),
+        plot_symbol="TEST",
+    )
+    html = report_path.read_text(encoding="utf-8")
+    assert "Strategy Analysis: TEST" in html
+    assert "行情数据不完整，无法绘制 K 线复盘图" not in html
 
 
 def test_report_includes_benchmark_comparison_sections(tmp_path: Path) -> None:

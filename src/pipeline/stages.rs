@@ -396,6 +396,7 @@ impl Processor for ChannelProcessor {
 
 pub struct DataProcessor {
     last_timestamp: i64,
+    finalized_timestamp: i64,
     seen_symbols: HashSet<String>,
 }
 
@@ -410,6 +411,7 @@ impl DataProcessor {
     pub fn new() -> Self {
         Self {
             last_timestamp: 0,
+            finalized_timestamp: 0,
             seen_symbols: HashSet::new(),
         }
     }
@@ -439,6 +441,14 @@ impl DataProcessor {
             }
         }
     }
+
+    fn finalize_current_timestamp(&mut self, engine: &Engine) {
+        if self.last_timestamp == 0 || self.finalized_timestamp == self.last_timestamp {
+            return;
+        }
+        self.fill_missing_bars(engine);
+        self.finalized_timestamp = self.last_timestamp;
+    }
 }
 
 impl Processor for DataProcessor {
@@ -454,11 +464,14 @@ impl Processor for DataProcessor {
         match action {
             FeedAction::Wait => Ok(ProcessorResult::Loop),
             FeedAction::End => {
-                self.fill_missing_bars(engine);
+                self.finalize_current_timestamp(engine);
                 Ok(ProcessorResult::Break)
             }
             FeedAction::Timer(_timestamp) => {
                 if let Some(timer) = engine.timers.pop() {
+                    if timer.payload.starts_with("__framework_rebalance__|") {
+                        self.finalize_current_timestamp(engine);
+                    }
                     let local_dt =
                         Engine::local_datetime_from_ns(timer.timestamp, engine.timezone_offset);
                     let session = engine.market_manager.get_session_status(local_dt.time());
@@ -483,7 +496,7 @@ impl Processor for DataProcessor {
                 }
 
                 if self.last_timestamp != 0 && timestamp > self.last_timestamp {
-                    self.fill_missing_bars(engine);
+                    self.finalize_current_timestamp(engine);
                     self.seen_symbols.clear();
 
                     if engine.is_active_timestamp(timestamp) {

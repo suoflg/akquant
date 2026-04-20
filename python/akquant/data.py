@@ -56,10 +56,17 @@ class ParquetDataCatalog:
                 df = df.set_index("date")
                 df.index = pd.to_datetime(df.index)
 
-        # Ensure symbol column exists for Polars compatibility
+        # Normalize common numeric columns so parquet schemas stay stable
+        # across symbols even when some series happen to contain integer-only values.
         if "symbol" not in df.columns:
             df = df.copy()
             df["symbol"] = symbol
+        else:
+            df = df.copy()
+
+        for col in ("open", "high", "low", "close", "volume"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
 
         df.to_parquet(file_path, compression="snappy")
         return file_path

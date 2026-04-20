@@ -1075,12 +1075,16 @@ def order_target_weights(
         and fill_temporal == "same_cycle"
     )
 
-    for symbol, target_value, _ in sorted(sell_legs, key=lambda item: item[2]):
+    for symbol, target_value, _ in sorted(
+        sell_legs,
+        key=lambda item: (float(item[2]), str(item[0])),
+    ):
         leg_price = price_map.get(symbol) if price_map else None
         order_target_value(strategy, target_value, symbol, leg_price, **kwargs)
 
     for symbol, target_value, _ in sorted(
-        buy_legs, key=lambda item: item[2], reverse=True
+        buy_legs,
+        key=lambda item: (-float(item[2]), str(item[0])),
     ):
         leg_price = price_map.get(symbol) if price_map else None
         if defer_buy_legs:

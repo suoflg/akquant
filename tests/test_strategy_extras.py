@@ -233,6 +233,19 @@ def test_rebalance_to_topn_supports_score_weight_mode() -> None:
     assert strategy.calls[0]["target_weights"]["AAA"] == pytest.approx(0.25)
 
 
+def test_rebalance_to_topn_breaks_score_ties_by_symbol() -> None:
+    """rebalance_to_topn should use symbol order as deterministic tie-breaker."""
+    strategy = TopNRebalanceStrategy()
+
+    selected = strategy.rebalance_to_topn(
+        scores={"BBB": 0.1, "AAA": 0.1, "CCC": 0.05},
+        top_n=2,
+    )
+
+    assert selected == ["AAA", "BBB"]
+    assert strategy.calls[0]["target_weights"] == {"AAA": 0.5, "BBB": 0.5}
+
+
 def test_rebalance_to_topn_rejects_invalid_weight_mode() -> None:
     """rebalance_to_topn should validate weight_mode."""
     strategy = TopNRebalanceStrategy()
@@ -898,6 +911,106 @@ class WarmStartRiskStateStrategy(Strategy):
         """Submit buy sequence across pre/post snapshot phases."""
         self.buy(symbol=bar.symbol, quantity=10)
         self.step += 1
+
+
+class DeferredDailyRebalanceStrategy(Strategy):
+    """Regression strategy for daily rebalance timing determinism."""
+
+    def __init__(
+        self,
+        all_symbols: list[str],
+        date2symbols: dict[Any, set[str]],
+        capture: dict[str, Any],
+    ) -> None:
+        """Initialize symbol universe, rebalance map, and capture sink."""
+        super().__init__()
+        self.all_symbols = list(all_symbols)
+        self.date2symbols = date2symbols
+        self.capture = capture
+        self.set_history_depth(2)
+
+    def on_start(self) -> None:
+        """Subscribe to all configured symbols."""
+        for symbol in self.all_symbols:
+            self.subscribe(symbol)
+
+    def on_daily_rebalance(self, trading_date: Any, timestamp: int) -> None:
+        """Select the strongest two-bar momentum symbol on the target day."""
+        if trading_date not in self.date2symbols:
+            return
+        symbols = self.date2symbols[trading_date]
+        history_map = self.get_history_map(count=2, symbols=symbols, field="close")
+        scores: dict[str, float] = {}
+        for symbol, closes in history_map.items():
+            if np.isnan(closes[0]) or closes[0] == 0:
+                continue
+            scores[symbol] = float((closes[-1] - closes[0]) / closes[0])
+        selected = self.rebalance_to_topn(scores=scores, top_n=1)
+        self.capture.setdefault("events", []).append(
+            (trading_date, timestamp, tuple(selected))
+        )
+
+
+def _make_order_sensitive_multisymbol_bars(day3_order: list[str]) -> list[Bar]:
+    """Create bars whose day-3 leader depends on when rebalance is evaluated."""
+    schedule = [
+        ("2023-01-01 15:00:00", {"AAA": 10.0, "BBB": 10.0}, ["AAA", "BBB"]),
+        ("2023-01-02 15:00:00", {"AAA": 10.0, "BBB": 10.0}, ["AAA", "BBB"]),
+        ("2023-01-03 15:00:00", {"AAA": 20.0, "BBB": 11.0}, day3_order),
+        ("2023-01-04 15:00:00", {"AAA": 10.0, "BBB": 30.0}, ["AAA", "BBB"]),
+    ]
+    bars: list[Bar] = []
+    for timestamp_text, closes, order in schedule:
+        ts = pd.Timestamp(timestamp_text, tz="Asia/Shanghai").value
+        for symbol in order:
+            close = closes[symbol]
+            bars.append(
+                Bar(
+                    timestamp=ts,
+                    open=close,
+                    high=close,
+                    low=close,
+                    close=close,
+                    volume=1000.0,
+                    symbol=symbol,
+                )
+            )
+    return bars
+
+
+def test_run_backtest_daily_rebalance_same_timestamp_order_insensitive() -> None:
+    """Daily rebalance should see a complete same-timestamp cross section."""
+    target_day = pd.Timestamp("2023-01-03", tz="Asia/Shanghai").date()
+    date2symbols = {target_day: {"AAA", "BBB"}}
+    first_capture: dict[str, Any] = {}
+    second_capture: dict[str, Any] = {}
+
+    first = run_backtest(
+        data=_make_order_sensitive_multisymbol_bars(["AAA", "BBB"]),
+        strategy=DeferredDailyRebalanceStrategy,
+        symbols=["AAA", "BBB"],
+        all_symbols=["AAA", "BBB"],
+        date2symbols=date2symbols,
+        capture=first_capture,
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+    second = run_backtest(
+        data=_make_order_sensitive_multisymbol_bars(["BBB", "AAA"]),
+        strategy=DeferredDailyRebalanceStrategy,
+        symbols=["AAA", "BBB"],
+        all_symbols=["BBB", "AAA"],
+        date2symbols=date2symbols,
+        capture=second_capture,
+        initial_cash=100000.0,
+        show_progress=False,
+    )
+
+    assert first_capture["events"][-1][0] == target_day
+    assert second_capture["events"][-1][0] == target_day
+    assert first_capture["events"][-1][2] == ("AAA",)
+    assert second_capture["events"][-1][2] == ("AAA",)
+    assert first.metrics.total_return == pytest.approx(second.metrics.total_return)
 
 
 def _make_bars(

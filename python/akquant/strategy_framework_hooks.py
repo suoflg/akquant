@@ -56,6 +56,20 @@ def _dispatch_daily_rebalance_if_needed(
 ) -> None:
     if getattr(strategy, "_framework_daily_rebalance_done_date", None) == trading_date:
         return
+    event_type = getattr(strategy, "_last_event_type", None)
+    if event_type == "bar" and strategy.ctx is not None:
+        pending_date = getattr(
+            strategy,
+            "_framework_daily_rebalance_pending_date",
+            None,
+        )
+        if pending_date == trading_date:
+            return
+        schedule_ts = int(timestamp) + 1
+        payload = f"__framework_rebalance__|{trading_date}|{int(timestamp)}"
+        strategy.ctx.schedule(schedule_ts, payload)
+        strategy._framework_daily_rebalance_pending_date = trading_date
+        return
     call_user_callback(
         strategy,
         "on_daily_rebalance",
@@ -249,6 +263,40 @@ def dispatch_boundary_timer(strategy: Any, payload: str) -> bool:
     return True
 
 
+def dispatch_daily_rebalance_timer(strategy: Any, payload: str) -> bool:
+    """处理框架级日内调仓定时器，返回是否已消费该 payload."""
+    if not payload.startswith("__framework_rebalance__|"):
+        return False
+
+    parts = payload.split("|", 2)
+    if len(parts) != 3:
+        return True
+
+    trading_date_text = parts[1]
+    trading_date: Any = trading_date_text
+    try:
+        trading_date = pd.to_datetime(trading_date_text).date()
+    except Exception:
+        pass
+    try:
+        source_timestamp = int(parts[2])
+    except Exception:
+        source_timestamp = int(getattr(strategy.ctx, "current_time", 0))
+
+    done_date = getattr(strategy, "_framework_daily_rebalance_done_date", None)
+    if done_date != trading_date:
+        call_user_callback(
+            strategy,
+            "on_daily_rebalance",
+            trading_date,
+            source_timestamp,
+            payload={"trading_date": trading_date, "timestamp": source_timestamp},
+        )
+        strategy._framework_daily_rebalance_done_date = trading_date
+    strategy._framework_daily_rebalance_pending_date = None
+    return True
+
+
 def mark_portfolio_dirty(strategy: Any) -> None:
     """标记账户快照需要重新计算."""
     strategy._framework_portfolio_dirty = True
@@ -360,6 +408,8 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_before_trading_done_date = None
     if not hasattr(strategy, "_framework_daily_rebalance_done_date"):
         strategy._framework_daily_rebalance_done_date = None
+    if not hasattr(strategy, "_framework_daily_rebalance_pending_date"):
+        strategy._framework_daily_rebalance_pending_date = None
     if not hasattr(strategy, "_framework_after_trading_done_date"):
         strategy._framework_after_trading_done_date = None
     if not hasattr(strategy, "_framework_last_portfolio_state"):
