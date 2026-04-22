@@ -70,7 +70,7 @@ pub struct ContextUpdate {
 }
 
 #[gen_stub_pyclass]
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone)]
 pub struct ExpiryEvent {
     #[pyo3(get)]
