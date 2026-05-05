@@ -28,10 +28,14 @@ from akquant.akquant import (
     TimeInForce,
 )
 from akquant.backtest import FunctionalStrategy
-from akquant.backtest.engine import _prime_framework_pre_open_timers
+from akquant.backtest.engine import (
+    _prime_framework_boundary_timers,
+    _prime_framework_pre_open_timers,
+)
 from akquant.config import RiskConfig
 from akquant.strategy import Strategy, StrategyRuntimeConfig
 from akquant.strategy_framework_hooks import (
+    collect_boundary_timer_entries,
     collect_pre_open_timer_entries,
     dispatch_pre_open_timer,
 )
@@ -3677,6 +3681,113 @@ def test_boundary_timers_register_and_drive_day_hooks() -> None:
     ctx.current_time = end_ts + 1
     strategy._on_timer_event("__framework_boundary__|after|2023-01-03", ctx)
     assert any(e.startswith("after:2023-01-03") for e in strategy.events)
+
+
+def test_collect_boundary_timers_and_prime_globally_once() -> None:
+    """Boundary timers should be deduplicated before the event loop starts."""
+    start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
+    end_ts = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value
+    strategy_a = FrameworkHooksStrategy()
+    strategy_b = FrameworkHooksStrategy()
+    strategy_a.enable_precise_day_boundary_hooks = True
+    strategy_b.enable_precise_day_boundary_hooks = True
+    strategy_a._trading_day_bounds = {"2023-01-03": (start_ts, end_ts)}
+    strategy_b._trading_day_bounds = {"2023-01-03": (start_ts, end_ts)}
+
+    entries = collect_boundary_timer_entries(strategy_a)
+    assert entries == [
+        (start_ts, "__framework_boundary__|before|2023-01-03"),
+        (end_ts + 1, "__framework_boundary__|after|2023-01-03"),
+    ]
+
+    fake_engine = SimpleNamespace(add_timer=MagicMock())
+    _prime_framework_boundary_timers([strategy_a, strategy_b], fake_engine)
+
+    scheduled = [call.args for call in fake_engine.add_timer.call_args_list]
+    assert scheduled == [
+        (start_ts, "__framework_boundary__|before|2023-01-03"),
+        (end_ts + 1, "__framework_boundary__|after|2023-01-03"),
+    ]
+
+
+def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
+    """Precise boundary hooks should not emit after_trading during same-day timers."""
+
+    class PreciseBoundaryRegressionStrategy(Strategy):
+        def __init__(self) -> None:
+            self.enable_precise_day_boundary_hooks = True
+            self.events: list[tuple[str, object, int]] = []
+
+        def on_start(self) -> None:
+            self.subscribe("HOOKS_DEMO")
+
+        def on_before_trading(self, trading_date: object, timestamp: int) -> None:
+            self.events.append(("before", trading_date, timestamp))
+
+        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
+            self.events.append(("rebalance", trading_date, timestamp))
+
+        def on_after_trading(self, trading_date: object, timestamp: int) -> None:
+            self.events.append(("after", trading_date, timestamp))
+
+        def on_bar(self, bar: Bar) -> None:
+            self.events.append(("bar", bar.symbol, int(bar.timestamp)))
+
+    day1_open = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
+    day1_mid = pd.Timestamp("2023-01-03 10:00:00", tz="Asia/Shanghai").value
+    day1_close = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value
+    day2_open = pd.Timestamp("2023-01-04 09:30:00", tz="Asia/Shanghai").value
+    day2_mid = pd.Timestamp("2023-01-04 10:00:00", tz="Asia/Shanghai").value
+    day2_close = pd.Timestamp("2023-01-04 15:00:00", tz="Asia/Shanghai").value
+
+    rows = [
+        (day1_open, 10.0),
+        (day1_mid, 10.2),
+        (day1_close, 10.5),
+        (day2_open, 10.8),
+        (day2_mid, 10.0),
+        (day2_close, 10.6),
+    ]
+    bars = [
+        Bar(
+            timestamp=timestamp,
+            open=close,
+            high=close + 0.2,
+            low=close - 0.2,
+            close=close,
+            volume=1000.0,
+            symbol="HOOKS_DEMO",
+        )
+        for timestamp, close in rows
+    ]
+
+    strategy = PreciseBoundaryRegressionStrategy()
+    run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbols=["HOOKS_DEMO"],
+        initial_cash=1000.0,
+        show_progress=False,
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+    )
+
+    day1_before = ("before", pd.Timestamp("2023-01-03").date(), day1_open)
+    day1_rebalance = ("rebalance", pd.Timestamp("2023-01-03").date(), day1_open)
+    day1_last_bar = ("bar", "HOOKS_DEMO", day1_close)
+    day1_after = ("after", pd.Timestamp("2023-01-03").date(), day1_close + 1)
+
+    assert day1_before in strategy.events
+    assert day1_rebalance in strategy.events
+    assert day1_last_bar in strategy.events
+    assert day1_after in strategy.events
+    assert strategy.events.index(day1_before) < strategy.events.index(day1_last_bar)
+    assert strategy.events.index(day1_rebalance) < strategy.events.index(day1_after)
+    assert strategy.events.index(day1_last_bar) < strategy.events.index(day1_after)
+    assert (
+        "after",
+        pd.Timestamp("2023-01-03").date(),
+        day1_open + 1,
+    ) not in strategy.events
 
 
 def test_collect_pre_open_timers_and_prime_globally_once() -> None:

@@ -34,6 +34,14 @@ def _runtime_option(strategy: Any, name: str) -> Any:
     return value
 
 
+def _use_precise_day_boundary_hooks(strategy: Any) -> bool:
+    """Return whether precise boundary timers should own daily hook dispatch."""
+    if not bool(_runtime_option(strategy, "enable_precise_day_boundary_hooks")):
+        return False
+    bounds = getattr(strategy, "_trading_day_bounds", None)
+    return bool(bounds)
+
+
 def _is_normal_session(session: Any) -> bool:
     normal = getattr(TradingSession, "Normal", None)
     if normal is not None:
@@ -96,6 +104,28 @@ def collect_pre_open_timer_entries(strategy: Any) -> List[Tuple[int, str]]:
         if start_ns <= 0:
             continue
         entries.append((start_ns, f"__framework_pre_open__|{day_key}|{start_ns}"))
+    return entries
+
+
+def collect_boundary_timer_entries(strategy: Any) -> List[Tuple[int, str]]:
+    """Collect global framework boundary timers for all trading days."""
+    if not _use_precise_day_boundary_hooks(strategy):
+        return []
+
+    bounds = getattr(strategy, "_trading_day_bounds", None)
+    if not bounds:
+        return []
+
+    entries: List[Tuple[int, str]] = []
+    for day_key, day_bounds in bounds.items():
+        if not isinstance(day_bounds, (list, tuple)) or len(day_bounds) != 2:
+            continue
+        start_ns = int(day_bounds[0])
+        end_ns = int(day_bounds[1])
+        if start_ns > 0:
+            entries.append((start_ns, f"__framework_boundary__|before|{day_key}"))
+        if end_ns > 0:
+            entries.append((end_ns + 1, f"__framework_boundary__|after|{day_key}"))
     return entries
 
 
@@ -170,7 +200,12 @@ def dispatch_time_hooks(strategy: Any) -> None:
     ts = pd.to_datetime(current_time, unit="ns", utc=True).tz_convert(strategy.timezone)
     current_date = ts.date()
     current_session = getattr(strategy.ctx, "session", None)
-    if getattr(strategy, "_framework_daily_rebalance_done_date", None) != current_date:
+    use_precise_boundaries = _use_precise_day_boundary_hooks(strategy)
+    if (
+        not use_precise_boundaries
+        and getattr(strategy, "_framework_daily_rebalance_done_date", None)
+        != current_date
+    ):
         _dispatch_daily_rebalance_if_needed(strategy, current_date, current_time)
 
     last_date = getattr(strategy, "_framework_last_local_date", None)
@@ -178,7 +213,8 @@ def dispatch_time_hooks(strategy: Any) -> None:
     after_done_date = getattr(strategy, "_framework_after_trading_done_date", None)
 
     if (
-        last_date is not None
+        not use_precise_boundaries
+        and last_date is not None
         and current_date != last_date
         and before_done_date == last_date
         and after_done_date != last_date
@@ -212,7 +248,8 @@ def dispatch_time_hooks(strategy: Any) -> None:
             )
 
     if (
-        _is_normal_session(current_session)
+        not use_precise_boundaries
+        and _is_normal_session(current_session)
         and getattr(strategy, "_framework_before_trading_done_date", None)
         != current_date
     ):
@@ -226,7 +263,8 @@ def dispatch_time_hooks(strategy: Any) -> None:
         strategy._framework_before_trading_done_date = current_date
 
     if (
-        not _is_normal_session(current_session)
+        not use_precise_boundaries
+        and not _is_normal_session(current_session)
         and getattr(strategy, "_framework_before_trading_done_date", None)
         == current_date
         and getattr(strategy, "_framework_after_trading_done_date", None)
@@ -272,25 +310,13 @@ def register_boundary_timers(strategy: Any) -> None:
     """注册交易日边界定时器，用于精确触发 on_before/on_after_trading."""
     if strategy.ctx is None:
         return
-    if not bool(_runtime_option(strategy, "enable_precise_day_boundary_hooks")):
+    if not _use_precise_day_boundary_hooks(strategy):
         return
     if getattr(strategy, "_framework_boundary_timers_registered", False):
         return
 
-    bounds = getattr(strategy, "_trading_day_bounds", None)
-    if not bounds:
-        strategy._framework_boundary_timers_registered = True
-        return
-
-    for day_key, day_bounds in bounds.items():
-        if not isinstance(day_bounds, (list, tuple)) or len(day_bounds) != 2:
-            continue
-        start_ns = int(day_bounds[0])
-        end_ns = int(day_bounds[1])
-        if start_ns > 0:
-            strategy.ctx.schedule(start_ns, f"__framework_boundary__|before|{day_key}")
-        if end_ns > 0:
-            strategy.ctx.schedule(end_ns + 1, f"__framework_boundary__|after|{day_key}")
+    for trigger_ts, payload in collect_boundary_timer_entries(strategy):
+        strategy.ctx.schedule(trigger_ts, payload)
 
     strategy._framework_boundary_timers_registered = True
 
@@ -325,6 +351,16 @@ def dispatch_boundary_timer(strategy: Any, payload: str) -> bool:
                 payload={"trading_date": day, "timestamp": current_time},
             )
             strategy._framework_before_trading_done_date = day
+        if getattr(strategy, "_framework_daily_rebalance_done_date", None) != day:
+            call_user_callback(
+                strategy,
+                "on_daily_rebalance",
+                day,
+                current_time,
+                payload={"trading_date": day, "timestamp": current_time},
+            )
+            strategy._framework_daily_rebalance_done_date = day
+            strategy._framework_daily_rebalance_pending_date = None
         return True
 
     if phase == "after":
