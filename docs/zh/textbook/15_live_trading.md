@@ -37,10 +37,17 @@ python examples/textbook/ch15_strategy_loader.py
 `AKQuant` 通过适配器模式支持多种柜台接口：
 
 *   **CTP (China Trading Platform)**：期货市场标准接口，支持行情与交易链路。
-*   **MiniQMT**：面向本地 A 股交易生态的适配接口。
-*   **PTrade**：可接入券商量化终端的适配接口。
+*   **MiniQMT**：面向本地 A 股交易生态的适配接口入口；当前仓库内置实现更偏向占位骨架与联调层，不应直接理解为已完成生产级实盘适配。
+*   **PTrade**：可接入券商量化终端的适配接口入口；当前仓库内置实现更偏向占位骨架与联调层，不应直接理解为已完成生产级实盘适配。
 
 在实盘模式下，`DataFeed` 切换为实时行情源，交易执行由对应 broker gateway 负责。
+
+需要特别区分两层含义：
+
+1. `AKQuant` 提供的是统一交易框架与 adapter 接口；
+2. 某个 broker 是否真正支持 A 股集合竞价专用委托、新股/新债打新、券商特定价格类型与业务代码，取决于该 broker adapter 是否已经补齐对应柜台语义。
+
+因此，当前内置 `MiniQMT/PTrade` 不应被视为“开箱即用支持 A 股集合竞价与打新”的官方承诺；这类场景通常仍需通过自定义 broker 或增强现有 adapter 来落地。
 
 CTP 交易链路支持 `execution_semantics_mode`：
 

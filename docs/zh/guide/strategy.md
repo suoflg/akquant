@@ -53,7 +53,7 @@
 | `on_session_start` | 会话切换开始时 | 日盘/夜盘切换、session 级状态重置 | `examples/50_framework_hooks_demo.py` |
 | `on_session_end` | 会话切换结束时 | 收盘后清理、session 结束打点 | `examples/50_framework_hooks_demo.py` |
 | `on_before_trading` | 本地交易日首次进入 `Normal` 会话 | 盘前检查、生成交易日级信号 | `examples/50_framework_hooks_demo.py` |
-| `on_pre_open` | 每个交易日首个常规行情事件前，由框架定时器抢先触发 | 集合竞价/盘前信号，使用默认 next-open 语义下单 | `examples/52_pre_open_demo.py` |
+| `on_pre_open` | 每个交易日首个常规行情事件前，由框架定时器抢先触发 | 盘前信号与“本次 open 成交”语义钩子；可用于表达集合竞价前的最后决策点，但不等同于券商柜台已支持集合竞价专用委托 | `examples/52_pre_open_demo.py` |
 | `on_daily_rebalance` | 每个交易日最多一次，与 `on_before_trading` 同阶段 | 横截面选股、统一调仓 | `examples/strategies/05_stock_momentum_rotation_timer.py` |
 | `on_after_trading` | 离开 `Normal` 会话时，必要时下一事件补发 | 日终统计、收盘后清理与归档 | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | 账户快照变化时增量触发 | 监控现金/权益变化、推送 UI 或告警 | `examples/50_framework_hooks_demo.py` |
@@ -85,6 +85,8 @@
 * `on_daily_rebalance` 与 `on_before_trading` 同一阶段触发，每个交易日最多触发一次。
 * `on_after_trading` 在离开 Normal 会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `on_after_trading`。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
+* 这里表达的是框架侧“盘前决策，本次 open 成交”的时序语义，不等同于交易所或券商柜台已经实现了集合竞价专用报单、撤单窗口控制或专有价格类型。
+* 新股/新债打新不属于 `on_pre_open` 或当前统一 `submit_order(...)` 的默认承诺范围；若要支持，通常需要补齐 broker 专有字段与业务路由。
 * 若需要更精确的交易日边界触发，可在策略中设置 `self.enable_precise_day_boundary_hooks = True`。
 * `on_portfolio_update` 采用增量触发：初始化时触发一次，后续仅在订单/成交或持仓相关价格变化时触发。
 * 可通过 `self.portfolio_update_eps` 过滤微小资产波动（默认 `0.0`，即不过滤）。
