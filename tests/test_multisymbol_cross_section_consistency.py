@@ -374,6 +374,18 @@ def test_order_target_weights_uses_sell_proceeds_before_same_cycle_buy() -> None
         9000.0,
     ]
     assert set(orders_df["status"].astype(str).str.lower()) == {"filled"}
+    aaa_buy = orders_df[
+        (orders_df["symbol"] == "AAA") & (orders_df["side"] == "buy")
+    ].iloc[0]
+    aaa_sell = orders_df[
+        (orders_df["symbol"] == "AAA") & (orders_df["side"] == "sell")
+    ].iloc[0]
+    bbb_buy = orders_df[
+        (orders_df["symbol"] == "BBB") & (orders_df["side"] == "buy")
+    ].iloc[0]
+    assert aaa_buy["updated_at"] == timestamps[0]
+    assert aaa_sell["updated_at"] == timestamps[1]
+    assert bbb_buy["updated_at"] == timestamps[1]
     final_positions = result.positions.iloc[-1]
     assert float(final_positions.get("AAA", 0.0)) == 0.0
     assert float(final_positions.get("BBB", 0.0)) == 9000.0
@@ -473,6 +485,7 @@ def test_explicit_buy_quantity_is_rejected_without_resizing() -> None:
     row = orders_df.iloc[0]
     assert str(row["symbol"]) == "AAA"
     assert float(row["quantity"]) == 20_000.0
+    assert float(row["filled_quantity"]) == 0.0
     assert str(row["status"]).lower() == "rejected"
     assert "insufficient" in str(row["reject_reason"]).lower()
 
@@ -582,7 +595,23 @@ def test_same_cycle_sell_then_buy_uses_post_sell_cash_for_sizing() -> None:
         show_progress=False,
     )
 
-    orders_df = result.orders_df
+    orders_df = result.orders_df.sort_values("created_at").reset_index(drop=True)
+    assert not any(
+        str(status).lower() == "rejected" for status in orders_df["status"].tolist()
+    )
+    aaa_buy = orders_df[
+        (orders_df["symbol"] == "AAA") & (orders_df["side"] == "buy")
+    ].iloc[0]
+    aaa_sell = orders_df[
+        (orders_df["symbol"] == "AAA") & (orders_df["side"] == "sell")
+    ].iloc[0]
     bbb_buys = orders_df[(orders_df["symbol"] == "BBB") & (orders_df["side"] == "buy")]
     assert not bbb_buys.empty
+    assert set(bbb_buys["status"].astype(str).str.lower()) == {"filled"}
+    assert aaa_buy["updated_at"] == timestamps[0]
+    assert aaa_sell["updated_at"] == timestamps[1]
+    assert bbb_buys.iloc[0]["updated_at"] == timestamps[1]
     assert float(bbb_buys.iloc[0]["filled_quantity"]) >= 499.0
+    final_positions = result.positions.iloc[-1]
+    assert float(final_positions.get("AAA", 0.0)) == 0.0
+    assert float(final_positions.get("BBB", 0.0)) >= 499.0

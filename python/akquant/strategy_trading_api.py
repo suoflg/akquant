@@ -1527,26 +1527,6 @@ def order_target_weights(
 
     sell_legs = [item for item in planned if item[2] < 0]
     buy_legs = [item for item in planned if item[2] >= 0]
-    effective_fill_policy = _resolve_effective_order_fill_policy(
-        strategy,
-        cast(Optional[OrderFillPolicy], kwargs.get("fill_policy")),
-    )
-    if effective_fill_policy is None:
-        stored_fill_policy = cast(
-            Optional[OrderFillPolicy], getattr(strategy, "_default_fill_policy", None)
-        )
-        if stored_fill_policy is not None:
-            effective_fill_policy = dict(stored_fill_policy)
-    fill_price_basis, fill_bar_offset, fill_temporal = _normalize_order_fill_policy(
-        effective_fill_policy
-    )
-    defer_buy_legs = (
-        sell_legs
-        and buy_legs
-        and fill_price_basis == "close"
-        and fill_bar_offset == 0
-        and fill_temporal == "same_cycle"
-    )
 
     for symbol, target_value, _ in sorted(
         sell_legs,
@@ -1560,14 +1540,6 @@ def order_target_weights(
         key=lambda item: (-float(item[2]), str(item[0])),
     ):
         leg_price = price_map.get(symbol) if price_map else None
-        if defer_buy_legs:
-            deferred_orders = cast(
-                list[tuple[str, float, Optional[float], dict[str, Any]]],
-                getattr(strategy, "_deferred_target_value_orders", []),
-            )
-            deferred_orders.append((symbol, target_value, leg_price, dict(kwargs)))
-            setattr(strategy, "_deferred_target_value_orders", deferred_orders)
-            continue
         order_target_value(strategy, target_value, symbol, leg_price, **kwargs)
 
 
