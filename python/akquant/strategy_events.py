@@ -33,23 +33,6 @@ def _is_before_active_start(strategy: Any, timestamp: int) -> bool:
     return active_start_time is not None and timestamp < int(active_start_time)
 
 
-def _flush_deferred_target_value_orders(strategy: Any, event_symbol: str) -> None:
-    deferred_orders = getattr(strategy, "_deferred_target_value_orders", None)
-    if not deferred_orders:
-        return
-    remaining_orders = []
-    from .strategy_trading_api import order_target_value
-
-    for symbol, target_value, price, kwargs in deferred_orders:
-        if symbol == event_symbol:
-            order_target_value(strategy, target_value, symbol, price, **kwargs)
-        else:
-            remaining_orders.append((symbol, target_value, price, kwargs))
-    setattr(strategy, "_deferred_target_value_orders", remaining_orders)
-    strategy._check_order_events()
-    check_expiry_events(strategy)
-
-
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     """引擎调用的 Bar 回调 (Internal)."""
     ensure_framework_state(strategy)
@@ -97,7 +80,6 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
         mark_portfolio_dirty(strategy)
     dispatch_time_hooks(strategy)
     dispatch_portfolio_update(strategy)
-    _flush_deferred_target_value_orders(strategy, bar.symbol)
 
     if strategy._bar_count < strategy.warmup_period:
         return
@@ -155,7 +137,6 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
         mark_portfolio_dirty(strategy)
     dispatch_time_hooks(strategy)
     dispatch_portfolio_update(strategy)
-    _flush_deferred_target_value_orders(strategy, tick.symbol)
     call_user_callback(strategy, "on_tick", tick, payload=tick)
 
 

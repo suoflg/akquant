@@ -32,6 +32,11 @@ pub trait ExecutionClient: Send + Sync {
     /// 处理市场事件并返回执行报告
     fn on_event(&mut self, event: &Event, ctx: &EngineContext) -> Vec<Event>;
 
+    /// 在一个时间片结束时补充处理延迟的 same-cycle 订单。
+    fn finalize_timestamp(&mut self, _events: &[Event], _ctx: &EngineContext) -> Vec<Event> {
+        Vec::new()
+    }
+
     /// 设置滑点模型 (仅回测有效)
     fn set_slippage_model(&mut self, _model: Box<dyn SlippageModel>) {}
 

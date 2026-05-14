@@ -6,10 +6,13 @@ use crate::event::Event;
 use crate::execution::matcher::{ExecutionMatcher, MatchContext};
 use crate::execution::slippage::{SlippageModel, ZeroSlippage};
 use crate::execution::{ExecutionClient, crypto, forex, futures, option, stock};
-use crate::model::{AssetType, Order, OrderStatus, TimeInForce, TradingSession};
+use crate::model::{
+    AssetType, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy,
+    TimeInForce, TradingSession,
+};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// 模拟交易所执行器 (Simulated Execution Client)
 /// 负责在内存中撮合订单 (回测模式)
@@ -25,6 +28,9 @@ pub struct SimulatedExecutionClient {
     futures_enforce_tick_size: bool,
     futures_enforce_lot_size: bool,
     futures_validation_by_prefix: Vec<(String, Option<bool>, Option<bool>)>,
+    slice_tracking_timestamp: Option<i64>,
+    attempted_same_cycle_order_ids: HashSet<String>,
+    deferred_same_cycle_order_ids: HashSet<String>,
 }
 
 impl SimulatedExecutionClient {
@@ -64,7 +70,422 @@ impl SimulatedExecutionClient {
             futures_enforce_tick_size: true,
             futures_enforce_lot_size: true,
             futures_validation_by_prefix: Vec::new(),
+            slice_tracking_timestamp: None,
+            attempted_same_cycle_order_ids: HashSet::new(),
+            deferred_same_cycle_order_ids: HashSet::new(),
         }
+    }
+
+    fn prepare_slice_tracking(&mut self, timestamp: i64) {
+        if self.slice_tracking_timestamp == Some(timestamp) {
+            return;
+        }
+        self.slice_tracking_timestamp = Some(timestamp);
+        self.attempted_same_cycle_order_ids.clear();
+        self.deferred_same_cycle_order_ids.clear();
+    }
+
+    fn clear_slice_tracking(&mut self) {
+        self.attempted_same_cycle_order_ids.clear();
+        self.deferred_same_cycle_order_ids.clear();
+        self.slice_tracking_timestamp = None;
+    }
+
+    fn event_symbol(event: &Event) -> Option<&str> {
+        match event {
+            Event::Bar(bar) => Some(bar.symbol.as_str()),
+            Event::Tick(tick) => Some(tick.symbol.as_str()),
+            _ => None,
+        }
+    }
+
+    fn is_order_active(order: &Order) -> bool {
+        !matches!(
+            order.status,
+            OrderStatus::Cancelled
+                | OrderStatus::Filled
+                | OrderStatus::Rejected
+                | OrderStatus::Expired
+        )
+    }
+
+    fn effective_policy(order: &Order, ctx: &crate::context::EngineContext) -> ExecutionPolicyCore {
+        order.fill_policy_override.unwrap_or(ctx.execution_policy_core)
+    }
+
+    fn is_same_cycle_close_policy(policy: ExecutionPolicyCore) -> bool {
+        policy.price_basis == PriceBasis::Close
+            && policy.bar_offset == 0
+            && matches!(policy.temporal, TemporalPolicy::SameCycle)
+    }
+
+    fn is_same_cycle_close_order(&self, order: &Order, ctx: &crate::context::EngineContext) -> bool {
+        Self::is_same_cycle_close_policy(Self::effective_policy(order, ctx))
+    }
+
+    fn has_cross_symbol_reduce_pending(
+        &self,
+        event: &Event,
+        ctx: &crate::context::EngineContext,
+    ) -> bool {
+        let Some(event_symbol) = Self::event_symbol(event) else {
+            return false;
+        };
+        self.orders.values().any(|candidate| {
+            Self::is_order_active(candidate)
+                && candidate.created_at == ctx.current_time
+                && candidate.symbol != event_symbol
+                && self.is_same_cycle_close_order(candidate, ctx)
+                && crate::model::is_reduce_first_order(candidate.side, candidate.position_effect)
+        })
+    }
+
+    fn should_defer_order_on_current_event(
+        &self,
+        order: &Order,
+        event: &Event,
+        ctx: &crate::context::EngineContext,
+    ) -> bool {
+        if order.created_at != ctx.current_time || !self.is_same_cycle_close_order(order, ctx) {
+            return false;
+        }
+        if crate::model::is_reduce_first_order(order.side, order.position_effect) {
+            return false;
+        }
+        Self::event_symbol(event)
+            .map(|symbol| order.symbol == symbol)
+            .unwrap_or(false)
+            && self.has_cross_symbol_reduce_pending(event, ctx)
+    }
+
+    fn should_finalize_order(
+        &self,
+        order: &Order,
+        ctx: &crate::context::EngineContext,
+    ) -> bool {
+        order.created_at == ctx.current_time
+            && Self::is_order_active(order)
+            && self.is_same_cycle_close_order(order, ctx)
+            && (!self.attempted_same_cycle_order_ids.contains(&order.id)
+                || self.deferred_same_cycle_order_ids.contains(&order.id))
+    }
+
+    fn sorted_queue(&self) -> Vec<String> {
+        let mut queue: Vec<String> = self.order_queue.clone();
+        queue.sort_by_key(|order_id| {
+            self.orders
+                .get(order_id)
+                .map(|order| match order.side {
+                    crate::model::OrderSide::Sell => 0_u8,
+                    crate::model::OrderSide::Buy => 1_u8,
+                })
+                .unwrap_or(2_u8)
+        });
+        queue
+    }
+
+    fn sync_order_from_report(&mut self, report: &Event) {
+        if let Event::ExecutionReport(updated_order, _) = report
+            && let Some(existing) = self.orders.get_mut(&updated_order.id)
+        {
+            existing.status = updated_order.status;
+            existing.filled_quantity = updated_order.filled_quantity;
+            existing.average_filled_price = updated_order.average_filled_price;
+            existing.commission = updated_order.commission;
+            existing.updated_at = updated_order.updated_at;
+        }
+    }
+
+    fn cleanup_finished_orders(&mut self) {
+        let mut finished_ids = Vec::new();
+        for id in &self.order_queue {
+            if let Some(order) = self.orders.get(id) {
+                if !Self::is_order_active(order) {
+                    finished_ids.push(id.clone());
+                }
+            } else {
+                finished_ids.push(id.clone());
+            }
+        }
+        for id in finished_ids {
+            self.orders.remove(&id);
+        }
+        self.order_queue.retain(|id| self.orders.contains_key(id));
+    }
+
+    fn match_with_events<F>(
+        &mut self,
+        events: &[Event],
+        ctx: &crate::context::EngineContext,
+        mut order_filter: F,
+        defer_cross_symbol_increase: bool,
+    ) -> Vec<Event>
+    where
+        F: FnMut(&Order, &Event) -> bool,
+    {
+        let mut reports = Vec::new();
+        let mut projected_portfolio = ctx.portfolio.clone();
+        let stock_margin_ratio_override = stock_margin_ratio_override(ctx.risk_config);
+        let mut current_free_margin = calculate_free_margin(
+            &projected_portfolio,
+            ctx.last_prices,
+            ctx.instruments,
+            ctx.trade_tracker,
+            ctx.risk_config,
+        );
+
+        for event in events {
+            let queue = self.sorted_queue();
+            for order_id in &queue {
+                let mut synced_report: Option<Event> = None;
+                let Some(order_snapshot) = self.orders.get(order_id).cloned() else {
+                    continue;
+                };
+                if !Self::is_order_active(&order_snapshot) || !order_filter(&order_snapshot, event) {
+                    continue;
+                }
+
+                let defer_current = defer_cross_symbol_increase
+                    && self.should_defer_order_on_current_event(&order_snapshot, event, ctx);
+                let mark_attempted = order_snapshot.created_at == ctx.current_time
+                    && self.is_same_cycle_close_order(&order_snapshot, ctx)
+                    && Self::event_symbol(event)
+                        .map(|symbol| order_snapshot.symbol == symbol)
+                        .unwrap_or(false);
+
+                if defer_current {
+                    self.deferred_same_cycle_order_ids
+                        .insert(order_snapshot.id.clone());
+                    self.attempted_same_cycle_order_ids
+                        .insert(order_snapshot.id.clone());
+                    continue;
+                }
+
+                if mark_attempted {
+                    self.attempted_same_cycle_order_ids
+                        .insert(order_snapshot.id.clone());
+                }
+
+                if let Some(order) = self.orders.get_mut(order_id) {
+                    if let Some(instrument) = ctx.instruments.get(&order.symbol)
+                        && let Some(matcher) = self.matchers.get(&instrument.asset_type)
+                    {
+                        let match_ctx = MatchContext {
+                            event,
+                            instrument,
+                            execution_policy_core: Self::effective_policy(order, ctx),
+                            slippage: self.slippage_model.as_ref(),
+                            volume_limit_pct: self.volume_limit_pct,
+                            bar_index: ctx.bar_index,
+                            last_price: ctx.last_prices.get(&order.symbol).copied(),
+                        };
+                        let report_opt = matcher.match_order(order, &match_ctx);
+                        if let Some(mut report) = report_opt {
+                            let mut replacement_report: Option<Event> = None;
+                            if let Event::ExecutionReport(ref mut report_order, Some(ref mut trade)) =
+                                report
+                            {
+                                let mut prices_for_margin = ctx.last_prices.clone();
+                                prices_for_margin.insert(trade.symbol.clone(), trade.price);
+
+                                let commission = ctx.market_model.calculate_commission(
+                                    instrument,
+                                    trade.side,
+                                    trade.price,
+                                    trade.quantity,
+                                );
+
+                                let base_used_margin = projected_portfolio
+                                    .calculate_used_margin_with_stock_ratio(
+                                        &prices_for_margin,
+                                        ctx.instruments,
+                                        stock_margin_ratio_override,
+                                    );
+                                let mut margin_projection = projected_portfolio.clone();
+                                let current_pos = margin_projection
+                                    .positions
+                                    .get(&trade.symbol)
+                                    .copied()
+                                    .unwrap_or(Decimal::ZERO);
+                                let next_pos = crate::model::project_position_after(
+                                    trade.side,
+                                    trade.position_effect,
+                                    current_pos,
+                                    trade.quantity,
+                                );
+                                margin_projection.adjust_position(
+                                    &trade.symbol,
+                                    next_pos - current_pos,
+                                );
+                                let next_used_margin = margin_projection
+                                    .calculate_used_margin_with_stock_ratio(
+                                        &prices_for_margin,
+                                        ctx.instruments,
+                                        stock_margin_ratio_override,
+                                    );
+                                let margin_required =
+                                    (next_used_margin - base_used_margin).max(Decimal::ZERO);
+                                let total_required = margin_required + commission;
+
+                                if total_required > current_free_margin {
+                                    if report_order.allow_quantity_auto_resize {
+                                        let lot_size = instrument.lot_size();
+                                        let safety_factor = Decimal::from_f64(0.9999)
+                                            .unwrap_or(Decimal::ONE);
+                                        let mut new_qty = if total_required > Decimal::ZERO
+                                            && current_free_margin > Decimal::ZERO
+                                        {
+                                            (trade.quantity
+                                                * current_free_margin
+                                                * safety_factor
+                                                / total_required)
+                                                .floor()
+                                        } else {
+                                            Decimal::ZERO
+                                        };
+                                        if lot_size > Decimal::ZERO {
+                                            new_qty = new_qty - (new_qty % lot_size);
+                                        }
+                                        if new_qty >= trade.quantity && lot_size > Decimal::ZERO {
+                                            new_qty -= lot_size;
+                                        }
+
+                                        while new_qty > Decimal::ZERO {
+                                            let new_comm = ctx.market_model.calculate_commission(
+                                                instrument,
+                                                trade.side,
+                                                trade.price,
+                                                new_qty,
+                                            );
+                                            let mut resized_projection =
+                                                projected_portfolio.clone();
+                                            let current_pos = resized_projection
+                                                .positions
+                                                .get(&trade.symbol)
+                                                .copied()
+                                                .unwrap_or(Decimal::ZERO);
+                                            let next_pos = crate::model::project_position_after(
+                                                trade.side,
+                                                trade.position_effect,
+                                                current_pos,
+                                                new_qty,
+                                            );
+                                            resized_projection.adjust_position(
+                                                &trade.symbol,
+                                                next_pos - current_pos,
+                                            );
+                                            let resized_used_margin = resized_projection
+                                                .calculate_used_margin_with_stock_ratio(
+                                                    &prices_for_margin,
+                                                    ctx.instruments,
+                                                    stock_margin_ratio_override,
+                                                );
+                                            let resized_required = (resized_used_margin
+                                                - base_used_margin)
+                                                .max(Decimal::ZERO);
+                                            if resized_required + new_comm <= current_free_margin {
+                                                break;
+                                            }
+                                            if new_qty >= lot_size && lot_size > Decimal::ZERO {
+                                                new_qty -= lot_size;
+                                            } else {
+                                                new_qty = Decimal::ZERO;
+                                            }
+                                        }
+
+                                        trade.quantity = new_qty;
+                                    } else {
+                                        let mut rejected_order = report_order.clone();
+                                        rejected_order.status = crate::model::OrderStatus::Rejected;
+                                        rejected_order.filled_quantity = Decimal::ZERO;
+                                        rejected_order.average_filled_price = None;
+                                        rejected_order.updated_at = ctx.current_time;
+                                        rejected_order.reject_reason = format!(
+                                            "Risk: Insufficient margin at execution. Required: {total_required}, Available: {current_free_margin}"
+                                        );
+                                        replacement_report =
+                                            Some(Event::ExecutionReport(rejected_order, None));
+                                    }
+                                }
+                            }
+
+                            if let Some(new_report) = replacement_report {
+                                report = new_report;
+                            }
+
+                            if let Event::ExecutionReport(_, Some(ref trade)) = report
+                                && trade.quantity > Decimal::ZERO
+                            {
+                                let mut prices_for_margin = ctx.last_prices.clone();
+                                prices_for_margin.insert(trade.symbol.clone(), trade.price);
+                                let commission = ctx.market_model.calculate_commission(
+                                    instrument,
+                                    trade.side,
+                                    trade.price,
+                                    trade.quantity,
+                                );
+                                projected_portfolio.adjust_cash(-commission);
+                                if is_futures_margin_account(instrument, ctx.risk_config) {
+                                    let realized = estimate_futures_realized_pnl(
+                                        ctx.trade_tracker,
+                                        &trade.symbol,
+                                        trade.side,
+                                        trade.quantity,
+                                        trade.price,
+                                        instrument.multiplier(),
+                                    );
+                                    projected_portfolio.adjust_cash(realized);
+                                } else {
+                                    let cost =
+                                        trade.price * trade.quantity * instrument.multiplier();
+                                    if trade.side == crate::model::OrderSide::Buy {
+                                        projected_portfolio.adjust_cash(-cost);
+                                    } else {
+                                        projected_portfolio.adjust_cash(cost);
+                                    }
+                                }
+                                let current_pos = projected_portfolio
+                                    .positions
+                                    .get(&trade.symbol)
+                                    .copied()
+                                    .unwrap_or(Decimal::ZERO);
+                                let next_pos = crate::model::project_position_after(
+                                    trade.side,
+                                    trade.position_effect,
+                                    current_pos,
+                                    trade.quantity,
+                                );
+                                projected_portfolio
+                                    .adjust_position(&trade.symbol, next_pos - current_pos);
+                                current_free_margin = calculate_free_margin(
+                                    &projected_portfolio,
+                                    &prices_for_margin,
+                                    ctx.instruments,
+                                    ctx.trade_tracker,
+                                    ctx.risk_config,
+                                );
+                            }
+
+                            let keep_report = !matches!(
+                                &report,
+                                Event::ExecutionReport(_, Some(trade))
+                                    if trade.quantity <= Decimal::ZERO
+                            );
+                            if keep_report {
+                                synced_report = Some(report);
+                            }
+                        }
+                    }
+                }
+                if let Some(report) = synced_report {
+                    self.sync_order_from_report(&report);
+                    reports.push(report);
+                }
+            }
+        }
+
+        self.cleanup_finished_orders();
+        reports
     }
 }
 
@@ -147,15 +568,14 @@ impl ExecutionClient for SimulatedExecutionClient {
     }
 
     fn on_event(&mut self, event: &Event, ctx: &crate::context::EngineContext) -> Vec<Event> {
+        self.prepare_slice_tracking(ctx.current_time);
         let mut reports = Vec::new();
 
-        // Skip matching during non-trading sessions
         if ctx.session == TradingSession::Break
             || ctx.session == TradingSession::Closed
             || ctx.session == TradingSession::PreOpen
             || ctx.session == TradingSession::PostClose
         {
-            // Also check for Day orders expiry if Closed
             if ctx.session == TradingSession::Closed {
                 let timestamp = match event {
                     Event::Bar(b) => b.timestamp,
@@ -165,10 +585,7 @@ impl ExecutionClient for SimulatedExecutionClient {
 
                 for order_id in &self.order_queue {
                     if let Some(order) = self.orders.get_mut(order_id)
-                        && order.status != OrderStatus::Cancelled
-                        && order.status != OrderStatus::Filled
-                        && order.status != OrderStatus::Rejected
-                        && order.status != OrderStatus::Expired
+                        && Self::is_order_active(order)
                         && order.time_in_force == TimeInForce::Day
                     {
                         order.status = OrderStatus::Expired;
@@ -176,299 +593,61 @@ impl ExecutionClient for SimulatedExecutionClient {
                         reports.push(Event::ExecutionReport(order.clone(), None));
                     }
                 }
+                self.cleanup_finished_orders();
             }
             return reports;
         }
 
-        // Track available margin for this step (snapshot of portfolio + changes in this loop)
-        let mut projected_portfolio = ctx.portfolio.clone();
-        let stock_margin_ratio_override = stock_margin_ratio_override(ctx.risk_config);
-        let mut current_free_margin = calculate_free_margin(
-            &projected_portfolio,
-            ctx.last_prices,
-            ctx.instruments,
-            ctx.trade_tracker,
-            ctx.risk_config,
-        );
+        self.match_with_events(
+            std::slice::from_ref(event),
+            ctx,
+            |_order, _event| true,
+            true,
+        )
+    }
 
-        let mut queue: Vec<String> = self.order_queue.clone();
-        queue.sort_by_key(|order_id| {
-            self.orders
-                .get(order_id)
-                .map(|order| match order.side {
-                    crate::model::OrderSide::Sell => 0_u8,
-                    crate::model::OrderSide::Buy => 1_u8,
-                })
-                .unwrap_or(2_u8)
+    fn finalize_timestamp(
+        &mut self,
+        events: &[Event],
+        ctx: &crate::context::EngineContext,
+    ) -> Vec<Event> {
+        if events.is_empty() {
+            self.clear_slice_tracking();
+            return Vec::new();
+        }
+        self.prepare_slice_tracking(ctx.current_time);
+        let mut ordered_events: Vec<Event> = events.to_vec();
+        let reduce_symbols: HashSet<String> = self
+            .orders
+            .values()
+            .filter(|order| {
+                Self::is_order_active(order)
+                    && order.created_at == ctx.current_time
+                    && self.is_same_cycle_close_order(order, ctx)
+                    && crate::model::is_reduce_first_order(order.side, order.position_effect)
+            })
+            .map(|order| order.symbol.clone())
+            .collect();
+        ordered_events.sort_by_key(|event| {
+            let symbol = Self::event_symbol(event).unwrap_or_default().to_string();
+            (
+                if reduce_symbols.contains(&symbol) { 0_u8 } else { 1_u8 },
+                symbol,
+            )
         });
-
-        let matchers = &self.matchers;
-
-        for order_id in &queue {
-            if let Some(order) = self.orders.get_mut(order_id) {
-                if order.status == OrderStatus::Cancelled
-                    || order.status == OrderStatus::Filled
-                    || order.status == OrderStatus::Rejected
-                    || order.status == OrderStatus::Expired
-                {
-                    continue;
-                }
-
-                // Find Instrument
-                if let Some(instrument) = ctx.instruments.get(&order.symbol) {
-                    // Dispatch to specific matcher
-                    if let Some(matcher) = matchers.get(&instrument.asset_type) {
-                        let match_ctx = MatchContext {
-                            event,
-                            instrument,
-                            execution_policy_core: order
-                                .fill_policy_override
-                                .unwrap_or(ctx.execution_policy_core),
-                            slippage: self.slippage_model.as_ref(),
-                            volume_limit_pct: self.volume_limit_pct,
-                            bar_index: ctx.bar_index,
-                            last_price: ctx.last_prices.get(&order.symbol).copied(),
-                        };
-                        let report_opt = matcher.match_order(order, &match_ctx);
-
-                        if let Some(mut report) = report_opt {
-                            let mut replacement_report: Option<Event> = None;
-                            if let Event::ExecutionReport(ref mut report_order, Some(ref mut trade)) =
-                                report
-                            {
-                                let mut prices_for_margin = ctx.last_prices.clone();
-                                prices_for_margin.insert(trade.symbol.clone(), trade.price);
-
-                                // Calculate estimated commission
-                                let commission = ctx.market_model.calculate_commission(
-                                    instrument,
-                                    trade.side,
-                                    trade.price,
-                                    trade.quantity,
-                                );
-
-                                let base_used_margin =
-                                    projected_portfolio.calculate_used_margin_with_stock_ratio(
-                                        &prices_for_margin,
-                                        ctx.instruments,
-                                        stock_margin_ratio_override,
-                                    );
-                                let mut margin_projection = projected_portfolio.clone();
-                                let current_pos = margin_projection
-                                    .positions
-                                    .get(&trade.symbol)
-                                    .copied()
-                                    .unwrap_or(Decimal::ZERO);
-                                let next_pos = crate::model::project_position_after(
-                                    trade.side,
-                                    trade.position_effect,
-                                    current_pos,
-                                    trade.quantity,
-                                );
-                                margin_projection
-                                    .adjust_position(&trade.symbol, next_pos - current_pos);
-                                let next_used_margin =
-                                    margin_projection.calculate_used_margin_with_stock_ratio(
-                                        &prices_for_margin,
-                                        ctx.instruments,
-                                        stock_margin_ratio_override,
-                                    );
-                                let margin_required =
-                                    (next_used_margin - base_used_margin).max(Decimal::ZERO);
-                                let total_required = margin_required + commission;
-
-                                if total_required > current_free_margin {
-                                    if report_order.allow_quantity_auto_resize {
-                                        let lot_size = instrument.lot_size();
-                                        let safety_factor = Decimal::from_f64(0.9999)
-                                            .unwrap_or(Decimal::ONE);
-                                        let mut new_qty = if total_required > Decimal::ZERO
-                                            && current_free_margin > Decimal::ZERO
-                                        {
-                                            (trade.quantity
-                                                * current_free_margin
-                                                * safety_factor
-                                                / total_required)
-                                                .floor()
-                                        } else {
-                                            Decimal::ZERO
-                                        };
-                                        if lot_size > Decimal::ZERO {
-                                            new_qty = new_qty - (new_qty % lot_size);
-                                        }
-                                        if new_qty >= trade.quantity && lot_size > Decimal::ZERO {
-                                            new_qty -= lot_size;
-                                        }
-
-                                        while new_qty > Decimal::ZERO {
-                                            let new_comm = ctx.market_model.calculate_commission(
-                                                instrument,
-                                                trade.side,
-                                                trade.price,
-                                                new_qty,
-                                            );
-                                            let mut resized_projection =
-                                                projected_portfolio.clone();
-                                            let current_pos = resized_projection
-                                                .positions
-                                                .get(&trade.symbol)
-                                                .copied()
-                                                .unwrap_or(Decimal::ZERO);
-                                            let next_pos = crate::model::project_position_after(
-                                                trade.side,
-                                                trade.position_effect,
-                                                current_pos,
-                                                new_qty,
-                                            );
-                                            resized_projection.adjust_position(
-                                                &trade.symbol,
-                                                next_pos - current_pos,
-                                            );
-                                            let resized_used_margin = resized_projection
-                                                .calculate_used_margin_with_stock_ratio(
-                                                    &prices_for_margin,
-                                                    ctx.instruments,
-                                                    stock_margin_ratio_override,
-                                                );
-                                            let resized_required = (resized_used_margin
-                                                - base_used_margin)
-                                                .max(Decimal::ZERO);
-                                            if resized_required + new_comm <= current_free_margin {
-                                                break;
-                                            }
-                                            if new_qty >= lot_size && lot_size > Decimal::ZERO {
-                                                new_qty -= lot_size;
-                                            } else {
-                                                new_qty = Decimal::ZERO;
-                                            }
-                                        }
-
-                                        trade.quantity = new_qty;
-                                    } else {
-                                        let mut rejected_order = report_order.clone();
-                                        rejected_order.status = crate::model::OrderStatus::Rejected;
-                                        rejected_order.updated_at = ctx.current_time;
-                                        rejected_order.reject_reason = format!(
-                                            "Risk: Insufficient margin at execution. Required: {total_required}, Available: {current_free_margin}"
-                                        );
-                                        replacement_report =
-                                            Some(Event::ExecutionReport(rejected_order, None));
-                                    }
-                                }
-                            }
-
-                            if let Some(new_report) = replacement_report {
-                                report = new_report;
-                            }
-
-                            if let Event::ExecutionReport(_, Some(ref trade)) = report
-                                && trade.quantity > Decimal::ZERO
-                            {
-                                let mut prices_for_margin = ctx.last_prices.clone();
-                                prices_for_margin.insert(trade.symbol.clone(), trade.price);
-                                let commission = ctx.market_model.calculate_commission(
-                                    instrument,
-                                    trade.side,
-                                    trade.price,
-                                    trade.quantity,
-                                );
-                                projected_portfolio.adjust_cash(-commission);
-                                if is_futures_margin_account(instrument, ctx.risk_config) {
-                                    let realized = estimate_futures_realized_pnl(
-                                        ctx.trade_tracker,
-                                        &trade.symbol,
-                                        trade.side,
-                                        trade.quantity,
-                                        trade.price,
-                                        instrument.multiplier(),
-                                    );
-                                    projected_portfolio.adjust_cash(realized);
-                                } else {
-                                    let cost =
-                                        trade.price * trade.quantity * instrument.multiplier();
-                                    if trade.side == crate::model::OrderSide::Buy {
-                                        projected_portfolio.adjust_cash(-cost);
-                                    } else {
-                                        projected_portfolio.adjust_cash(cost);
-                                    }
-                                }
-                                let current_pos = projected_portfolio
-                                    .positions
-                                    .get(&trade.symbol)
-                                    .copied()
-                                    .unwrap_or(Decimal::ZERO);
-                                let next_pos = crate::model::project_position_after(
-                                    trade.side,
-                                    trade.position_effect,
-                                    current_pos,
-                                    trade.quantity,
-                                );
-                                projected_portfolio
-                                    .adjust_position(&trade.symbol, next_pos - current_pos);
-                                current_free_margin = calculate_free_margin(
-                                    &projected_portfolio,
-                                    &prices_for_margin,
-                                    ctx.instruments,
-                                    ctx.trade_tracker,
-                                    ctx.risk_config,
-                                );
-                            }
-
-                            let mut keep_report = true;
-                            if let Event::ExecutionReport(_, Some(ref trade)) = report
-                                && trade.quantity <= Decimal::ZERO
-                            {
-                                keep_report = false;
-                            }
-
-                            if keep_report {
-                                reports.push(report);
-                            }
-                        }
-                    } else {
-                        // No matcher found for this asset type, skip or log warning?
-                        // For now just skip
-                    }
-                }
-            }
-        }
-
-        // Cleanup filled/cancelled/rejected orders from pending list
-        for report in &reports {
-            if let Event::ExecutionReport(updated_order, _) = report
-                && let Some(existing) = self.orders.get_mut(&updated_order.id)
-            {
-                existing.status = updated_order.status;
-                existing.filled_quantity = updated_order.filled_quantity;
-                existing.average_filled_price = updated_order.average_filled_price;
-                existing.commission = updated_order.commission;
-                existing.updated_at = updated_order.updated_at;
-            }
-        }
-
-        // Clean up completed orders
-        let mut finished_ids = Vec::new();
-        for id in &self.order_queue {
-            if let Some(order) = self.orders.get(id) {
-                if order.status == OrderStatus::Filled
-                    || order.status == OrderStatus::Cancelled
-                    || order.status == OrderStatus::Rejected
-                    || order.status == OrderStatus::Expired
-                {
-                    finished_ids.push(id.clone());
-                }
-            } else {
-                finished_ids.push(id.clone()); // Orphaned
-            }
-        }
-
-        for id in finished_ids {
-            self.orders.remove(&id);
-        }
-
-        // Retain only existing orders in queue
-        self.order_queue.retain(|id| self.orders.contains_key(id));
-
+        let finalize_ids: HashSet<String> = self
+            .orders
+            .values()
+            .filter(|order| self.should_finalize_order(order, ctx))
+            .map(|order| order.id.clone())
+            .collect();
+        let reports = self.match_with_events(
+            &ordered_events,
+            ctx,
+            |order, _event| finalize_ids.contains(&order.id),
+            false,
+        );
+        self.clear_slice_tracking();
         reports
     }
 }

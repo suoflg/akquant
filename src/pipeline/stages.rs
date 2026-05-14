@@ -4,7 +4,8 @@ use crate::data::FeedAction;
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::model::{
-    Bar, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy, TradingSession,
+    Bar, ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy, Trade,
+    TradingSession,
 };
 use crate::pipeline::processor::{Processor, ProcessorResult};
 use pyo3::prelude::*;
@@ -198,6 +199,153 @@ fn emit_execution_reports_for_current_event(engine: &mut Engine) {
     }
 }
 
+fn flush_accumulated_trades(engine: &mut Engine, trades_to_process: &mut Vec<Trade>) {
+    if trades_to_process.is_empty() {
+        return;
+    }
+    engine.state.order_manager.process_trades(
+        std::mem::take(trades_to_process),
+        &mut engine.state.portfolio,
+        &engine.instruments,
+        &engine.risk_manager.config,
+        engine.market_manager.model.as_ref(),
+        &engine.history_buffer,
+        &engine.last_prices,
+    );
+}
+
+fn apply_execution_report(
+    engine: &mut Engine,
+    py: Python<'_>,
+    order: Order,
+    trade: Option<Trade>,
+    oco_suppressed_fill_order_ids: &mut HashSet<String>,
+    trades_to_process: &mut Vec<Trade>,
+) {
+    if order.status == OrderStatus::Filled && oco_suppressed_fill_order_ids.contains(&order.id) {
+        return;
+    }
+
+    let report_order_id = order.id.clone();
+    let report_status = order.status;
+    let report_updated_at = order.updated_at;
+    engine.state.order_manager.on_execution_report(order);
+    let updated_order = engine
+        .state
+        .order_manager
+        .get_all_orders()
+        .into_iter()
+        .find(|o| o.id == report_order_id);
+    if let Some(order_snapshot) = updated_order {
+        if order_snapshot.status == OrderStatus::Rejected {
+            engine
+                .state
+                .order_manager
+                .current_step_rejected_orders
+                .push(order_snapshot.clone());
+        }
+        let mut order_payload = HashMap::new();
+        order_payload.insert("order_id", order_snapshot.id.clone());
+        order_payload.insert("status", format!("{:?}", order_snapshot.status));
+        order_payload.insert("filled_qty", order_snapshot.filled_quantity.to_string());
+        order_payload.insert("symbol", order_snapshot.symbol.clone());
+        order_payload.insert(
+            "owner_strategy_id",
+            order_snapshot.owner_strategy_id.clone().unwrap_or_default(),
+        );
+        engine.emit_stream_event(
+            py,
+            "order",
+            Some(order_snapshot.symbol.as_str()),
+            "info",
+            order_payload,
+        );
+    }
+
+    if report_status == OrderStatus::Filled {
+        let peer_ids = engine
+            .state
+            .order_manager
+            .consume_oco_peer_cancels_on_fill(&report_order_id);
+        for peer_id in peer_ids {
+            oco_suppressed_fill_order_ids.insert(peer_id.clone());
+            engine.execution_model.on_cancel(&peer_id);
+            let cancelled_order_snapshot = engine
+                .state
+                .order_manager
+                .cancel_active_order(&peer_id, report_updated_at);
+            if let Some(cancelled_order_snapshot) = cancelled_order_snapshot {
+                let mut cancel_payload = HashMap::new();
+                cancel_payload.insert("order_id", cancelled_order_snapshot.id.clone());
+                cancel_payload.insert(
+                    "status",
+                    format!("{:?}", cancelled_order_snapshot.status),
+                );
+                cancel_payload.insert(
+                    "filled_qty",
+                    cancelled_order_snapshot.filled_quantity.to_string(),
+                );
+                cancel_payload.insert("symbol", cancelled_order_snapshot.symbol.clone());
+                cancel_payload.insert(
+                    "owner_strategy_id",
+                    cancelled_order_snapshot
+                        .owner_strategy_id
+                        .clone()
+                        .unwrap_or_default(),
+                );
+                engine.emit_stream_event(
+                    py,
+                    "order",
+                    Some(cancelled_order_snapshot.symbol.as_str()),
+                    "info",
+                    cancel_payload,
+                );
+            }
+        }
+
+        if let Some(filled_order_snapshot) = engine
+            .state
+            .order_manager
+            .get_all_orders()
+            .into_iter()
+            .find(|o| o.id == report_order_id)
+        {
+            let bracket_exit_orders = engine
+                .state
+                .order_manager
+                .consume_bracket_activation_on_fill(&filled_order_snapshot);
+            for bracket_order in bracket_exit_orders {
+                let _ = engine.event_manager.send(Event::OrderRequest(bracket_order));
+            }
+        }
+    }
+
+    if let Some(t) = trade {
+        engine.maybe_reset_risk_budget_usage(t.timestamp);
+        if engine.risk_budget_use_trade_mode() {
+            engine.apply_risk_budget_usage_from_trade(&t);
+        }
+        engine.apply_strategy_trade_position(&t);
+        let mut trade_payload = HashMap::new();
+        trade_payload.insert("trade_id", t.id.clone());
+        trade_payload.insert("order_id", t.order_id.clone());
+        trade_payload.insert("price", t.price.to_string());
+        trade_payload.insert("quantity", t.quantity.to_string());
+        trade_payload.insert(
+            "owner_strategy_id",
+            t.owner_strategy_id.clone().unwrap_or_default(),
+        );
+        engine.emit_stream_event(
+            py,
+            "trade",
+            Some(t.symbol.as_str()),
+            "info",
+            trade_payload,
+        );
+        trades_to_process.push(t);
+    }
+}
+
 impl Processor for ChannelProcessor {
     fn process(
         &mut self,
@@ -221,134 +369,14 @@ impl Processor for ChannelProcessor {
                         engine.state.order_manager.add_active_order(order);
                     }
                     Event::ExecutionReport(order, trade) => {
-                        if order.status == OrderStatus::Filled
-                            && oco_suppressed_fill_order_ids.contains(&order.id)
-                        {
-                            continue;
-                        }
-                        let report_order_id = order.id.clone();
-                        let report_status = order.status;
-                        let report_updated_at = order.updated_at;
-                        engine.state.order_manager.on_execution_report(order);
-                        let updated_order = engine
-                            .state
-                            .order_manager
-                            .get_all_orders()
-                            .into_iter()
-                            .find(|o| o.id == report_order_id);
-                        if let Some(order_snapshot) = updated_order {
-                            if order_snapshot.status == OrderStatus::Rejected {
-                                engine
-                                    .state
-                                    .order_manager
-                                    .current_step_rejected_orders
-                                    .push(order_snapshot.clone());
-                            }
-                            let mut order_payload = HashMap::new();
-                            order_payload.insert("order_id", order_snapshot.id.clone());
-                            order_payload.insert("status", format!("{:?}", order_snapshot.status));
-                            order_payload
-                                .insert("filled_qty", order_snapshot.filled_quantity.to_string());
-                            order_payload.insert("symbol", order_snapshot.symbol.clone());
-                            order_payload.insert(
-                                "owner_strategy_id",
-                                order_snapshot.owner_strategy_id.clone().unwrap_or_default(),
-                            );
-                            engine.emit_stream_event(
-                                py,
-                                "order",
-                                Some(order_snapshot.symbol.as_str()),
-                                "info",
-                                order_payload,
-                            );
-                        }
-
-                        if report_status == OrderStatus::Filled {
-                            let peer_ids = engine
-                                .state
-                                .order_manager
-                                .consume_oco_peer_cancels_on_fill(&report_order_id);
-                            for peer_id in peer_ids {
-                                oco_suppressed_fill_order_ids.insert(peer_id.clone());
-                                engine.execution_model.on_cancel(&peer_id);
-                                let cancelled_order_snapshot = engine
-                                    .state
-                                    .order_manager
-                                    .cancel_active_order(&peer_id, report_updated_at);
-                                if let Some(cancelled_order_snapshot) = cancelled_order_snapshot {
-                                    let mut cancel_payload = HashMap::new();
-                                    cancel_payload
-                                        .insert("order_id", cancelled_order_snapshot.id.clone());
-                                    cancel_payload.insert(
-                                        "status",
-                                        format!("{:?}", cancelled_order_snapshot.status),
-                                    );
-                                    cancel_payload.insert(
-                                        "filled_qty",
-                                        cancelled_order_snapshot.filled_quantity.to_string(),
-                                    );
-                                    cancel_payload
-                                        .insert("symbol", cancelled_order_snapshot.symbol.clone());
-                                    cancel_payload.insert(
-                                        "owner_strategy_id",
-                                        cancelled_order_snapshot
-                                            .owner_strategy_id
-                                            .clone()
-                                            .unwrap_or_default(),
-                                    );
-                                    engine.emit_stream_event(
-                                        py,
-                                        "order",
-                                        Some(cancelled_order_snapshot.symbol.as_str()),
-                                        "info",
-                                        cancel_payload,
-                                    );
-                                }
-                            }
-
-                            if let Some(filled_order_snapshot) = engine
-                                .state
-                                .order_manager
-                                .get_all_orders()
-                                .into_iter()
-                                .find(|o| o.id == report_order_id)
-                            {
-                                let bracket_exit_orders = engine
-                                    .state
-                                    .order_manager
-                                    .consume_bracket_activation_on_fill(&filled_order_snapshot);
-                                for bracket_order in bracket_exit_orders {
-                                    let _ = engine
-                                        .event_manager
-                                        .send(Event::OrderRequest(bracket_order));
-                                }
-                            }
-                        }
-
-                        if let Some(t) = trade {
-                            engine.maybe_reset_risk_budget_usage(t.timestamp);
-                            if engine.risk_budget_use_trade_mode() {
-                                engine.apply_risk_budget_usage_from_trade(&t);
-                            }
-                            engine.apply_strategy_trade_position(&t);
-                            let mut trade_payload = HashMap::new();
-                            trade_payload.insert("trade_id", t.id.clone());
-                            trade_payload.insert("order_id", t.order_id.clone());
-                            trade_payload.insert("price", t.price.to_string());
-                            trade_payload.insert("quantity", t.quantity.to_string());
-                            trade_payload.insert(
-                                "owner_strategy_id",
-                                t.owner_strategy_id.clone().unwrap_or_default(),
-                            );
-                            engine.emit_stream_event(
-                                py,
-                                "trade",
-                                Some(t.symbol.as_str()),
-                                "info",
-                                trade_payload,
-                            );
-                            trades_to_process.push(t);
-                        }
+                        apply_execution_report(
+                            engine,
+                            py,
+                            order,
+                            trade,
+                            &mut oco_suppressed_fill_order_ids,
+                            &mut trades_to_process,
+                        );
                     }
                     _ => {}
                 }
@@ -356,17 +384,7 @@ impl Processor for ChannelProcessor {
 
             if !pending_order_requests.is_empty() {
                 if settle_reductions_before_increases {
-                    if !trades_to_process.is_empty() {
-                        engine.state.order_manager.process_trades(
-                            std::mem::take(&mut trades_to_process),
-                            &mut engine.state.portfolio,
-                            &engine.instruments,
-                            &engine.risk_manager.config,
-                            engine.market_manager.model.as_ref(),
-                            &engine.history_buffer,
-                            &engine.last_prices,
-                        );
-                    }
+                    flush_accumulated_trades(engine, &mut trades_to_process);
                     settle_reductions_before_increases = false;
                 }
                 if run_intermediate_reduce_match {
@@ -435,17 +453,7 @@ impl Processor for ChannelProcessor {
             }
         }
 
-        if !trades_to_process.is_empty() {
-            engine.state.order_manager.process_trades(
-                trades_to_process,
-                &mut engine.state.portfolio,
-                &engine.instruments,
-                &engine.risk_manager.config,
-                engine.market_manager.model.as_ref(),
-                &engine.history_buffer,
-                &engine.last_prices,
-            );
-        }
+        flush_accumulated_trades(engine, &mut trades_to_process);
 
         Ok(ProcessorResult::Next)
     }
@@ -455,6 +463,7 @@ pub struct DataProcessor {
     last_timestamp: i64,
     finalized_timestamp: i64,
     seen_symbols: HashSet<String>,
+    current_symbol_events: HashMap<String, Event>,
 }
 
 impl Default for DataProcessor {
@@ -470,6 +479,7 @@ impl DataProcessor {
             last_timestamp: 0,
             finalized_timestamp: 0,
             seen_symbols: HashSet::new(),
+            current_symbol_events: HashMap::new(),
         }
     }
 
@@ -533,13 +543,46 @@ impl DataProcessor {
         }
     }
 
-    fn finalize_current_timestamp(&mut self, engine: &mut Engine) {
+    fn finalize_current_timestamp(&mut self, engine: &mut Engine, py: Python<'_>) {
         if self.last_timestamp == 0 || self.finalized_timestamp == self.last_timestamp {
             return;
+        }
+        let current_events: Vec<Event> = self.current_symbol_events.values().cloned().collect();
+        if !current_events.is_empty() {
+            let ctx = EngineContext {
+                instruments: &engine.instruments,
+                portfolio: &engine.state.portfolio,
+                last_prices: &engine.last_prices,
+                trade_tracker: &engine.state.order_manager.trade_tracker,
+                market_model: engine.market_manager.model.as_ref(),
+                execution_policy_core: engine.execution_policy_core(),
+                bar_index: engine.bar_count,
+                current_time: self.last_timestamp,
+                session: engine.clock.session,
+                active_orders: &engine.state.order_manager.active_orders,
+                risk_config: &engine.risk_manager.config,
+            };
+            let reports = engine.execution_model.finalize_timestamp(&current_events, &ctx);
+            let mut trades_to_process = Vec::new();
+            let mut oco_suppressed_fill_order_ids: HashSet<String> = HashSet::new();
+            for report in reports {
+                if let Event::ExecutionReport(order, trade) = report {
+                    apply_execution_report(
+                        engine,
+                        py,
+                        order,
+                        trade,
+                        &mut oco_suppressed_fill_order_ids,
+                        &mut trades_to_process,
+                    );
+                }
+            }
+            flush_accumulated_trades(engine, &mut trades_to_process);
         }
         self.fill_missing_bars(engine);
         self.reject_missing_symbol_orders(engine);
         self.finalized_timestamp = self.last_timestamp;
+        self.current_symbol_events.clear();
     }
 }
 
@@ -556,13 +599,13 @@ impl Processor for DataProcessor {
         match action {
             FeedAction::Wait => Ok(ProcessorResult::Loop),
             FeedAction::End => {
-                self.finalize_current_timestamp(engine);
+                self.finalize_current_timestamp(engine, py);
                 Ok(ProcessorResult::Break)
             }
             FeedAction::Timer(_timestamp) => {
                 if let Some(timer) = engine.timers.pop() {
                     if timer.payload.starts_with("__framework_rebalance__|") {
-                        self.finalize_current_timestamp(engine);
+                        self.finalize_current_timestamp(engine, py);
                     }
                     let local_dt =
                         Engine::local_datetime_from_ns(timer.timestamp, engine.timezone_offset);
@@ -588,8 +631,9 @@ impl Processor for DataProcessor {
                 }
 
                 if self.last_timestamp != 0 && timestamp > self.last_timestamp {
-                    self.finalize_current_timestamp(engine);
+                    self.finalize_current_timestamp(engine, py);
                     self.seen_symbols.clear();
+                    self.current_symbol_events.clear();
 
                     if engine.is_active_timestamp(timestamp) {
                         engine.bar_count += 1;
@@ -765,11 +809,16 @@ impl Processor for DataProcessor {
 
                 if let Event::Bar(ref b) = event {
                     self.seen_symbols.insert(b.symbol.clone());
+                    self.current_symbol_events
+                        .insert(b.symbol.clone(), Event::Bar(b.clone()));
                     // Update History Buffer
                     if let Ok(mut buffer) = engine.history_buffer.write() {
                         buffer.update(b);
                     }
                     // println!("DataProcessor: Bar Symbol={}, TS={}", b.symbol, b.timestamp);
+                } else if let Event::Tick(ref t) = event {
+                    self.current_symbol_events
+                        .insert(t.symbol.clone(), Event::Tick(t.clone()));
                 }
 
                 engine.current_event = Some(event);
