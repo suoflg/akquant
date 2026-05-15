@@ -54,7 +54,7 @@ A strategy goes through the following stages from start to finish:
 | `on_before_trading` | First entry into `Normal` session each local trading day | Pre-market checks, trading-date level signal preparation | `examples/50_framework_hooks_demo.py` |
 | `on_pre_open` | Triggered by a framework timer before the first regular event of each trading day | Auction/pre-open signal generation with default next-open order semantics | `examples/52_pre_open_demo.py` |
 | `on_daily_rebalance` | At most once per trading day, same phase as `on_before_trading` | Cross-sectional ranking and one-shot rebalance | `examples/strategies/05_stock_momentum_rotation_timer.py` |
-| `on_after_trading` | When leaving `Normal`, or replayed on the next event if needed | End-of-day summaries, post-close cleanup, archiving | `examples/50_framework_hooks_demo.py` |
+| `on_after_trading` | When leaving the regular trading session, or replayed on the next event if needed | End-of-day summaries, post-close cleanup, archiving | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | Incrementally when portfolio snapshot changes | Monitor cash/equity changes, push UI or alerts | `examples/50_framework_hooks_demo.py` |
 | `on_error` | When any user callback raises | Record callback source and choose continue vs fail-fast | `examples/22_strategy_runtime_config_demo.py` |
 | `on_timer` | When a registered timer fires | Scheduled rebalance, pre-market tasks, cadence checks | `examples/strategies/07_stock_momentum_rotation_on_timer.py` |
@@ -79,8 +79,8 @@ Notes:
 
 * `on_reject` is emitted once per order id when the order first becomes `Rejected`.
 * `on_pre_open` is emitted once per trading day before the first regular bar/tick callback of that day.
-* `on_before_trading` is emitted once per local trading date when session enters `Normal`.
-* `on_after_trading` is emitted once per local trading date when leaving `Normal`, or on next event if day rollover occurs first.
+* `on_before_trading` is emitted once per local trading date when the regular trading session starts; on the default backtest path this session is usually exposed as `Continuous`.
+* `on_after_trading` is emitted once per local trading date when leaving the regular trading session, or on the next event if day rollover occurs first.
 * Inside `on_pre_open`, plain `buy/sell/order_target_*` calls automatically resolve to `price_basis=open, bar_offset=1, temporal=same_cycle` unless an explicit `fill_policy` is provided.
 * Set `self.enable_precise_day_boundary_hooks = True` to enable boundary-timer based precise day hooks.
 * `on_portfolio_update` is incremental: emitted once at initialization, then only on order/trade or position-relevant price changes.
@@ -188,7 +188,7 @@ Practical tips:
 Timing note:
 
 * Do not treat `on_before_trading` as a stable same-day preparation stage that always runs before `on_pre_open`.
-* On the default path, `on_pre_open` runs before the first regular event, while `on_before_trading` is usually emitted on that first regular event after the session enters `Normal`.
+* On the default path, `on_pre_open` runs before the first regular event, while `on_before_trading` is usually emitted on that first regular event after the regular trading session begins.
 * Even with `enable_precise_day_boundary_hooks`, the boundary-timer version of `on_before_trading` should not be used as a deterministic same-day predecessor for `on_pre_open`.
 * For a true two-stage pattern, prepare in a later callback from the previous trading day and execute in the next trading day's `on_pre_open`, for example via a previous-day `on_timer` or `on_after_trading`.
 * See `examples/53_timer_to_pre_open_demo.py`.

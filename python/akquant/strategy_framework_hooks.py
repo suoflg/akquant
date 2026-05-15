@@ -44,10 +44,16 @@ def _use_precise_day_boundary_hooks(strategy: Any) -> bool:
 
 def _is_normal_session(session: Any) -> bool:
     normal = getattr(TradingSession, "Normal", None)
-    if normal is not None:
-        return bool(session == normal)
+    continuous = getattr(TradingSession, "Continuous", None)
+    if normal is not None or continuous is not None:
+        return bool(session == normal or session == continuous)
     text = str(session).lower()
-    return text == "normal" or text.endswith(".normal")
+    return (
+        text == "normal"
+        or text.endswith(".normal")
+        or text == "continuous"
+        or text.endswith(".continuous")
+    )
 
 
 def _is_pre_open_session(session: Any) -> bool:
