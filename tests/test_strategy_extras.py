@@ -3905,7 +3905,81 @@ def test_precise_boundary_hooks_delay_after_trading_until_day_end() -> None:
     assert day1_after in strategy.events
     assert strategy.events.index(day1_before) < strategy.events.index(day1_last_bar)
     assert strategy.events.index(day1_rebalance) < strategy.events.index(day1_after)
-    assert strategy.events.index(day1_last_bar) < strategy.events.index(day1_after)
+
+
+def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> None:
+    """Default backtest path should emit day hooks even when session is Continuous."""
+
+    class NonPreciseBoundaryRegressionStrategy(Strategy):
+        def __init__(self) -> None:
+            self.enable_precise_day_boundary_hooks = False
+            self.events: list[tuple[str, object, int]] = []
+
+        def on_start(self) -> None:
+            self.subscribe("HOOKS_DEMO")
+
+        def on_before_trading(self, trading_date: object, timestamp: int) -> None:
+            self.events.append(("before", trading_date, timestamp))
+
+        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
+            self.events.append(("rebalance", trading_date, timestamp))
+
+        def on_after_trading(self, trading_date: object, timestamp: int) -> None:
+            self.events.append(("after", trading_date, timestamp))
+
+        def on_bar(self, bar: Bar) -> None:
+            self.events.append(("bar", bar.symbol, int(bar.timestamp)))
+
+    day1_open = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
+    day1_close = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value
+    day2_open = pd.Timestamp("2023-01-04 09:30:00", tz="Asia/Shanghai").value
+    bars = [
+        Bar(
+            timestamp=timestamp,
+            open=close,
+            high=close + 0.2,
+            low=close - 0.2,
+            close=close,
+            volume=1000.0,
+            symbol="HOOKS_DEMO",
+        )
+        for timestamp, close in [
+            (day1_open, 10.0),
+            (day1_close, 10.5),
+            (day2_open, 10.8),
+        ]
+    ]
+
+    strategy = NonPreciseBoundaryRegressionStrategy()
+    run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbols=["HOOKS_DEMO"],
+        initial_cash=1000.0,
+        show_progress=False,
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+    )
+
+    day1 = pd.Timestamp("2023-01-03").date()
+    day2 = pd.Timestamp("2023-01-04").date()
+    day1_before = ("before", day1, day1_open)
+    day1_rebalance = ("rebalance", day1, day1_open)
+    day1_after = ("after", day1, day2_open)
+    day2_before = ("before", day2, day2_open)
+    day2_rebalance = ("rebalance", day2, day2_open)
+
+    assert day1_before in strategy.events
+    assert day1_rebalance in strategy.events
+    assert day1_after in strategy.events
+    assert day2_before in strategy.events
+    assert day2_rebalance in strategy.events
+    assert strategy.events.index(day1_before) < strategy.events.index(
+        ("bar", "HOOKS_DEMO", day1_open)
+    )
+    assert strategy.events.index(
+        ("bar", "HOOKS_DEMO", day1_open)
+    ) < strategy.events.index(day1_rebalance)
+    assert strategy.events.index(day1_after) < strategy.events.index(day2_before)
     assert (
         "after",
         pd.Timestamp("2023-01-03").date(),

@@ -80,10 +80,10 @@
 
 * `on_reject` 对同一订单 id 只触发一次。
 * 回测中已终态拒单会通过上下文快照 `recent_rejected_orders` 在下一次事件分发时补发，避免因清理活跃订单导致漏触发。
-* `on_before_trading` 在本地交易日首次进入 Normal 会话时触发一次。
+* `on_before_trading` 在本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。
 * `on_pre_open` 在每个交易日的首个常规行情事件前，由框架预注册 timer 先触发一次。
 * `on_daily_rebalance` 与 `on_before_trading` 同一阶段触发，每个交易日最多触发一次。
-* `on_after_trading` 在离开 Normal 会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `on_after_trading`。
+* `on_after_trading` 在离开常规交易会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `on_after_trading`。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
 * 这里表达的是框架侧“盘前决策，本次 open 成交”的时序语义，不等同于交易所或券商柜台已经实现了集合竞价专用报单、撤单窗口控制或专有价格类型。
 * 新股/新债打新不属于 `on_pre_open` 或当前统一 `submit_order(...)` 的默认承诺范围；若要支持，通常需要补齐 broker 专有字段与业务路由。
