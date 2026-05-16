@@ -687,8 +687,9 @@ Strategy base class. Users should inherit from this class and override callback 
 *   `on_expiry(event: Dict[str, Any])`: Triggered after an `expiry_date` driven settlement/removal is actually executed. Portfolio state is already updated when the callback runs. See `examples/49_on_expiry_demo.py` for a runnable example.
 *   `on_session_start(session, timestamp)`: Triggered on session transition start.
 *   `on_session_end(session, timestamp)`: Triggered on session transition end.
-*   `on_before_trading(trading_date, timestamp)`: Triggered once when the regular trading session starts each local day; on the default backtest path this session is usually exposed as `Continuous`.
+*   `on_before_trading(trading_date, timestamp)`: Triggered once when the regular trading session starts each local day; on the default backtest path this session is usually exposed as `Continuous`. This callback follows a "previous trading day / previous snapshot only" visibility model.
 *   `on_pre_open(event: Dict[str, Any])`: Triggered once before the first regular event of each trading day. Use it for "pre-open decision, current open fill" workflows; default order semantics resolve to `price_basis=open, bar_offset=1, temporal=same_cycle`. See `examples/52_pre_open_demo.py`.
+*   `on_daily_rebalance(trading_date, timestamp)`: Daily rebalance hook, triggered at most once per trading day and in the same phase as `on_before_trading`. It also exposes only previous-trading-day / previous-snapshot information.
 *   `on_after_trading(trading_date, timestamp)`: Triggered when leaving the regular trading session, or replayed on next event after day rollover.
 *   `on_portfolio_update(snapshot)`: Triggered when cash/equity/position snapshot changes.
 *   `on_error(error, source, payload=None)`: Triggered when user callback raises, then exception is re-raised by default.
@@ -714,7 +715,7 @@ Note: if you do not pass an explicit `fill_policy` here, the framework defaults 
 *   `self.position`: Position object for current symbol, with `size` and `available` properties.
 *   `self.now`: Current backtest time (`pd.Timestamp`).
 *   `self.runtime_config`: Runtime behavior config object (`StrategyRuntimeConfig`).
-*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`).
+*   `self.enable_precise_day_boundary_hooks`: Enable boundary timer based precise day hooks (default `False`). This switch changes trigger precision only; it does not change the visibility window of `get_history()`, `get_account()`, or `get_portfolio_value()` inside `on_before_trading` / `on_daily_rebalance`.
 *   `self.portfolio_update_eps`: Snapshot threshold; changes below it skip `on_portfolio_update` (default `0.0`).
 *   `self.error_mode`: Error handling mode, `"raise"` or `"continue"` (default `"raise"`).
 *   `self.re_raise_on_error`: Whether to re-raise user callback exception after `on_error` (default `True`).

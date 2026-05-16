@@ -38,6 +38,7 @@ pub struct EngineContext<'a> {
 
 pub struct ContextInit {
     pub cash: Decimal,
+    pub previous_cash: Decimal,
     pub positions: Arc<HashMap<String, Decimal>>,
     pub available_positions: Arc<HashMap<String, Decimal>>,
     pub session: TradingSession,
@@ -57,12 +58,19 @@ pub struct ContextInit {
     pub account_used_margin: f64,
     pub account_unrealized_pnl: f64,
     pub account_maintenance_ratio: f64,
+    pub previous_account_equity: f64,
+    pub previous_account_market_value: f64,
+    pub previous_account_notional_value: f64,
+    pub previous_account_used_margin: f64,
+    pub previous_account_unrealized_pnl: f64,
+    pub previous_account_maintenance_ratio: f64,
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
 }
 
 pub struct ContextUpdate {
     pub cash: Decimal,
+    pub previous_cash: Decimal,
     pub positions: Arc<HashMap<String, Decimal>>,
     pub available_positions: Arc<HashMap<String, Decimal>>,
     pub session: TradingSession,
@@ -78,6 +86,12 @@ pub struct ContextUpdate {
     pub account_used_margin: f64,
     pub account_unrealized_pnl: f64,
     pub account_maintenance_ratio: f64,
+    pub previous_account_equity: f64,
+    pub previous_account_market_value: f64,
+    pub previous_account_notional_value: f64,
+    pub previous_account_used_margin: f64,
+    pub previous_account_unrealized_pnl: f64,
+    pub previous_account_maintenance_ratio: f64,
     pub margin_accrued_interest: f64,
     pub margin_daily_interest: f64,
 }
@@ -268,6 +282,7 @@ fn parse_order_commission_override(
 impl StrategyContext {
     pub fn update_state(&mut self, update: ContextUpdate) {
         self.cash = update.cash;
+        self.previous_cash = update.previous_cash;
         self.positions = update.positions;
         self.available_positions = update.available_positions;
         self.session = update.session;
@@ -302,6 +317,12 @@ impl StrategyContext {
         self.account_used_margin = update.account_used_margin;
         self.account_unrealized_pnl = update.account_unrealized_pnl;
         self.account_maintenance_ratio = update.account_maintenance_ratio;
+        self.previous_account_equity = update.previous_account_equity;
+        self.previous_account_market_value = update.previous_account_market_value;
+        self.previous_account_notional_value = update.previous_account_notional_value;
+        self.previous_account_used_margin = update.previous_account_used_margin;
+        self.previous_account_unrealized_pnl = update.previous_account_unrealized_pnl;
+        self.previous_account_maintenance_ratio = update.previous_account_maintenance_ratio;
         self.margin_accrued_interest = update.margin_accrued_interest;
         self.margin_daily_interest = update.margin_daily_interest;
 
@@ -349,6 +370,7 @@ pub struct StrategyContext {
     pub timers_arc: Arc<RwLock<Vec<Timer>>>,
 
     pub cash: Decimal,
+    pub previous_cash: Decimal,
     pub positions: Arc<HashMap<String, Decimal>>,
     pub available_positions: Arc<HashMap<String, Decimal>>,
     #[pyo3(get)]
@@ -387,6 +409,18 @@ pub struct StrategyContext {
     #[pyo3(get)]
     pub account_maintenance_ratio: f64,
     #[pyo3(get)]
+    pub previous_account_equity: f64,
+    #[pyo3(get)]
+    pub previous_account_market_value: f64,
+    #[pyo3(get)]
+    pub previous_account_notional_value: f64,
+    #[pyo3(get)]
+    pub previous_account_used_margin: f64,
+    #[pyo3(get)]
+    pub previous_account_unrealized_pnl: f64,
+    #[pyo3(get)]
+    pub previous_account_maintenance_ratio: f64,
+    #[pyo3(get)]
     pub margin_accrued_interest: f64,
     #[pyo3(get)]
     pub margin_daily_interest: f64,
@@ -404,6 +438,7 @@ impl StrategyContext {
             active_orders_arc: init.active_orders,
             timers_arc: Arc::new(RwLock::new(Vec::new())),
             cash: init.cash,
+            previous_cash: init.previous_cash,
             positions: init.positions,
             available_positions: init.available_positions,
             session: init.session,
@@ -422,6 +457,12 @@ impl StrategyContext {
             account_used_margin: init.account_used_margin,
             account_unrealized_pnl: init.account_unrealized_pnl,
             account_maintenance_ratio: init.account_maintenance_ratio,
+            previous_account_equity: init.previous_account_equity,
+            previous_account_market_value: init.previous_account_market_value,
+            previous_account_notional_value: init.previous_account_notional_value,
+            previous_account_used_margin: init.previous_account_used_margin,
+            previous_account_unrealized_pnl: init.previous_account_unrealized_pnl,
+            previous_account_maintenance_ratio: init.previous_account_maintenance_ratio,
             margin_accrued_interest: init.margin_accrued_interest,
             margin_daily_interest: init.margin_daily_interest,
         }
@@ -447,6 +488,7 @@ impl StrategyContext {
     #[allow(clippy::too_many_arguments)]
     pub fn py_new(
         cash: &Bound<'_, PyAny>,
+        previous_cash: Option<&Bound<'_, PyAny>>,
         positions: HashMap<String, f64>,
         available_positions: HashMap<String, f64>,
         session: Option<TradingSession>,
@@ -463,6 +505,12 @@ impl StrategyContext {
         account_used_margin: Option<f64>,
         account_unrealized_pnl: Option<f64>,
         account_maintenance_ratio: Option<f64>,
+        previous_account_equity: Option<f64>,
+        previous_account_market_value: Option<f64>,
+        previous_account_notional_value: Option<f64>,
+        previous_account_used_margin: Option<f64>,
+        previous_account_unrealized_pnl: Option<f64>,
+        previous_account_maintenance_ratio: Option<f64>,
         margin_accrued_interest: Option<f64>,
         margin_daily_interest: Option<f64>,
     ) -> PyResult<Self> {
@@ -485,6 +533,7 @@ impl StrategyContext {
             active_orders_arc: Arc::new(active_orders.unwrap_or_default()),
             timers_arc: Arc::new(RwLock::new(Vec::new())),
             cash: extract_decimal(cash)?,
+            previous_cash: extract_decimal(previous_cash.unwrap_or(cash))?,
             positions: Arc::new(pos_dec),
             available_positions: Arc::new(avail_dec),
             session: session.unwrap_or(TradingSession::Continuous),
@@ -503,6 +552,12 @@ impl StrategyContext {
             account_used_margin: account_used_margin.unwrap_or(0.0),
             account_unrealized_pnl: account_unrealized_pnl.unwrap_or(0.0),
             account_maintenance_ratio: account_maintenance_ratio.unwrap_or(0.0),
+            previous_account_equity: previous_account_equity.unwrap_or(0.0),
+            previous_account_market_value: previous_account_market_value.unwrap_or(0.0),
+            previous_account_notional_value: previous_account_notional_value.unwrap_or(0.0),
+            previous_account_used_margin: previous_account_used_margin.unwrap_or(0.0),
+            previous_account_unrealized_pnl: previous_account_unrealized_pnl.unwrap_or(0.0),
+            previous_account_maintenance_ratio: previous_account_maintenance_ratio.unwrap_or(0.0),
             margin_accrued_interest: margin_accrued_interest.unwrap_or(0.0),
             margin_daily_interest: margin_daily_interest.unwrap_or(0.0),
         })
@@ -520,11 +575,31 @@ impl StrategyContext {
         symbol: String,
         field: String,
         count: usize,
+        end_before_ns: Option<i64>,
     ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
         if let Some(ref buffer_lock) = self.history_buffer {
             let buffer = buffer_lock.read().unwrap();
-            if let Some(history) = buffer.get_history(&symbol) {
-                let len = history.timestamps.len();
+            let history = match (buffer.get_history(&symbol), end_before_ns) {
+                (Some(history), Some(cutoff))
+                    if history
+                        .timestamps
+                        .back()
+                        .is_some_and(|timestamp| *timestamp >= cutoff) =>
+                {
+                    buffer.get_previous_history(&symbol).unwrap_or(history)
+                }
+                (Some(history), _) => history,
+                (None, _) => return Ok(None),
+            };
+            {
+                let len = match end_before_ns {
+                    Some(cutoff) => history
+                        .timestamps
+                        .iter()
+                        .take_while(|timestamp| **timestamp < cutoff)
+                        .count(),
+                    None => history.timestamps.len(),
+                };
                 if len == 0 {
                     return Ok(None);
                 }
@@ -570,6 +645,11 @@ impl StrategyContext {
     #[getter]
     fn get_cash(&self) -> f64 {
         self.cash.to_f64().unwrap_or_default()
+    }
+
+    #[getter]
+    fn get_previous_cash(&self) -> f64 {
+        self.previous_cash.to_f64().unwrap_or_default()
     }
 
     #[getter]

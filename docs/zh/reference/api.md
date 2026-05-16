@@ -711,9 +711,9 @@ result = run_backtest(
 *   `on_expiry(event: Dict[str, Any])`: 到期结算回调。仅当引擎实际执行 `expiry_date` 驱动的到期结算/移除后触发；回调时账户状态已更新。示例见：`examples/49_on_expiry_demo.py`。
 *   `on_session_start(session, timestamp)`: 会话切换开始时触发。
 *   `on_session_end(session, timestamp)`: 会话切换结束时触发。
-*   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。
+*   `on_before_trading(trading_date, timestamp)`: 每个本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。该回调按“前一交易日/前一时点信息可见”的语义工作。
 *   `on_pre_open(event: Dict[str, Any])`: 每个交易日首个常规行情事件前触发一次。适合“盘前决策，本次 open 成交”；默认下单语义会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。示例见：`examples/52_pre_open_demo.py`。
-*   `on_daily_rebalance(trading_date, timestamp)`: 交易日调仓钩子，每个交易日最多触发一次。
+*   `on_daily_rebalance(trading_date, timestamp)`: 交易日调仓钩子，每个交易日最多触发一次，与 `on_before_trading` 同阶段；该回调同样只暴露前一交易日/前一时点信息。
 *   `on_after_trading(trading_date, timestamp)`: 离开常规交易会话时触发；若先跨日则在下一事件补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
 *   `on_error(error, source, payload=None)`: 用户回调抛异常时触发，默认触发后继续抛出。
@@ -739,7 +739,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.position`: 当前标的持仓辅助对象 (`Position`)，包含 `size` 和 `available` 属性。
 *   `self.now`: 当前回测时间 (`pd.Timestamp`)。
 *   `self.runtime_config`: 运行时行为配置对象 (`StrategyRuntimeConfig`)。
-*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。
+*   `self.enable_precise_day_boundary_hooks`: 是否启用边界定时器精确交易日钩子（默认 `False`）。该开关只影响日边界 hooks 的触发精度，不改变 `on_before_trading` / `on_daily_rebalance` 中 `get_history()`、`get_account()`、`get_portfolio_value()` 等接口的可见数据窗口。
 *   `self.portfolio_update_eps`: 账户快照更新阈值，低于该变化量不触发 `on_portfolio_update`（默认 `0.0`）。
 *   `self.error_mode`: 错误处理模式，`"raise"` 或 `"continue"`（默认 `"raise"`）。
 *   `self.re_raise_on_error`: 用户回调异常后是否继续抛出（默认 `True`）。

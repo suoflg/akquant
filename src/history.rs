@@ -114,6 +114,7 @@ impl From<SymbolHistorySnapshot> for SymbolHistory {
 #[derive(Debug)]
 pub struct HistoryBuffer {
     pub data: HashMap<String, SymbolHistory>,
+    pub previous_data: HashMap<String, SymbolHistory>,
     pub default_capacity: usize,
 }
 
@@ -121,6 +122,7 @@ impl HistoryBuffer {
     pub fn new(default_capacity: usize) -> Self {
         HistoryBuffer {
             data: HashMap::new(),
+            previous_data: HashMap::new(),
             default_capacity,
         }
     }
@@ -128,10 +130,12 @@ impl HistoryBuffer {
     pub fn set_capacity(&mut self, capacity: usize) {
         self.default_capacity = capacity;
         self.data.clear();
+        self.previous_data.clear();
     }
 
     pub fn set_capacity_preserve_existing(&mut self, capacity: usize) {
         self.default_capacity = capacity;
+        self.previous_data.clear();
         if capacity == 0 {
             self.data.clear();
             return;
@@ -158,16 +162,26 @@ impl HistoryBuffer {
             return;
         }
 
+        let symbol = bar.symbol.clone();
         let history = self
             .data
-            .entry(bar.symbol.clone())
+            .entry(symbol.clone())
             .or_insert_with(|| SymbolHistory::new(self.default_capacity));
+        if history.timestamps.is_empty() {
+            self.previous_data.remove(&symbol);
+        } else {
+            self.previous_data.insert(symbol, history.clone());
+        }
 
         history.push(bar);
     }
 
     pub fn get_history(&self, symbol: &str) -> Option<&SymbolHistory> {
         self.data.get(symbol)
+    }
+
+    pub fn get_previous_history(&self, symbol: &str) -> Option<&SymbolHistory> {
+        self.previous_data.get(symbol)
     }
 }
 
@@ -198,6 +212,7 @@ impl From<HistoryBufferSnapshot> for HistoryBuffer {
                 .into_iter()
                 .map(|(symbol, history)| (symbol, SymbolHistory::from(history)))
                 .collect(),
+            previous_data: HashMap::new(),
             default_capacity: snapshot.default_capacity,
         }
     }
