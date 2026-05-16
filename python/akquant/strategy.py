@@ -338,6 +338,11 @@ class Strategy:
     _framework_boundary_timers_registered: bool
     _framework_pre_open_timers_registered: bool
     _framework_in_pre_open_phase: bool
+    _framework_phase: Optional[str]
+    _framework_history_cutoff_ns: Optional[int]
+    _framework_use_previous_account_snapshot: bool
+    _framework_previous_account_details: Optional[Dict[str, float]]
+    _framework_emit_previous_portfolio_snapshot: bool
     _trading_day_bounds: Dict[str, Tuple[int, int]]
     _oco_groups: Dict[str, set[str]]
     _oco_order_to_group: Dict[str, str]
@@ -468,6 +473,11 @@ class Strategy:
         instance._framework_boundary_timers_registered = False
         instance._framework_pre_open_timers_registered = False
         instance._framework_in_pre_open_phase = False
+        instance._framework_phase = None
+        instance._framework_history_cutoff_ns = None
+        instance._framework_use_previous_account_snapshot = False
+        instance._framework_previous_account_details = None
+        instance._framework_emit_previous_portfolio_snapshot = False
         instance._trading_day_bounds = {}
         instance._oco_groups = {}
         instance._oco_order_to_group = {}

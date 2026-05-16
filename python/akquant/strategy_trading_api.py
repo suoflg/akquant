@@ -1037,8 +1037,15 @@ def get_portfolio_value(strategy: Any) -> float:
     """计算当前投资组合总价值 (现金 + 持仓市值)."""
     if strategy.ctx is None:
         return 0.0
-    ctx_equity = getattr(strategy.ctx, "account_equity", None)
-    if ctx_equity is not None:
+    use_previous_snapshot = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    ctx_equity = (
+        getattr(strategy.ctx, "previous_account_equity", None)
+        if use_previous_snapshot
+        else getattr(strategy.ctx, "account_equity", None)
+    )
+    if isinstance(ctx_equity, (int, float)):
         return float(ctx_equity)
     engine = getattr(strategy, "_engine", None)
     get_metrics = getattr(engine, "get_account_metrics", None)
@@ -1255,13 +1262,22 @@ def get_account(strategy: Any) -> Dict[str, Any]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
 
-    cash = float(strategy.ctx.cash)
-    ctx_market_value = getattr(strategy.ctx, "account_market_value", None)
-    ctx_notional_value = getattr(strategy.ctx, "account_notional_value", None)
-    ctx_used_margin = getattr(strategy.ctx, "account_used_margin", None)
-    ctx_unrealized_pnl = getattr(strategy.ctx, "account_unrealized_pnl", None)
-    ctx_maintenance_ratio = getattr(strategy.ctx, "account_maintenance_ratio", None)
-    ctx_equity = getattr(strategy.ctx, "account_equity", None)
+    use_previous_snapshot = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    cash_source = (
+        getattr(strategy.ctx, "previous_cash", strategy.ctx.cash)
+        if use_previous_snapshot
+        else strategy.ctx.cash
+    )
+    cash = float(cash_source)
+    prefix = "previous_account_" if use_previous_snapshot else "account_"
+    ctx_market_value = getattr(strategy.ctx, f"{prefix}market_value", None)
+    ctx_notional_value = getattr(strategy.ctx, f"{prefix}notional_value", None)
+    ctx_used_margin = getattr(strategy.ctx, f"{prefix}used_margin", None)
+    ctx_unrealized_pnl = getattr(strategy.ctx, f"{prefix}unrealized_pnl", None)
+    ctx_maintenance_ratio = getattr(strategy.ctx, f"{prefix}maintenance_ratio", None)
+    ctx_equity = getattr(strategy.ctx, f"{prefix}equity", None)
     engine = getattr(strategy, "_engine", None)
     get_metrics = getattr(engine, "get_account_metrics", None)
     notional_value = (
@@ -1270,18 +1286,22 @@ def get_account(strategy: Any) -> Dict[str, Any]:
     unrealized_pnl = (
         float(ctx_unrealized_pnl) if ctx_unrealized_pnl is not None else 0.0
     )
-    if ctx_equity is not None:
+    if isinstance(ctx_equity, (int, float)):
         equity = float(ctx_equity)
         market_value = (
-            float(ctx_market_value) if ctx_market_value is not None else equity - cash
+            float(ctx_market_value)
+            if isinstance(ctx_market_value, (int, float))
+            else equity - cash
         )
         margin = (
             float(ctx_used_margin)
-            if ctx_used_margin is not None
+            if isinstance(ctx_used_margin, (int, float))
             else float(_calc_used_margin(strategy))
         )
         maintenance_ratio = (
-            float(ctx_maintenance_ratio) if ctx_maintenance_ratio is not None else 0.0
+            float(ctx_maintenance_ratio)
+            if isinstance(ctx_maintenance_ratio, (int, float))
+            else 0.0
         )
     elif callable(get_metrics):
         (
@@ -1301,20 +1321,36 @@ def get_account(strategy: Any) -> Dict[str, Any]:
         market_value = float(equity - cash)
         margin = float(_calc_used_margin(strategy))
         maintenance_ratio = 0.0
-    frozen_cash = float(_calc_frozen_cash(strategy))
+    previous_details = (
+        getattr(strategy, "_framework_previous_account_details", None)
+        if use_previous_snapshot
+        else None
+    )
+    frozen_cash = (
+        float(previous_details.get("frozen_cash", 0.0))
+        if isinstance(previous_details, dict)
+        else float(_calc_frozen_cash(strategy))
+    )
     borrowed_cash = float(max(-cash, 0.0))
-    short_market_value = 0.0
-    for sym, qty in strategy.ctx.positions.items():
-        qty_f = float(qty)
-        if qty_f >= 0.0:
-            continue
-        short_market_value += abs(qty_f) * _resolve_mark_price(strategy, str(sym))
+    if isinstance(previous_details, dict):
+        short_market_value = float(previous_details.get("short_market_value", 0.0))
+    else:
+        short_market_value = 0.0
+        for sym, qty in strategy.ctx.positions.items():
+            qty_f = float(qty)
+            if qty_f >= 0.0:
+                continue
+            short_market_value += abs(qty_f) * _resolve_mark_price(strategy, str(sym))
     if ctx_equity is None and not callable(get_metrics):
         denominator = market_value + short_market_value
         maintenance_ratio = float(equity / denominator) if denominator > 0.0 else 0.0
     account_mode = "margin" if _is_margin_account(strategy) else "cash"
-    accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
-    daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
+    if isinstance(previous_details, dict):
+        accrued_interest = float(previous_details.get("margin_accrued_interest", 0.0))
+        daily_interest = float(previous_details.get("margin_daily_interest", 0.0))
+    else:
+        accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
+        daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
     return {
         "cash": cash,
         "equity": equity,

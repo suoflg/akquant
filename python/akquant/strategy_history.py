@@ -4,6 +4,17 @@ import numpy as np
 import pandas as pd
 
 
+def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
+    """Return a history cutoff for day-boundary phases."""
+    phase = getattr(strategy, "_framework_phase", None)
+    if phase not in {"pre_open", "before_trading", "daily_rebalance"}:
+        return None
+    cutoff = getattr(strategy, "_framework_history_cutoff_ns", None)
+    if cutoff is None:
+        return None
+    return int(cutoff)
+
+
 def set_history_depth(strategy: Any, depth: int) -> None:
     """设置历史数据回溯长度."""
     strategy._history_depth = depth
@@ -30,8 +41,8 @@ def get_history(
         raise RuntimeError("Context not ready")
 
     symbol = strategy._resolve_symbol(symbol)
-
-    arr = strategy.ctx.history(symbol, field.lower(), count)
+    history_cutoff = _resolve_history_cutoff(strategy)
+    arr = strategy.ctx.history(symbol, field.lower(), count, history_cutoff)
 
     if arr is None:
         return cast(np.ndarray, np.full(count, np.nan))

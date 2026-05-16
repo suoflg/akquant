@@ -597,6 +597,8 @@ impl Engine {
         active_orders: Arc<Vec<Order>>,
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
+        previous_cash: Decimal,
+        previous_account_metrics: AccountMetrics,
     ) -> PyResult<Py<StrategyContext>> {
         self.ensure_strategy_context_capacity();
         let account_metrics = self.current_account_metrics();
@@ -611,6 +613,7 @@ impl Engine {
                     let mut ctx_mut = py_ctx.borrow_mut(py);
                     ctx_mut.update_state(crate::context::ContextUpdate {
                         cash: self.state.portfolio.cash,
+                        previous_cash,
                         positions: self.state.portfolio.positions.clone(),
                         available_positions: self.state.portfolio.available_positions.clone(),
                         session: self.clock.session,
@@ -641,6 +644,30 @@ impl Engine {
                             .maintenance_ratio
                             .to_f64()
                             .unwrap_or_default(),
+                        previous_account_equity: previous_account_metrics
+                            .equity
+                            .to_f64()
+                            .unwrap_or_default(),
+                        previous_account_market_value: previous_account_metrics
+                            .market_value
+                            .to_f64()
+                            .unwrap_or_default(),
+                        previous_account_notional_value: previous_account_metrics
+                            .notional_value
+                            .to_f64()
+                            .unwrap_or_default(),
+                        previous_account_used_margin: previous_account_metrics
+                            .used_margin
+                            .to_f64()
+                            .unwrap_or_default(),
+                        previous_account_unrealized_pnl: previous_account_metrics
+                            .unrealized_pnl
+                            .to_f64()
+                            .unwrap_or_default(),
+                        previous_account_maintenance_ratio: previous_account_metrics
+                            .maintenance_ratio
+                            .to_f64()
+                            .unwrap_or_default(),
                         margin_accrued_interest: self
                             .margin_accrued_interest
                             .to_f64()
@@ -664,6 +691,8 @@ impl Engine {
             step_trades,
             step_rejected_orders,
             strategy_id,
+            previous_cash,
+            previous_account_metrics,
         );
         let (py_ctx, persistent_ref) = Python::attach(|py| {
             let py_ctx = Py::new(py, ctx).unwrap();
@@ -951,11 +980,14 @@ impl Engine {
         step_trades: Vec<Trade>,
         step_rejected_orders: Vec<Order>,
         strategy_id: Option<String>,
+        previous_cash: Decimal,
+        previous_account_metrics: AccountMetrics,
     ) -> StrategyContext {
         let account_metrics = self.current_account_metrics();
         // Create a temporary context for the strategy to use
         StrategyContext::new(crate::context::ContextInit {
             cash: self.state.portfolio.cash,
+            previous_cash,
             positions: self.state.portfolio.positions.clone(),
             available_positions: self.state.portfolio.available_positions.clone(),
             session: self.clock.session,
@@ -975,6 +1007,30 @@ impl Engine {
             account_used_margin: account_metrics.used_margin.to_f64().unwrap_or_default(),
             account_unrealized_pnl: account_metrics.unrealized_pnl.to_f64().unwrap_or_default(),
             account_maintenance_ratio: account_metrics
+                .maintenance_ratio
+                .to_f64()
+                .unwrap_or_default(),
+            previous_account_equity: previous_account_metrics
+                .equity
+                .to_f64()
+                .unwrap_or_default(),
+            previous_account_market_value: previous_account_metrics
+                .market_value
+                .to_f64()
+                .unwrap_or_default(),
+            previous_account_notional_value: previous_account_metrics
+                .notional_value
+                .to_f64()
+                .unwrap_or_default(),
+            previous_account_used_margin: previous_account_metrics
+                .used_margin
+                .to_f64()
+                .unwrap_or_default(),
+            previous_account_unrealized_pnl: previous_account_metrics
+                .unrealized_pnl
+                .to_f64()
+                .unwrap_or_default(),
+            previous_account_maintenance_ratio: previous_account_metrics
                 .maintenance_ratio
                 .to_f64()
                 .unwrap_or_default(),
@@ -1021,12 +1077,16 @@ impl Engine {
         self.active_strategy_slot = slot_index;
         match event {
             Event::Bar(b) => {
+                let previous_cash = self.state.portfolio.cash;
+                let previous_account_metrics = self.current_account_metrics();
                 self.last_prices.insert(b.symbol.clone(), b.close);
                 let py_ctx = self.get_or_create_strategy_context(
                     slot_index,
                     active_orders,
                     step_trades,
                     step_rejected_orders,
+                    previous_cash,
+                    previous_account_metrics,
                 )?;
 
                 let args = Python::attach(|py| {
@@ -1056,12 +1116,16 @@ impl Engine {
                 Ok((new_orders, new_timers, canceled_ids))
             }
             Event::Tick(t) => {
+                let previous_cash = self.state.portfolio.cash;
+                let previous_account_metrics = self.current_account_metrics();
                 self.last_prices.insert(t.symbol.clone(), t.price);
                 let py_ctx = self.get_or_create_strategy_context(
                     slot_index,
                     active_orders,
                     step_trades,
                     step_rejected_orders,
+                    previous_cash,
+                    previous_account_metrics,
                 )?;
 
                 let args = Python::attach(|py| {
@@ -1090,11 +1154,15 @@ impl Engine {
                 Ok((new_orders, new_timers, canceled_ids))
             }
             Event::Timer(timer) => {
+                let previous_cash = self.state.portfolio.cash;
+                let previous_account_metrics = self.current_account_metrics();
                 let py_ctx = self.get_or_create_strategy_context(
                     slot_index,
                     active_orders,
                     step_trades,
                     step_rejected_orders,
+                    previous_cash,
+                    previous_account_metrics,
                 )?;
 
                 let args = Python::attach(|py| {

@@ -82,7 +82,12 @@ def check_order_events(strategy: Any) -> None:
             key = trade_event_key(strategy, t)
             if not remember_trade_key(strategy, key):
                 continue
-            call_user_callback(strategy, "on_trade", t, payload=t)
+            strategy._framework_emit_previous_portfolio_snapshot = True
+            strategy._framework_use_previous_account_snapshot = True
+            try:
+                call_user_callback(strategy, "on_trade", t, payload=t)
+            finally:
+                strategy._framework_use_previous_account_snapshot = False
             process_order_groups(strategy, t)
             analyzer_manager = getattr(strategy, "_analyzer_manager", None)
             if analyzer_manager is not None:

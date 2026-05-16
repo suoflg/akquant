@@ -83,11 +83,12 @@
 * `on_before_trading` 在本地交易日首次进入常规交易会话时触发一次；默认回测路径下该会话通常表现为 `Continuous`。
 * `on_pre_open` 在每个交易日的首个常规行情事件前，由框架预注册 timer 先触发一次。
 * `on_daily_rebalance` 与 `on_before_trading` 同一阶段触发，每个交易日最多触发一次。
+* `on_before_trading` / `on_daily_rebalance` 始终按“前一交易日/前一时点信息可见”的语义工作；在这些回调里，`get_history()`、`get_account()`、`get_portfolio_value()` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_after_trading` 在离开常规交易会话时触发；若先跨日再收到事件，会在下一事件补发上一交易日的 `on_after_trading`。
 * `on_pre_open` 内若直接调用 `buy/sell/order_target_*` 且未显式传 `fill_policy`，框架会自动解析为 `price_basis=open, bar_offset=1, temporal=same_cycle`。
 * 这里表达的是框架侧“盘前决策，本次 open 成交”的时序语义，不等同于交易所或券商柜台已经实现了集合竞价专用报单、撤单窗口控制或专有价格类型。
 * 新股/新债打新不属于 `on_pre_open` 或当前统一 `submit_order(...)` 的默认承诺范围；若要支持，通常需要补齐 broker 专有字段与业务路由。
-* 若需要更精确的交易日边界触发，可在策略中设置 `self.enable_precise_day_boundary_hooks = True`。
+* 若需要更精确的交易日边界触发，可在策略中设置 `self.enable_precise_day_boundary_hooks = True`；该开关只影响 `on_before_trading` / `on_daily_rebalance` / `on_after_trading` 的触发精度，不改变这些日边界回调中的历史数据与账户快照可见窗口。
 * `on_portfolio_update` 采用增量触发：初始化时触发一次，后续仅在订单/成交或持仓相关价格变化时触发。
 * 可通过 `self.portfolio_update_eps` 过滤微小资产波动（默认 `0.0`，即不过滤）。
 * 停止阶段会在 `on_stop` 之前补发待触发的 `on_session_end` / `on_after_trading`。

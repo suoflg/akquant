@@ -66,12 +66,8 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
         strategy._auto_configure_model()
 
     previous_price = strategy._last_prices.get(bar.symbol)
-    strategy.current_bar = bar
+    strategy.current_bar = None
     strategy.current_tick = None
-    if hasattr(strategy, "_update_incremental_indicators"):
-        strategy._update_incremental_indicators(bar)
-    strategy._last_prices[bar.symbol] = bar.close
-    strategy._bar_count += 1
 
     if _is_before_active_start(strategy, int(bar.timestamp)):
         return
@@ -79,6 +75,11 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     if current_pos != 0 and previous_price is not None and previous_price != bar.close:
         mark_portfolio_dirty(strategy)
     dispatch_time_hooks(strategy)
+    strategy.current_bar = bar
+    if hasattr(strategy, "_update_incremental_indicators"):
+        strategy._update_incremental_indicators(bar)
+    strategy._last_prices[bar.symbol] = bar.close
+    strategy._bar_count += 1
     dispatch_portfolio_update(strategy)
 
     if strategy._bar_count < strategy.warmup_period:
@@ -125,9 +126,8 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     strategy._check_order_events()
     check_expiry_events(strategy)
     previous_price = strategy._last_prices.get(tick.symbol)
-    strategy.current_tick = tick
     strategy.current_bar = None
-    strategy._last_prices[tick.symbol] = tick.price
+    strategy.current_tick = None
 
     if _is_before_active_start(strategy, int(tick.timestamp)):
         return
@@ -136,6 +136,8 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     if current_pos != 0 and previous_price is not None and previous_price != tick.price:
         mark_portfolio_dirty(strategy)
     dispatch_time_hooks(strategy)
+    strategy.current_tick = tick
+    strategy._last_prices[tick.symbol] = tick.price
     dispatch_portfolio_update(strategy)
     call_user_callback(strategy, "on_tick", tick, payload=tick)
 

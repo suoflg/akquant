@@ -3976,15 +3976,243 @@ def test_non_precise_boundary_hooks_fire_with_continuous_session_backtest() -> N
     assert strategy.events.index(day1_before) < strategy.events.index(
         ("bar", "HOOKS_DEMO", day1_open)
     )
-    assert strategy.events.index(
+    assert strategy.events.index(day1_rebalance) < strategy.events.index(
         ("bar", "HOOKS_DEMO", day1_open)
-    ) < strategy.events.index(day1_rebalance)
+    )
     assert strategy.events.index(day1_after) < strategy.events.index(day2_before)
     assert (
         "after",
         pd.Timestamp("2023-01-03").date(),
         day1_open + 1,
     ) not in strategy.events
+
+
+@pytest.mark.parametrize("precise_boundaries", [False, True])
+def test_day_boundary_hooks_hide_current_bar_from_history_and_current_bar(
+    precise_boundaries: bool,
+) -> None:
+    """Day-boundary hooks should only observe prior-day history in both modes."""
+
+    class BoundaryHistoryVisibilityStrategy(Strategy):
+        def __init__(self) -> None:
+            self.enable_precise_day_boundary_hooks = precise_boundaries
+            self.before_histories: list[np.ndarray] = []
+            self.rebalance_histories: list[np.ndarray] = []
+            self.before_current_bar_states: list[bool] = []
+            self.rebalance_current_bar_states: list[bool] = []
+            self.events: list[tuple[str, int]] = []
+            self.set_history_depth(1)
+
+        def on_start(self) -> None:
+            self.subscribe("HOOKS_DEMO")
+
+        def on_before_trading(self, trading_date: object, timestamp: int) -> None:
+            self.before_histories.append(self.get_history(1, "HOOKS_DEMO"))
+            self.before_current_bar_states.append(self.current_bar is None)
+            self.events.append(("before", int(timestamp)))
+
+        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
+            self.rebalance_histories.append(self.get_history(1, "HOOKS_DEMO"))
+            self.rebalance_current_bar_states.append(self.current_bar is None)
+            self.events.append(("rebalance", int(timestamp)))
+
+        def on_bar(self, bar: Bar) -> None:
+            self.events.append(("bar", int(bar.timestamp)))
+
+    bars = [
+        Bar(
+            timestamp=pd.Timestamp(day_text, tz="Asia/Shanghai").value,
+            open=close,
+            high=close + 0.2,
+            low=close - 0.2,
+            close=close,
+            volume=1000.0,
+            symbol="HOOKS_DEMO",
+        )
+        for day_text, close in [
+            ("2023-01-03", 10.0),
+            ("2023-01-04", 10.5),
+            ("2023-01-05", 10.8),
+        ]
+    ]
+
+    strategy = BoundaryHistoryVisibilityStrategy()
+    run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbols=["HOOKS_DEMO"],
+        initial_cash=1000.0,
+        show_progress=False,
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+    )
+
+    before_values = [float(history[0]) for history in strategy.before_histories[1:]]
+    rebalance_values = [
+        float(history[0]) for history in strategy.rebalance_histories[1:]
+    ]
+    assert len(strategy.before_histories) == 3
+    assert len(strategy.rebalance_histories) == 3
+    assert np.isnan(strategy.before_histories[0][0])
+    assert np.isnan(strategy.rebalance_histories[0][0])
+    assert before_values == [10.0, 10.5]
+    assert rebalance_values == [10.0, 10.5]
+    assert strategy.before_current_bar_states == [True, True, True]
+    assert strategy.rebalance_current_bar_states == [True, True, True]
+    assert strategy.events[:3] == [
+        ("before", bars[0].timestamp),
+        ("rebalance", bars[0].timestamp),
+        ("bar", bars[0].timestamp),
+    ]
+
+
+@pytest.mark.parametrize("precise_boundaries", [False, True])
+def test_day_boundary_hooks_use_previous_account_snapshot(
+    precise_boundaries: bool,
+) -> None:
+    """Day-boundary hooks should not see current-day account marking in either mode."""
+
+    class BoundaryAccountVisibilityStrategy(Strategy):
+        def __init__(self) -> None:
+            self.enable_precise_day_boundary_hooks = precise_boundaries
+            self.before_equities: list[float] = []
+            self.before_portfolio_values: list[float] = []
+            self.rebalance_equities: list[float] = []
+            self.rebalance_portfolio_values: list[float] = []
+            self.has_bought = False
+
+        def on_start(self) -> None:
+            self.subscribe("HOOKS_DEMO")
+
+        def on_before_trading(self, trading_date: object, timestamp: int) -> None:
+            account = self.get_account()
+            self.before_equities.append(float(account["equity"]))
+            self.before_portfolio_values.append(float(self.get_portfolio_value()))
+
+        def on_daily_rebalance(self, trading_date: object, timestamp: int) -> None:
+            account = self.get_account()
+            self.rebalance_equities.append(float(account["equity"]))
+            self.rebalance_portfolio_values.append(float(self.get_portfolio_value()))
+
+        def on_bar(self, bar: Bar) -> None:
+            if not self.has_bought:
+                self.buy(bar.symbol, 1.0)
+                self.has_bought = True
+
+    bars = [
+        Bar(
+            timestamp=pd.Timestamp(day_text, tz="Asia/Shanghai").value,
+            open=close,
+            high=close,
+            low=close,
+            close=close,
+            volume=1000.0,
+            symbol="HOOKS_DEMO",
+        )
+        for day_text, close in [
+            ("2023-01-03", 10.0),
+            ("2023-01-04", 11.0),
+            ("2023-01-05", 12.0),
+        ]
+    ]
+
+    strategy = BoundaryAccountVisibilityStrategy()
+    run_backtest(
+        data=bars,
+        strategy=strategy,
+        symbols=["HOOKS_DEMO"],
+        initial_cash=1000.0,
+        show_progress=False,
+        fill_policy={"price_basis": "close", "bar_offset": 0, "temporal": "same_cycle"},
+    )
+
+    assert strategy.before_equities == [1000.0, 1000.0, 1001.0]
+    assert strategy.rebalance_equities == [1000.0, 1000.0, 1001.0]
+    assert strategy.before_portfolio_values == [1000.0, 1000.0, 1001.0]
+    assert strategy.rebalance_portfolio_values == [1000.0, 1000.0, 1001.0]
+
+
+def test_get_account_uses_previous_cash_when_framework_snapshot_enabled() -> None:
+    """Framework snapshot mode should return the previous cash value consistently."""
+
+    class SnapshotCashStrategy(Strategy):
+        pass
+
+    strategy = SnapshotCashStrategy()
+    strategy.ctx = cast(
+        Any,
+        SimpleNamespace(
+            cash=950.0,
+            previous_cash=900.0,
+            positions={},
+            active_orders=[],
+            canceled_order_ids=[],
+            account_equity=1050.0,
+            account_market_value=100.0,
+            account_notional_value=100.0,
+            account_used_margin=0.0,
+            account_unrealized_pnl=0.0,
+            account_maintenance_ratio=0.0,
+            previous_account_equity=1000.0,
+            previous_account_market_value=100.0,
+            previous_account_notional_value=100.0,
+            previous_account_used_margin=0.0,
+            previous_account_unrealized_pnl=0.0,
+            previous_account_maintenance_ratio=0.0,
+        ),
+    )
+    strategy._framework_use_previous_account_snapshot = True
+
+    account = strategy.get_account()
+
+    assert float(account["cash"]) == 900.0
+    assert float(account["equity"]) == 1000.0
+
+
+def test_get_account_uses_cached_previous_account_details_when_enabled() -> None:
+    """Framework snapshot mode should reuse cached derived account details."""
+
+    class SnapshotDerivedStrategy(Strategy):
+        pass
+
+    strategy = SnapshotDerivedStrategy()
+    strategy.ctx = cast(
+        Any,
+        SimpleNamespace(
+            cash=950.0,
+            previous_cash=900.0,
+            positions={"SHORT": -2.0},
+            active_orders=[],
+            canceled_order_ids=[],
+            margin_accrued_interest=9.0,
+            margin_daily_interest=4.0,
+            account_equity=1050.0,
+            account_market_value=100.0,
+            account_notional_value=100.0,
+            account_used_margin=12.0,
+            account_unrealized_pnl=0.0,
+            account_maintenance_ratio=0.0,
+            previous_account_equity=1000.0,
+            previous_account_market_value=80.0,
+            previous_account_notional_value=80.0,
+            previous_account_used_margin=10.0,
+            previous_account_unrealized_pnl=0.0,
+            previous_account_maintenance_ratio=0.0,
+        ),
+    )
+    strategy._framework_use_previous_account_snapshot = True
+    strategy._framework_previous_account_details = {
+        "frozen_cash": 33.0,
+        "short_market_value": 44.0,
+        "margin_accrued_interest": 1.5,
+        "margin_daily_interest": 0.5,
+    }
+
+    account = strategy.get_account()
+
+    assert float(account["frozen_cash"]) == 33.0
+    assert float(account["short_market_value"]) == 44.0
+    assert float(account["accrued_interest"]) == 1.5
+    assert float(account["daily_interest"]) == 0.5
 
 
 def test_collect_pre_open_timers_and_prime_globally_once() -> None:

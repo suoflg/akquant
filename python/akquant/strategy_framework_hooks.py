@@ -45,15 +45,17 @@ def _use_precise_day_boundary_hooks(strategy: Any) -> bool:
 def _is_normal_session(session: Any) -> bool:
     normal = getattr(TradingSession, "Normal", None)
     continuous = getattr(TradingSession, "Continuous", None)
-    if normal is not None or continuous is not None:
-        return bool(session == normal or session == continuous)
     text = str(session).lower()
-    return (
+    if (
         text == "normal"
         or text.endswith(".normal")
         or text == "continuous"
         or text.endswith(".continuous")
-    )
+    ):
+        return True
+    if normal is not None or continuous is not None:
+        return bool(session == normal or session == continuous)
+    return False
 
 
 def _is_pre_open_session(session: Any) -> bool:
@@ -144,27 +146,81 @@ def _should_reraise_on_error(strategy: Any) -> bool:
     return bool(_runtime_option(strategy, "re_raise_on_error"))
 
 
+def _snapshot_previous_account_details(strategy: Any) -> Optional[Dict[str, float]]:
+    """Capture previous-snapshot derived account fields for framework phases."""
+    if strategy.ctx is None:
+        return None
+    from .strategy_trading_api import _calc_frozen_cash, _resolve_mark_price
+
+    short_market_value = 0.0
+    for sym, qty in strategy.ctx.positions.items():
+        qty_f = float(qty)
+        if qty_f >= 0.0:
+            continue
+        short_market_value += abs(qty_f) * _resolve_mark_price(strategy, str(sym))
+    return {
+        "frozen_cash": float(_calc_frozen_cash(strategy)),
+        "short_market_value": float(short_market_value),
+        "margin_accrued_interest": float(
+            getattr(strategy.ctx, "margin_accrued_interest", 0.0)
+        ),
+        "margin_daily_interest": float(
+            getattr(strategy.ctx, "margin_daily_interest", 0.0)
+        ),
+    }
+
+
+def _run_in_framework_phase(
+    strategy: Any,
+    phase: str,
+    timestamp: int,
+    callback_name: str,
+    *args: Any,
+    payload: Optional[Any] = None,
+) -> Any:
+    """Run a callback with a framework phase and history visibility cutoff."""
+    previous_phase = getattr(strategy, "_framework_phase", None)
+    previous_cutoff = getattr(strategy, "_framework_history_cutoff_ns", None)
+    previous_pre_open = bool(getattr(strategy, "_framework_in_pre_open_phase", False))
+    previous_bar = getattr(strategy, "current_bar", None)
+    previous_tick = getattr(strategy, "current_tick", None)
+    previous_account_snapshot = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    previous_account_details = getattr(
+        strategy, "_framework_previous_account_details", None
+    )
+    strategy._framework_phase = phase
+    strategy._framework_history_cutoff_ns = int(timestamp)
+    strategy._framework_previous_account_details = _snapshot_previous_account_details(
+        strategy
+    )
+    strategy._framework_use_previous_account_snapshot = True
+    strategy.current_bar = None
+    strategy.current_tick = None
+    if phase == "pre_open":
+        strategy._framework_in_pre_open_phase = True
+    try:
+        return call_user_callback(strategy, callback_name, *args, payload=payload)
+    finally:
+        strategy._framework_phase = previous_phase
+        strategy._framework_history_cutoff_ns = previous_cutoff
+        strategy._framework_in_pre_open_phase = previous_pre_open
+        strategy._framework_use_previous_account_snapshot = previous_account_snapshot
+        strategy._framework_previous_account_details = previous_account_details
+        strategy.current_bar = previous_bar
+        strategy.current_tick = previous_tick
+
+
 def _dispatch_daily_rebalance_if_needed(
     strategy: Any, trading_date: Any, timestamp: int
 ) -> None:
     if getattr(strategy, "_framework_daily_rebalance_done_date", None) == trading_date:
         return
-    event_type = getattr(strategy, "_last_event_type", None)
-    if event_type == "bar" and strategy.ctx is not None:
-        pending_date = getattr(
-            strategy,
-            "_framework_daily_rebalance_pending_date",
-            None,
-        )
-        if pending_date == trading_date:
-            return
-        schedule_ts = int(timestamp) + 1
-        payload = f"__framework_rebalance__|{trading_date}|{int(timestamp)}"
-        strategy.ctx.schedule(schedule_ts, payload)
-        strategy._framework_daily_rebalance_pending_date = trading_date
-        return
-    call_user_callback(
+    _run_in_framework_phase(
         strategy,
+        "daily_rebalance",
+        timestamp,
         "on_daily_rebalance",
         trading_date,
         timestamp,
@@ -207,12 +263,6 @@ def dispatch_time_hooks(strategy: Any) -> None:
     current_date = ts.date()
     current_session = getattr(strategy.ctx, "session", None)
     use_precise_boundaries = _use_precise_day_boundary_hooks(strategy)
-    if (
-        not use_precise_boundaries
-        and getattr(strategy, "_framework_daily_rebalance_done_date", None)
-        != current_date
-    ):
-        _dispatch_daily_rebalance_if_needed(strategy, current_date, current_time)
 
     last_date = getattr(strategy, "_framework_last_local_date", None)
     before_done_date = getattr(strategy, "_framework_before_trading_done_date", None)
@@ -259,14 +309,23 @@ def dispatch_time_hooks(strategy: Any) -> None:
         and getattr(strategy, "_framework_before_trading_done_date", None)
         != current_date
     ):
-        call_user_callback(
+        _run_in_framework_phase(
             strategy,
+            "before_trading",
+            current_time,
             "on_before_trading",
             current_date,
             current_time,
             payload={"trading_date": current_date, "timestamp": current_time},
         )
         strategy._framework_before_trading_done_date = current_date
+    if (
+        not use_precise_boundaries
+        and _is_normal_session(current_session)
+        and getattr(strategy, "_framework_daily_rebalance_done_date", None)
+        != current_date
+    ):
+        _dispatch_daily_rebalance_if_needed(strategy, current_date, current_time)
 
     if (
         not use_precise_boundaries
@@ -349,8 +408,10 @@ def dispatch_boundary_timer(strategy: Any, payload: str) -> bool:
     current_time = int(getattr(strategy.ctx, "current_time", 0))
     if phase == "before":
         if getattr(strategy, "_framework_before_trading_done_date", None) != day:
-            call_user_callback(
+            _run_in_framework_phase(
                 strategy,
+                "before_trading",
+                current_time,
                 "on_before_trading",
                 day,
                 current_time,
@@ -358,8 +419,10 @@ def dispatch_boundary_timer(strategy: Any, payload: str) -> bool:
             )
             strategy._framework_before_trading_done_date = day
         if getattr(strategy, "_framework_daily_rebalance_done_date", None) != day:
-            call_user_callback(
+            _run_in_framework_phase(
                 strategy,
+                "daily_rebalance",
+                current_time,
                 "on_daily_rebalance",
                 day,
                 current_time,
@@ -409,11 +472,14 @@ def dispatch_pre_open_timer(strategy: Any, payload: str) -> bool:
         return True
 
     event = _build_pre_open_event(strategy, trading_date, source_timestamp)
-    strategy._framework_in_pre_open_phase = True
-    try:
-        call_user_callback(strategy, "on_pre_open", event, payload=event)
-    finally:
-        strategy._framework_in_pre_open_phase = False
+    _run_in_framework_phase(
+        strategy,
+        "pre_open",
+        source_timestamp,
+        "on_pre_open",
+        event,
+        payload=event,
+    )
     strategy._framework_pre_open_done_date = trading_date
     return True
 
@@ -440,8 +506,10 @@ def dispatch_daily_rebalance_timer(strategy: Any, payload: str) -> bool:
 
     done_date = getattr(strategy, "_framework_daily_rebalance_done_date", None)
     if done_date != trading_date:
-        call_user_callback(
+        _run_in_framework_phase(
             strategy,
+            "daily_rebalance",
+            source_timestamp,
             "on_daily_rebalance",
             trading_date,
             source_timestamp,
@@ -474,8 +542,21 @@ def dispatch_portfolio_update(strategy: Any) -> None:
     available_positions = {
         k: float(v) for k, v in dict(strategy.ctx.available_positions).items()
     }
-    equity = float(strategy.get_portfolio_value())
-    market_value = float(equity - cash)
+    use_previous_snapshot = bool(
+        getattr(strategy, "_framework_emit_previous_portfolio_snapshot", False)
+    )
+    previous_override = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    strategy._framework_use_previous_account_snapshot = use_previous_snapshot
+    try:
+        equity = float(strategy.get_portfolio_value())
+        market_value = float(equity - cash)
+        account_snapshot = strategy.get_account()
+    finally:
+        strategy._framework_use_previous_account_snapshot = previous_override
+    if use_previous_snapshot:
+        strategy._framework_emit_previous_portfolio_snapshot = False
 
     state_key: Tuple[Any, ...] = (
         round(cash, 8),
@@ -503,7 +584,6 @@ def dispatch_portfolio_update(strategy: Any) -> None:
         return
 
     strategy._framework_last_portfolio_state = state_key
-    account_snapshot = strategy.get_account()
     snapshot: Dict[str, Any] = {
         "timestamp": current_time,
         "session": session,
@@ -515,8 +595,15 @@ def dispatch_portfolio_update(strategy: Any) -> None:
         "margin": float(account_snapshot.get("margin", 0.0)),
         "frozen_cash": float(account_snapshot.get("frozen_cash", 0.0)),
     }
-    call_user_callback(strategy, "on_portfolio_update", snapshot, payload=snapshot)
-    strategy._framework_portfolio_dirty = False
+    callback_override = bool(
+        getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    )
+    strategy._framework_use_previous_account_snapshot = use_previous_snapshot
+    try:
+        call_user_callback(strategy, "on_portfolio_update", snapshot, payload=snapshot)
+        strategy._framework_portfolio_dirty = False
+    finally:
+        strategy._framework_use_previous_account_snapshot = callback_override
 
 
 def dispatch_shutdown_hooks(strategy: Any) -> None:
@@ -573,6 +660,16 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_pre_open_timers_registered = False
     if not hasattr(strategy, "_framework_in_pre_open_phase"):
         strategy._framework_in_pre_open_phase = False
+    if not hasattr(strategy, "_framework_phase"):
+        strategy._framework_phase = None
+    if not hasattr(strategy, "_framework_history_cutoff_ns"):
+        strategy._framework_history_cutoff_ns = None
+    if not hasattr(strategy, "_framework_use_previous_account_snapshot"):
+        strategy._framework_use_previous_account_snapshot = False
+    if not hasattr(strategy, "_framework_previous_account_details"):
+        strategy._framework_previous_account_details = None
+    if not hasattr(strategy, "_framework_emit_previous_portfolio_snapshot"):
+        strategy._framework_emit_previous_portfolio_snapshot = False
     if not hasattr(strategy, "_framework_last_portfolio_state"):
         strategy._framework_last_portfolio_state = None
     if not hasattr(strategy, "_framework_portfolio_dirty"):
