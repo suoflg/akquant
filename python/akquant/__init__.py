@@ -51,6 +51,11 @@ from .feed_adapter import (
     ResampledFeedAdapter,
 )
 from .indicator import Indicator, IndicatorSet
+from .indicator_stream import (
+    is_indicator_stream_event,
+    to_indicator_message,
+    to_indicator_messages,
+)
 from .log import get_logger, register_logger
 from .optimize import OptimizationResult, run_grid_search, run_walk_forward
 from .params import (
@@ -69,7 +74,7 @@ from .params_adapter import (
     resolve_param_model,
     validate_strategy_params,
 )
-from .plot import plot_result
+from .plot import plot_indicators, plot_result
 from .sizer import AllInSizer, FixedSize, PercentSizer, Sizer
 from .strategy import InstrumentSnapshot, Strategy, StrategyRuntimeConfig
 from .strategy_loader import register_strategy_loader, resolve_strategy_input
@@ -116,10 +121,14 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "ChinaOptionsSessionConfig",
         "Indicator",
         "IndicatorSet",
+        "is_indicator_stream_event",
+        "to_indicator_message",
+        "to_indicator_messages",
         "run_backtest",
         "run_warm_start",
         "make_fill_policy",
         "plot_result",
+        "plot_indicators",
         "BacktestResult",
         "BacktestStreamEvent",
         "run_grid_search",
@@ -186,10 +195,14 @@ else:
         "ChinaOptionsSessionConfig",
         "Indicator",
         "IndicatorSet",
+        "is_indicator_stream_event",
+        "to_indicator_message",
+        "to_indicator_messages",
         "run_backtest",
         "run_warm_start",
         "make_fill_policy",
         "plot_result",
+        "plot_indicators",
         "BacktestResult",
         "BacktestStreamEvent",
         "run_grid_search",

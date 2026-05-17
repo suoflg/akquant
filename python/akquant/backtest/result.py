@@ -1,7 +1,10 @@
+import json
 import re
 from functools import cached_property
+from pathlib import Path
 from typing import (
     Any,
+    Dict,
     List,
     Optional,
     Union,
@@ -29,6 +32,7 @@ class BacktestResult:
         initial_cash: float = 0.0,
         strategy: Optional[Any] = None,
         engine: Optional[Any] = None,
+        indicator_outputs: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ):
         """
         Initialize the BacktestResult wrapper.
@@ -46,6 +50,12 @@ class BacktestResult:
         self.engine = engine
         self.analyzer_outputs: dict[str, dict[str, Any]] = {}
         self.resolved_execution_policy: Optional[dict[str, Any]] = None
+        self.stream_run_id: Optional[str] = None
+        self.indicator_outputs: Dict[str, List[Dict[str, Any]]] = (
+            indicator_outputs
+            if indicator_outputs is not None
+            else {"definitions": [], "instances": [], "points": []}
+        )
 
     @property
     def equity_curve(self) -> pd.Series:
@@ -1417,6 +1427,140 @@ class BacktestResult:
         )
         return cast(pd.DataFrame, grouped[columns])
 
+    @cached_property
+    def indicator_definitions(self) -> pd.DataFrame:
+        """Get normalized indicator definition metadata."""
+        rows = list(self.indicator_outputs.get("definitions", []))
+        columns = [
+            "indicator_key",
+            "display_name",
+            "pane",
+            "render_type",
+            "unit",
+            "precision",
+            "color",
+        ]
+        if not rows:
+            return pd.DataFrame(columns=columns)
+        frame = pd.DataFrame(rows)
+        for column in columns:
+            if column not in frame.columns:
+                frame[column] = None
+        frame = frame[columns].sort_values("indicator_key").reset_index(drop=True)
+        return cast(pd.DataFrame, frame)
+
+    @cached_property
+    def indicator_instances(self) -> pd.DataFrame:
+        """Get normalized indicator instance metadata."""
+        rows = list(self.indicator_outputs.get("instances", []))
+        columns = [
+            "instance_id",
+            "owner_strategy_id",
+            "symbol",
+            "indicator_key",
+            "meta_json",
+        ]
+        if not rows:
+            return pd.DataFrame(columns=columns)
+        frame = pd.DataFrame(rows)
+        for column in columns:
+            if column not in frame.columns:
+                frame[column] = ""
+        frame = frame[columns].sort_values(
+            ["owner_strategy_id", "symbol", "indicator_key", "instance_id"]
+        )
+        return cast(pd.DataFrame, frame.reset_index(drop=True))
+
+    @cached_property
+    def _indicator_points_df(self) -> pd.DataFrame:
+        rows = list(self.indicator_outputs.get("points", []))
+        columns = [
+            "instance_id",
+            "owner_strategy_id",
+            "symbol",
+            "indicator_key",
+            "timestamp",
+            "value",
+            "warmup",
+        ]
+        if not rows:
+            return pd.DataFrame(columns=columns + ["datetime"])
+        frame = pd.DataFrame(rows)
+        for column in columns:
+            if column not in frame.columns:
+                frame[column] = None
+        frame["timestamp"] = pd.to_numeric(frame["timestamp"], errors="coerce").astype(
+            "Int64"
+        )
+        frame["datetime"] = pd.to_datetime(
+            frame["timestamp"],
+            unit="ns",
+            utc=True,
+            errors="coerce",
+        ).dt.tz_convert(self._timezone)
+        frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+        frame["warmup"] = frame["warmup"].fillna(False).astype(bool)
+        frame = frame.sort_values(
+            ["owner_strategy_id", "symbol", "indicator_key", "timestamp"]
+        ).reset_index(drop=True)
+        return cast(pd.DataFrame, frame[columns + ["datetime"]])
+
+    def indicator_df(
+        self,
+        name: Optional[str] = None,
+        symbol: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Get recorded indicator points as a DataFrame."""
+        frame = cast(pd.DataFrame, self._indicator_points_df.copy())
+        if frame.empty:
+            return cast(pd.DataFrame, frame)
+        if name is not None:
+            frame = frame.loc[frame["indicator_key"] == str(name)]
+        if symbol is not None:
+            frame = frame.loc[frame["symbol"] == str(symbol)]
+        return cast(pd.DataFrame, frame.reset_index(drop=True))
+
+    def export_indicators(self, path: str, format: str = "json") -> None:
+        """Export indicator outputs to json or a parquet directory bundle."""
+        output_format = str(format).strip().lower()
+        output_path = Path(path)
+        if output_format == "json":
+            payload = {
+                "run_id": self.stream_run_id,
+                "definitions": self._json_ready_records(self.indicator_definitions),
+                "instances": self._json_ready_records(self.indicator_instances),
+                "points": self._json_ready_records(self._indicator_points_df),
+            }
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2),
+                encoding="utf-8",
+            )
+            return
+        if output_format == "parquet":
+            output_path.mkdir(parents=True, exist_ok=True)
+            self.indicator_definitions.to_parquet(output_path / "definitions.parquet")
+            self.indicator_instances.to_parquet(output_path / "instances.parquet")
+            self._indicator_points_df.to_parquet(output_path / "points.parquet")
+            return
+        raise ValueError("format must be 'json' or 'parquet'")
+
+    @staticmethod
+    def _json_ready_records(frame: pd.DataFrame) -> List[Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        for row in frame.to_dict(orient="records"):
+            normalized: Dict[str, Any] = {}
+            for key, value in row.items():
+                key_str = str(key)
+                if pd.isna(value):
+                    normalized[key_str] = None
+                elif isinstance(value, pd.Timestamp):
+                    normalized[key_str] = value.isoformat()
+                else:
+                    normalized[key_str] = value
+            records.append(normalized)
+        return records
+
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to the raw result."""
         return getattr(self._raw, name)
@@ -1456,6 +1600,48 @@ class BacktestResult:
             return None
 
         return plot_dashboard(result=self, show=show, title=title)
+
+    def plot_indicators(
+        self,
+        name: Optional[str] = None,
+        symbol: Optional[str] = None,
+        include_warmup: bool = True,
+        show: bool = True,
+        title: str = "Indicator History",
+        theme: str = "light",
+        filename: Optional[str] = None,
+    ) -> Any:
+        """
+        Plot recorded indicator history in a lightweight multi-pane figure.
+
+        :param name: Optional indicator key filter.
+        :param symbol: Optional symbol filter.
+        :param include_warmup: Whether to keep warmup points.
+        :param show: Whether to display the plot immediately.
+        :param title: Figure title.
+        :param theme: Plot theme key.
+        :param filename: Optional HTML output path.
+        :return: Plotly Figure object.
+        """
+        try:
+            from ..plot import plot_indicators
+        except ImportError:
+            print(
+                "Plotly is not installed. Please install it using `pip install plotly` "
+                "or `pip install akquant[plot]`."
+            )
+            return None
+
+        return plot_indicators(
+            result=self,
+            name=name,
+            symbol=symbol,
+            include_warmup=include_warmup,
+            show=show,
+            title=title,
+            theme=theme,
+            filename=filename,
+        )
 
     def to_quantstats(self) -> pd.Series:
         """
@@ -1532,6 +1718,10 @@ class BacktestResult:
         market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
         plot_symbol: Optional[str] = None,
         include_trade_kline: bool = True,
+        include_indicators: bool = False,
+        indicator_name: Optional[str] = None,
+        indicator_symbol: Optional[str] = None,
+        indicator_include_warmup: bool = True,
         benchmark: Optional[Union[str, pd.Series]] = None,
         curve_freq: str = "raw",
     ) -> None:
@@ -1547,6 +1737,10 @@ class BacktestResult:
         :param market_data: 可选行情数据，用于绘制 K 线买卖点图
         :param plot_symbol: 可选标的代码，指定 K 线复盘标的
         :param include_trade_kline: 是否在报告中包含 K 线复盘图
+        :param include_indicators: 是否在报告中包含自定义指标预览区块
+        :param indicator_name: 可选指标键过滤，仅展示指定指标
+        :param indicator_symbol: 可选标的过滤，仅展示指定标的指标
+        :param indicator_include_warmup: 是否在指标报告区块中保留预热点
         :param benchmark: 基准收益序列 (pd.Series) 或基准标识字符串
         :param curve_freq: 曲线频率，"raw" 为原始频率，"D" 为日频末值
         """
@@ -1566,6 +1760,10 @@ class BacktestResult:
             market_data=market_data,
             plot_symbol=plot_symbol,
             include_trade_kline=include_trade_kline,
+            include_indicators=include_indicators,
+            indicator_name=indicator_name,
+            indicator_symbol=indicator_symbol,
+            indicator_include_warmup=indicator_include_warmup,
             benchmark=benchmark,
             curve_freq=curve_freq,
         )

@@ -98,6 +98,19 @@ impl Engine {
         self.set_stream_callback_internal(None);
     }
 
+    fn emit_stream_event_py(
+        &mut self,
+        py: Python<'_>,
+        event_type: &str,
+        symbol: Option<String>,
+        level: &str,
+        payload: HashMap<String, String>,
+    ) {
+        super::core::Engine::emit_stream_event_owned(
+            self, py, event_type, symbol, level, payload,
+        );
+    }
+
     fn add_timer(&mut self, timestamp: i64, payload: String) {
         self.timers.push(Timer { timestamp, payload });
     }
@@ -1105,9 +1118,16 @@ impl Engine {
 
         // Run Pipeline
         if let Err(e) = pipeline.run(self, py, strategy) {
-            let mut payload = HashMap::new();
-            payload.insert("message", e.to_string());
-            self.emit_stream_event(py, "error", None, "error", payload);
+            let mut payload: HashMap<String, String> = HashMap::new();
+            payload.insert("message".to_string(), e.to_string());
+            super::core::Engine::emit_stream_event_owned(
+                self,
+                py,
+                "error",
+                None,
+                "error",
+                payload,
+            );
             self.finish_stream_run(py, "failed", Some(&e.to_string()));
             // Clean up pb if error
             self.progress_bar = None;

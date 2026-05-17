@@ -33,6 +33,13 @@ def _is_before_active_start(strategy: Any, timestamp: int) -> bool:
     return active_start_time is not None and timestamp < int(active_start_time)
 
 
+def _flush_indicator_snapshots(strategy: Any) -> None:
+    """Flush one callback cycle of pending indicator snapshot events."""
+    recorder = getattr(strategy, "_indicator_recorder", None)
+    if recorder is not None:
+        recorder.flush_stream_snapshot()
+
+
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     """引擎调用的 Bar 回调 (Internal)."""
     ensure_framework_state(strategy)
@@ -113,6 +120,7 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
             )
         except Exception:
             pass
+    _flush_indicator_snapshots(strategy)
 
 
 def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
@@ -140,6 +148,7 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     strategy._last_prices[tick.symbol] = tick.price
     dispatch_portfolio_update(strategy)
     call_user_callback(strategy, "on_tick", tick, payload=tick)
+    _flush_indicator_snapshots(strategy)
 
 
 def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
@@ -159,12 +168,15 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
     dispatch_portfolio_update(strategy)
 
     if dispatch_daily_rebalance_timer(strategy, payload):
+        _flush_indicator_snapshots(strategy)
         return
 
     if dispatch_boundary_timer(strategy, payload):
+        _flush_indicator_snapshots(strategy)
         return
 
     if dispatch_pre_open_timer(strategy, payload):
+        _flush_indicator_snapshots(strategy)
         return
 
     if payload.startswith("__daily__|"):
@@ -188,6 +200,8 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
                     strategy.schedule(target, payload)
                 except Exception as e:
                     print(f"Error processing daily timer: {e}")
+            _flush_indicator_snapshots(strategy)
             return
 
     call_user_callback(strategy, "on_timer", payload, payload=payload)
+    _flush_indicator_snapshots(strategy)

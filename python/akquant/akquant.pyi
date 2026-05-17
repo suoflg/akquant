@@ -229,6 +229,7 @@ class BacktestResult:
     metrics_df: typing.Any
     orders_df: typing.Any
     resolved_execution_policy: typing.Optional[dict[str, typing.Any]]
+    stream_run_id: typing.Optional[str]
     def get_trades_ipc(self) -> bytes:
         r"""Get trades as Arrow IPC bytes (Zero-Copy-ish to Python)."""
         ...
@@ -250,6 +251,58 @@ class BacktestResult:
         ...
 
     def get_event_stats(self) -> dict[str, typing.Any]: ...
+    def indicator_df(
+        self,
+        name: typing.Optional[str] = ...,
+        symbol: typing.Optional[str] = ...,
+    ) -> typing.Any: ...
+    @property
+    def indicator_definitions(self) -> typing.Any: ...
+    @property
+    def indicator_instances(self) -> typing.Any: ...
+    def export_indicators(self, path: str, format: str = ...) -> None: ...
+    def plot(
+        self,
+        symbol: typing.Optional[str] = ...,
+        show: bool = ...,
+        title: str = ...,
+    ) -> typing.Any: ...
+    def plot_indicators(
+        self,
+        name: typing.Optional[str] = ...,
+        symbol: typing.Optional[str] = ...,
+        include_warmup: bool = ...,
+        show: bool = ...,
+        title: str = ...,
+        theme: str = ...,
+        filename: typing.Optional[str] = ...,
+    ) -> typing.Any: ...
+    def report(
+        self,
+        title: str = ...,
+        filename: str = ...,
+        show: bool = ...,
+        compact_currency: bool = ...,
+        market_data: typing.Optional[
+            typing.Union[typing.Any, dict[str, typing.Any]]
+        ] = ...,
+        plot_symbol: typing.Optional[str] = ...,
+        include_trade_kline: bool = ...,
+        include_indicators: bool = ...,
+        indicator_name: typing.Optional[str] = ...,
+        indicator_symbol: typing.Optional[str] = ...,
+        indicator_include_warmup: bool = ...,
+        benchmark: typing.Optional[typing.Union[str, typing.Any]] = ...,
+        curve_freq: str = ...,
+    ) -> None: ...
+    def report_quantstats(
+        self,
+        benchmark: typing.Optional[typing.Union[str, typing.Any]] = ...,
+        title: str = ...,
+        filename: str = ...,
+        **kwargs: typing.Any,
+    ) -> None: ...
+    def to_quantstats(self) -> typing.Any: ...
 
 class Bar:
     r"""
@@ -738,6 +791,13 @@ class Engine:
 
     def set_stream_callback(self, callback: typing.Any) -> None: ...
     def clear_stream_callback(self) -> None: ...
+    def emit_stream_event_py(
+        self,
+        event_type: str,
+        symbol: typing.Optional[str],
+        level: str,
+        payload: dict[str, str],
+    ) -> None: ...
     def set_stream_options(
         self,
         progress_interval: int,
@@ -2094,6 +2154,14 @@ class ABS:
         :return: 当前 ABS 值
         """
         ...
+
+def is_indicator_stream_event(event: typing.Any) -> bool: ...
+def to_indicator_message(
+    event: typing.Any,
+) -> typing.Optional[dict[str, typing.Any]]: ...
+def to_indicator_messages(
+    events: typing.Iterable[typing.Any],
+) -> list[dict[str, typing.Any]]: ...
 
 class SIGN:
     r"""符号变换指标 (SIGN)."""

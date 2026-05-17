@@ -44,6 +44,7 @@ from ..config import (
 )
 from ..data import ParquetDataCatalog
 from ..feed_adapter import DataFeedAdapter, FeedSlice
+from ..indicator_recording import IndicatorRecorder
 from ..log import get_logger, register_logger
 from ..risk import apply_risk_config
 from ..strategy import (
@@ -193,6 +194,11 @@ class PreparedStreamRuntime:
     """Prepared stream runtime components shared by backtest/warm_start."""
 
     stream_on_event: Callable[[BacktestStreamEvent], None]
+    indicator_stream_emitter: Optional[
+        Callable[[str, Optional[str], str, Dict[str, str]], None]
+    ]
+    indicator_stream_point_interval: int
+    indicator_stream_snapshot_interval: int
     event_stats_snapshot: Dict[str, Any]
     stream_progress_interval: int
     stream_equity_interval: int
@@ -482,12 +488,28 @@ def _prepare_stream_runtime(
     if stream_on_event is None:
         stream_on_event = _noop_stream_event_handler
     original_stream_handler = stream_on_event
+    indicator_stream_point_interval = _parse_positive_int_option(
+        "indicator_stream_point_interval",
+        kwargs.pop("indicator_stream_point_interval", 1),
+    )
+    indicator_stream_snapshot_interval = _parse_positive_int_option(
+        "indicator_stream_snapshot_interval",
+        kwargs.pop("indicator_stream_snapshot_interval", 1),
+    )
     event_stats_snapshot: Dict[str, Any] = {}
+    stream_state: Dict[str, Any] = {
+        "run_id": None,
+        "last_rust_seq": 0,
+        "seq_offset": 0,
+        "indicator_point_seen": 0,
+        "indicator_snapshot_seen": 0,
+    }
 
     def wrapped_stream_on_event(event: BacktestStreamEvent) -> None:
-        event_type = str(event.get("event_type", ""))
+        forwarded_event: Dict[str, Any] = dict(event)
+        event_type = str(forwarded_event.get("event_type", ""))
         if event_type == "finished":
-            payload_obj = event.get("payload", {})
+            payload_obj = forwarded_event.get("payload", {})
             if isinstance(payload_obj, dict):
                 for key in (
                     "processed_events",
@@ -503,19 +525,74 @@ def _prepare_stream_runtime(
                         event_stats_snapshot[key] = payload_obj.get(key)
         if patch_owner_strategy_id and owner_strategy_id is not None:
             if event_type in {"order", "trade", "risk"}:
-                payload_obj = event.get("payload", {})
+                payload_obj = forwarded_event.get("payload", {})
                 if isinstance(payload_obj, dict):
                     current_owner = payload_obj.get("owner_strategy_id")
                     if current_owner is None or str(current_owner) == "":
-                        patched_event = dict(event)
                         patched_payload = dict(payload_obj)
                         patched_payload["owner_strategy_id"] = owner_strategy_id
-                        patched_event["payload"] = cast(Dict[str, str], patched_payload)
-                        original_stream_handler(
-                            cast(BacktestStreamEvent, patched_event)
+                        forwarded_event["payload"] = cast(
+                            Dict[str, str], patched_payload
                         )
-                        return
-        original_stream_handler(event)
+        run_id = forwarded_event.get("run_id")
+        if run_id is not None and str(run_id):
+            normalized_run_id = str(run_id)
+            stream_state["run_id"] = normalized_run_id
+            event_stats_snapshot["run_id"] = normalized_run_id
+        raw_seq = int(forwarded_event.get("seq", 0))
+        forwarded_event["seq"] = raw_seq + int(stream_state["seq_offset"])
+        stream_state["last_rust_seq"] = raw_seq
+        original_stream_handler(cast(BacktestStreamEvent, forwarded_event))
+
+    def emit_indicator_stream_event(
+        event_type: str,
+        symbol: Optional[str],
+        level: str,
+        payload: Dict[str, str],
+    ) -> None:
+        run_id = stream_state.get("run_id")
+        if not run_id:
+            return
+        if event_type == "indicator_point":
+            stream_state["indicator_point_seen"] = (
+                int(stream_state["indicator_point_seen"]) + 1
+            )
+            if (
+                int(stream_state["indicator_point_seen"])
+                % indicator_stream_point_interval
+                != 0
+            ):
+                return
+        elif event_type == "indicator_snapshot":
+            stream_state["indicator_snapshot_seen"] = (
+                int(stream_state["indicator_snapshot_seen"]) + 1
+            )
+            if (
+                int(stream_state["indicator_snapshot_seen"])
+                % indicator_stream_snapshot_interval
+                != 0
+            ):
+                return
+        try:
+            event_ts = int(str(payload.get("timestamp", "0")))
+        except (TypeError, ValueError):
+            event_ts = 0
+        next_offset = int(stream_state["seq_offset"]) + 1
+        stream_state["seq_offset"] = next_offset
+        original_stream_handler(
+            cast(
+                BacktestStreamEvent,
+                {
+                    "run_id": str(run_id),
+                    "seq": int(stream_state["last_rust_seq"]) + next_offset,
+                    "ts": event_ts,
+                    "event_type": str(event_type),
+                    "symbol": None if symbol is None else str(symbol),
+                    "level": str(level),
+                    "payload": {str(key): str(value) for key, value in payload.items()},
+                },
+            )
+        )
 
     stream_progress_interval = _parse_positive_int_option(
         "stream_progress_interval", kwargs.pop("stream_progress_interval", 1)
@@ -540,6 +617,9 @@ def _prepare_stream_runtime(
         )
     return PreparedStreamRuntime(
         stream_on_event=wrapped_stream_on_event,
+        indicator_stream_emitter=emit_indicator_stream_event,
+        indicator_stream_point_interval=indicator_stream_point_interval,
+        indicator_stream_snapshot_interval=indicator_stream_snapshot_interval,
         event_stats_snapshot=event_stats_snapshot,
         stream_progress_interval=stream_progress_interval,
         stream_equity_interval=stream_equity_interval,
@@ -561,6 +641,8 @@ def _attach_result_runtime_metadata(
     setattr(result, "_engine_summary", engine_summary)
     setattr(result, "_event_stats", dict(event_stats_snapshot))
     setattr(result, "_owner_strategy_id", owner_strategy_id)
+    run_id = event_stats_snapshot.get("run_id")
+    result.stream_run_id = None if run_id in (None, "") else str(run_id)
     if resolved_policy is not None:
         setattr(
             result,
@@ -575,6 +657,22 @@ def _attach_result_runtime_metadata(
         result.resolved_execution_policy = cast(
             Dict[str, Any], getattr(result, "_resolved_execution_policy")
         )
+
+
+def _attach_indicator_recorder(
+    *,
+    stream_emitter: Optional[
+        Callable[[str, Optional[str], str, Dict[str, str]], None]
+    ] = None,
+    strategy_instance: Strategy,
+    slot_strategy_instances: Dict[str, Strategy],
+) -> IndicatorRecorder:
+    """Attach one shared indicator recorder to all strategy instances."""
+    recorder = IndicatorRecorder(stream_emitter=stream_emitter)
+    setattr(strategy_instance, "_indicator_recorder", recorder)
+    for slot_strategy in slot_strategy_instances.values():
+        setattr(slot_strategy, "_indicator_recorder", recorder)
+    return recorder
 
 
 def _normalize_symbols_argument(
@@ -2161,6 +2259,9 @@ def run_backtest(
     )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
     effective_strategy_id = strategy_id or "_default"
+    indicator_stream_requested = (
+        on_event is not None or kwargs.get("_stream_on_event") is not None
+    )
     prepared_stream_runtime = _prepare_stream_runtime(
         on_event=on_event,
         kwargs=kwargs,
@@ -2168,6 +2269,11 @@ def run_backtest(
         patch_owner_strategy_id=True,
     )
     stream_on_event = prepared_stream_runtime.stream_on_event
+    indicator_stream_emitter = (
+        prepared_stream_runtime.indicator_stream_emitter
+        if indicator_stream_requested
+        else None
+    )
     event_stats_snapshot = prepared_stream_runtime.event_stats_snapshot
     stream_progress_interval = prepared_stream_runtime.stream_progress_interval
     stream_equity_interval = prepared_stream_runtime.stream_equity_interval
@@ -2404,6 +2510,11 @@ def run_backtest(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    indicator_recorder = _attach_indicator_recorder(
+        stream_emitter=indicator_stream_emitter,
+        strategy_instance=strategy_instance,
+        slot_strategy_instances=slot_strategy_instances,
+    )
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
     if normalized_strategy_fill_policy is not None:
@@ -3996,6 +4107,7 @@ def run_backtest(
         initial_cash=initial_cash,
         strategy=strategy_instance,
         engine=engine,
+        indicator_outputs=indicator_recorder.build_payload(),
     )
     _attach_result_runtime_metadata(
         result=result,
@@ -4139,8 +4251,16 @@ def run_warm_start(
         risk_budget_mode=risk_budget_mode,
     )
     risk_budget_reset_daily = bool(risk_budget_reset_daily)
+    indicator_stream_requested = (
+        on_event is not None or kwargs.get("_stream_on_event") is not None
+    )
     prepared_stream_runtime = _prepare_stream_runtime(on_event=on_event, kwargs=kwargs)
     stream_on_event = prepared_stream_runtime.stream_on_event
+    indicator_stream_emitter = (
+        prepared_stream_runtime.indicator_stream_emitter
+        if indicator_stream_requested
+        else None
+    )
     event_stats_snapshot = prepared_stream_runtime.event_stats_snapshot
     stream_progress_interval = prepared_stream_runtime.stream_progress_interval
     stream_equity_interval = prepared_stream_runtime.stream_equity_interval
@@ -4354,6 +4474,11 @@ def run_warm_start(
     setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
     for slot_key, slot_strategy in slot_strategy_instances.items():
         setattr(slot_strategy, "_owner_strategy_id", slot_key)
+    indicator_recorder = _attach_indicator_recorder(
+        stream_emitter=indicator_stream_emitter,
+        strategy_instance=strategy_instance,
+        slot_strategy_instances=slot_strategy_instances,
+    )
     setattr(strategy_instance, "_slot_strategies", dict(slot_strategy_instances))
     setattr(strategy_instance, "_strategy_slot_ids", list(configured_slot_ids))
     if normalized_strategy_fill_policy is not None:
@@ -5166,6 +5291,7 @@ def run_warm_start(
         initial_cash=float(restored_cash),
         strategy=strategy_instance,
         engine=engine,
+        indicator_outputs=indicator_recorder.build_payload(),
     )
     _attach_result_runtime_metadata(
         result=result,

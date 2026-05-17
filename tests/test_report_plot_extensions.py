@@ -8,6 +8,7 @@ from akquant import Bar, Strategy, run_backtest
 from akquant.config import RiskConfig
 from akquant.plot import (
     plot_dashboard,
+    plot_indicators,
     plot_pnl_vs_duration,
     plot_trades_distribution,
 )
@@ -37,6 +38,27 @@ class NoTradeStrategy(Strategy):
     def on_bar(self, bar: Bar) -> None:
         """Do nothing on each bar."""
         _ = bar
+
+
+class IndicatorPlotStrategy(Strategy):
+    """Record a couple of indicators for lightweight plotting checks."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """Emit one main-pane line and one sub-pane bar series."""
+        self.record_indicator(
+            name="close_echo",
+            value=bar.close,
+            display_name="Close Echo",
+            pane="main",
+            render_type="line",
+        )
+        self.record_indicator(
+            name="distance_from_ten",
+            value=bar.close - 10.0,
+            display_name="Distance From Ten",
+            pane="signal",
+            render_type="bar",
+        )
 
 
 class MarginLiquidationStrategy(Strategy):
@@ -181,6 +203,7 @@ def test_report_contains_new_analysis_sections(tmp_path: Path) -> None:
     assert "策略风控拒单明细 (Risk Rejections by Strategy)" in html
     assert "暂无策略归属风控拒单聚合数据" in html
     assert "未提供行情数据，已跳过 K 线复盘图" in html
+    assert "自定义指标 (Custom Indicators)" not in html
 
 
 def test_report_includes_trade_kline_with_market_data(tmp_path: Path) -> None:
@@ -422,6 +445,64 @@ def test_report_handles_empty_trade_analysis_blocks(tmp_path: Path) -> None:
     assert "暂无归因数据" in html
 
 
+def test_report_optionally_includes_indicator_panel(tmp_path: Path) -> None:
+    """Report should include indicator section only when explicitly enabled."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=IndicatorPlotStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    report_path = tmp_path / "report_with_indicators.html"
+    result.report(
+        filename=str(report_path),
+        show=False,
+        include_indicators=True,
+        indicator_name="distance_from_ten",
+    )
+    html = report_path.read_text(encoding="utf-8")
+    assert "自定义指标 (Custom Indicators)" in html
+    assert "指标定义明细 (Indicator Definitions)" in html
+    assert "过滤条件: 指标=distance_from_ten" in html
+    assert "Distance From Ten" in html
+    assert "Close Echo" not in html
+    assert "js-plotly-plot" in html
+
+
+def test_report_indicator_panel_handles_empty_indicator_outputs(tmp_path: Path) -> None:
+    """Indicator report section should render an empty-state panel for legacy runs."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=NoTradeStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    report_path = tmp_path / "report_indicator_panel_empty.html"
+    result.report(filename=str(report_path), show=False, include_indicators=True)
+    html = report_path.read_text(encoding="utf-8")
+    assert "自定义指标 (Custom Indicators)" in html
+    assert "暂无指标数据" in html
+    assert "暂无指标定义数据" in html
+
+
 def test_plot_functions_return_figures_for_non_empty_result() -> None:
     """Core plot functions should return figures for non-empty inputs."""
     _skip_if_no_plotly()
@@ -449,6 +530,63 @@ def test_plot_functions_return_figures_for_non_empty_result() -> None:
     assert fig_rolling is not None
     fig_returns = plot_returns_distribution(result.daily_returns)
     assert fig_returns is not None
+
+
+def test_indicator_plot_functions_return_multi_pane_figures() -> None:
+    """Indicator plot helpers should return a lightweight multi-pane figure."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=IndicatorPlotStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    fig = plot_indicators(result, show=False)
+    assert fig is not None
+    assert len(fig.data) == 2
+    assert fig.layout.title.text == "Indicator History"
+    assert {trace.name for trace in fig.data} == {
+        "Close Echo",
+        "Distance From Ten",
+    }
+    assert [annotation.text for annotation in fig.layout.annotations] == [
+        "main",
+        "signal",
+    ]
+
+    filtered_fig = result.plot_indicators(name="distance_from_ten", show=False)
+    assert filtered_fig is not None
+    assert len(filtered_fig.data) == 1
+    assert filtered_fig.data[0].name == "Distance From Ten"
+    assert filtered_fig.data[0].type == "bar"
+
+
+def test_indicator_plot_returns_none_without_indicator_data() -> None:
+    """Indicator plotting should stay lightweight for legacy empty outputs."""
+    _skip_if_no_plotly()
+    result = run_backtest(
+        data=_build_data(),
+        strategy=NoTradeStrategy,
+        symbols="TEST",
+        initial_cash=200000.0,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        fill_policy={"price_basis": "close", "temporal": "same_cycle"},
+        lot_size=1,
+        show_progress=False,
+    )
+
+    assert result.plot_indicators(show=False) is None
 
 
 def test_daily_curve_properties_reduce_intraday_points() -> None:

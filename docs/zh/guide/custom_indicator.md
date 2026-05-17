@@ -201,6 +201,226 @@ def __setstate__(self, state):
 
 如果你只是要一个策略内的私有信号，优先写自定义指标，而不是去扩展 `akquant.talib`。
 
+## 导出指标给前端
+
+如果你的目标不只是“在策略里使用指标”，而是要把指标结果进一步交给 Web 前端展示，建议把“计算指标”和“输出指标”分开处理：
+
+- 指标计算仍然放在 `Strategy` / `Indicator` 里；
+- 指标输出使用 `Strategy.record_indicator(...)` 记录标准化点位；
+- 回测结束后，通过 `BacktestResult.indicator_df(...)` 或 `export_indicators(...)` 交给外部服务或前端。
+
+### 最小示例
+
+```python
+from akquant import Bar, Strategy
+
+
+class IndicatorExportStrategy(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        spread = bar.high - bar.low
+        self.record_indicator(
+            name="intrabar_spread",
+            value=spread,
+            display_name="Intra Bar Spread",
+            pane="sub",
+            render_type="line",
+            precision=4,
+            meta={"source": ["high", "low"]},
+        )
+```
+
+运行结束后：
+
+```python
+result = ...
+
+# 1) 在 Python 里直接读取
+indicator_df = result.indicator_df(name="intrabar_spread", symbol="AAPL")
+
+# 2) 在本地做一个轻量预览
+fig = result.plot_indicators(
+    name="intrabar_spread",
+    symbol="AAPL",
+    show=False,
+    filename="indicator_preview.html",
+)
+
+# 3) 导出给前端或外部服务
+result.export_indicators("indicator_outputs.json", format="json")
+result.export_indicators("indicator_outputs", format="parquet")
+```
+
+其中 JSON 导出在可用时会额外带上顶层 `run_id`，方便外部服务把离线导出与流式事件链路关联起来。
+
+### 内置最小可视化
+
+如果你只是想快速确认指标历史形态，而不是立刻接入完整前端，可以直接使用：
+
+- `result.plot_indicators(...)`
+- `from akquant.plot import plot_indicators`
+
+这条内置路径的定位是“轻量 history preview”，特点是：
+
+- 保持现有 `result.plot()` 继续只做账户 dashboard；
+- 按 `pane` 自动拆分子图；
+- 复用 `render_type`，第一版支持常见的 `line` / `bar`；
+- 支持 `name`、`symbol`、`include_warmup` 过滤；
+- 可直接输出为本地 HTML，方便和导出的 JSON 一起联调。
+
+例如：
+
+```python
+fig = result.plot_indicators(
+    name="intrabar_spread",
+    symbol="AAPL",
+    include_warmup=False,
+    show=False,
+    filename="indicator_preview.html",
+    title="Indicator Preview",
+)
+```
+
+如果你需要的是企业级多图联动、权限、持久化和实时订阅，这些仍建议放在外部平台实现；AKQuant 内部只提供最小预览和标准化数据输出。
+
+### 报告中的可选指标区块
+
+如果你希望把指标预览放进内置 HTML 报告，而不是单独输出一个图，也可以显式开启：
+
+```python
+result.report(
+    filename="akquant_report.html",
+    show=False,
+    include_indicators=True,
+    indicator_name="intrabar_spread",
+    indicator_symbol="AAPL",
+    indicator_include_warmup=False,
+)
+```
+
+这条路径有几个约束：
+
+- 默认关闭，不会改变现有 `report()` 的输出；
+- 适合把“一个轻量指标区块”嵌进策略报告；
+- 如果没有指标数据，会在报告里显示空状态提示；
+- 如果你需要复杂交互布局，仍建议交给外部前端实现。
+
+### 流式桥接到前端消息
+
+如果你的外部服务是 WebSocket / SSE 网关，推荐不要把原始 `payload` 解析逻辑散落在业务代码里，可以直接使用：
+
+- `akquant.is_indicator_stream_event(event)`
+- `akquant.to_indicator_message(event)`
+- `akquant.to_indicator_messages(events)`
+
+例如：
+
+```python
+def on_event(event):
+    if not aq.is_indicator_stream_event(event):
+        return
+    message = aq.to_indicator_message(event)
+    if message is not None:
+        websocket.broadcast_json(message)
+```
+
+这条 helper 的目标是：
+
+- 只桥接 `indicator_point` / `indicator_snapshot`
+- 把数值字段转成更适合前端消费的类型
+- 自动解开 `meta_json` / `items_json`
+- 保留 `run_id`、`seq`、`ts` 等外层流式语义
+
+当前 `snapshot` 桥接结果除了 `items` 之外，还会补充几组快捷字段，方便前端减少二次遍历：
+
+- `indicator_keys`
+- `panes`
+- `render_types`
+- `value_by_key`
+- `items_by_key`
+- `warmup_count`
+- `has_warmup`
+
+另外，bridge helper 也会把 `_unknown` / 空 `symbol` 规整为 `None`，并兼容已经预先解码成
+`dict/list` 的 `meta_json` / `items_json` 值，便于网关层做二次封装。
+
+它不是新的传输层，只是把 AKQuant 的事件结构整理成更稳定的“前端消息对象”。
+
+### 零依赖浏览器实时预览
+
+如果你想先给业务方或前端同事一个“打开浏览器就能看到”的最小接入样板，而暂时不引入
+`fastapi`、`uvicorn` 或 `websockets` 等依赖，可以直接参考
+`examples/64_indicator_live_web.py`。
+
+这个示例做了三件事：
+
+- 用 `run_backtest(..., on_event=...)` 接收流式事件；
+- 用 `aq.to_indicator_message(event)` 规整成前端友好消息；
+- 用内置 `http.server` 暴露 `/state` JSON，并由浏览器轮询绘制 `close_echo` 折线。
+
+现在这个示例同时支持两种轮询方式：
+
+- 直接请求 `/state`，拿最近窗口内的完整快照；
+- 请求 `/state?since_seq=123`，只拿 `seq > 123` 的增量消息，同时保留总量统计和最新游标。
+
+当前返回结构也做了区分，便于前端减少分支歧义：
+
+- 公共字段放在 `cursor`、`counts`、`latest_indicator_values`
+- 全量模式把消息窗口放在 `window.point_messages` / `window.snapshot_messages`
+- 增量模式把新增消息放在 `delta.point_messages` / `delta.snapshot_messages`
+
+运行方式：
+
+```bash
+UV_INDEX_URL=https://pypi.org/simple uv run python examples/64_indicator_live_web.py --open
+```
+
+如果你只是想快速验证链路，也可以缩短保活时间：
+
+```bash
+UV_INDEX_URL=https://pypi.org/simple uv run python examples/64_indicator_live_web.py --keep-seconds 1
+```
+
+这个样板的定位不是完整前端产品，而是帮助你更快完成以下工作：
+
+- 验证指标流是否已经成功出站；
+- 让前端先对接稳定的消息结构和 `/state` JSON；
+- 在不新增依赖栈的前提下演示实时指标预览效果。
+
+### 当前输出结构
+
+第一版实现会输出三类结构化结果：
+
+- 指标定义：如 `display_name`、`pane`、`render_type`
+- 指标实例：按 `strategy/symbol/indicator/meta` 归并后的实例信息
+- 指标点位：按时间记录的数值序列
+
+这三层结构的目的，是让 AKQuant 负责“生产标准化指标数据”，而不是直接耦合某个具体前端图表库。
+
+### 推荐边界
+
+建议把职责切开：
+
+- `AKQuant` 内部负责：
+  - 指标计算
+  - 指标记录
+  - 指标查询
+  - 指标导出
+- 外部平台负责：
+  - 存储服务
+  - API 查询
+  - WebSocket 推送
+  - 前端图表页面
+
+也就是说，AKQuant 更适合作为“指标生产者”，而不是企业前端平台本身。
+
+### 推荐示例
+
+- [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)
+- [61_indicator_visualization_export_demo.py](https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py)
+- [62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py)
+- [63_indicator_ws_bridge_demo.py](https://github.com/akfamily/akquant/blob/main/examples/63_indicator_ws_bridge_demo.py)
+- [64_indicator_live_web.py](https://github.com/akfamily/akquant/blob/main/examples/64_indicator_live_web.py)
+
 ## 常见误区
 
 - 误区 1：所有自定义指标都必须继承 `Indicator`

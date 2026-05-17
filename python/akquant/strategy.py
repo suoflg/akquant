@@ -26,6 +26,7 @@ from .akquant import (
     Tick,
     TimeInForce,
 )
+from .indicator_recording import IndicatorRecorder
 from .sizer import FixedSize, Sizer
 from .strategy_events import (
     on_bar_event as _on_bar_event_impl,
@@ -364,6 +365,7 @@ class Strategy:
     _pending_schedules: List[Tuple[Union[str, dt.datetime, pd.Timestamp], str]]
     _pending_daily_timers: List[Tuple[str, str]]
     _instrument_snapshots: Dict[str, InstrumentSnapshot]
+    _indicator_recorder: Optional[IndicatorRecorder]
 
     _trading_days: List[pd.Timestamp]
 
@@ -490,6 +492,7 @@ class Strategy:
         instance._pending_schedules = []
         instance._pending_daily_timers = []
         instance._instrument_snapshots = {}
+        instance._indicator_recorder = None
 
         return instance
 
@@ -528,6 +531,8 @@ class Strategy:
             del state["_framework_stop_flushed"]
         if "_framework_boundary_timers_registered" in state:
             del state["_framework_boundary_timers_registered"]
+        if "_indicator_recorder" in state:
+            del state["_indicator_recorder"]
         incremental_indicators = state.get("_incremental_indicators")
         if isinstance(incremental_indicators, dict):
             for name in incremental_indicators.keys():
@@ -594,6 +599,7 @@ class Strategy:
             self._pending_daily_timers = []
         if not hasattr(self, "_instrument_snapshots"):
             self._instrument_snapshots = {}
+        self._indicator_recorder = None
         if not hasattr(self, "_ml_validation_lifecycle"):
             self._ml_validation_lifecycle = False
         if not hasattr(self, "_ml_model_template"):
@@ -1497,6 +1503,66 @@ class Strategy:
 
     def _resolve_symbol(self, symbol: Optional[str] = None) -> str:
         return _resolve_symbol_impl(self, symbol)
+
+    def _resolve_record_timestamp(self) -> int:
+        """Resolve the current runtime timestamp for indicator recording."""
+        if self.current_bar is not None:
+            return int(self.current_bar.timestamp)
+        if self.current_tick is not None:
+            return int(self.current_tick.timestamp)
+        if self.ctx is not None:
+            current_time = getattr(self.ctx, "current_time", None)
+            if current_time is not None:
+                return int(current_time)
+        raise RuntimeError(
+            "record_indicator requires an active bar/tick or context timestamp"
+        )
+
+    def record_indicator(
+        self,
+        name: str,
+        value: Any,
+        symbol: Optional[str] = None,
+        *,
+        timestamp: Optional[Any] = None,
+        display_name: Optional[str] = None,
+        pane: str = "sub",
+        render_type: str = "line",
+        unit: Optional[str] = None,
+        precision: Optional[int] = None,
+        color: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+        warmup: bool = False,
+    ) -> None:
+        """Record one indicator point for downstream visualization and export."""
+        recorder = getattr(self, "_indicator_recorder", None)
+        if recorder is None:
+            return
+
+        resolved_symbol = self._resolve_symbol(symbol)
+        resolved_timestamp = (
+            self._resolve_record_timestamp()
+            if timestamp is None
+            else int(pd.Timestamp(timestamp).value)
+        )
+        owner_strategy_id = str(
+            getattr(self, "_owner_strategy_id", "_default") or "_default"
+        )
+        recorder.record(
+            name=name,
+            value=value,
+            symbol=resolved_symbol,
+            timestamp=resolved_timestamp,
+            owner_strategy_id=owner_strategy_id,
+            display_name=display_name,
+            pane=pane,
+            render_type=render_type,
+            unit=unit,
+            precision=precision,
+            color=color,
+            meta=meta,
+            warmup=warmup,
+        )
 
     def get_position(self, symbol: Optional[str] = None) -> float:
         """
