@@ -199,6 +199,228 @@ Many users mix up "custom strategy indicators" and "extending `akquant.talib`". 
 
 If you only need a private signal inside one strategy, prefer a custom strategy indicator instead of extending `akquant.talib`.
 
+## Export Indicators For Frontend Use
+
+If your goal is not only to use a custom indicator inside the strategy, but also to send the indicator output to a web frontend, treat indicator calculation and indicator output as separate concerns:
+
+- keep indicator calculation inside `Strategy` / `Indicator`;
+- use `Strategy.record_indicator(...)` to record normalized indicator points;
+- after the run, use `BacktestResult.indicator_df(...)` or `export_indicators(...)` for downstream systems.
+
+### Minimal example
+
+```python
+from akquant import Bar, Strategy
+
+
+class IndicatorExportStrategy(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        spread = bar.high - bar.low
+        self.record_indicator(
+            name="intrabar_spread",
+            value=spread,
+            display_name="Intra Bar Spread",
+            pane="sub",
+            render_type="line",
+            precision=4,
+            meta={"source": ["high", "low"]},
+        )
+```
+
+After the run:
+
+```python
+result = ...
+
+# 1) Read inside Python
+indicator_df = result.indicator_df(name="intrabar_spread", symbol="AAPL")
+
+# 2) Generate a lightweight local preview
+fig = result.plot_indicators(
+    name="intrabar_spread",
+    symbol="AAPL",
+    show=False,
+    filename="indicator_preview.html",
+)
+
+# 3) Export for frontend or external services
+result.export_indicators("indicator_outputs.json", format="json")
+result.export_indicators("indicator_outputs", format="parquet")
+```
+
+When available, the JSON export also includes a top-level `run_id` so downstream services can correlate offline exports with the streaming event flow.
+
+### Built-in Minimal Visualization
+
+If you only want a quick history preview before wiring a full frontend, use:
+
+- `result.plot_indicators(...)`
+- `from akquant.plot import plot_indicators`
+
+This built-in path is intentionally lightweight:
+
+- it keeps `result.plot()` focused on the existing account dashboard;
+- it splits subplots by `pane`;
+- it reuses `render_type`, with day-one support for common `line` and `bar`;
+- it supports filtering by `name`, `symbol`, and `include_warmup`;
+- it can write a local HTML file for quick inspection alongside exported JSON.
+
+Example:
+
+```python
+fig = result.plot_indicators(
+    name="intrabar_spread",
+    symbol="AAPL",
+    include_warmup=False,
+    show=False,
+    filename="indicator_preview.html",
+    title="Indicator Preview",
+)
+```
+
+If you need enterprise-grade multi-panel UX, persistence, permissions, or realtime subscriptions, keep those concerns in external systems and let AKQuant stay responsible for the preview plus normalized data production.
+
+### Optional Indicator Section In Reports
+
+If you want the indicator preview embedded into the built-in HTML report instead of a separate figure, enable it explicitly:
+
+```python
+result.report(
+    filename="akquant_report.html",
+    show=False,
+    include_indicators=True,
+    indicator_name="intrabar_spread",
+    indicator_symbol="AAPL",
+    indicator_include_warmup=False,
+)
+```
+
+This path is intentionally constrained:
+
+- it is off by default, so existing `report()` output does not change;
+- it is meant for a lightweight indicator section inside the strategy report;
+- if no indicator data exists, the report shows an empty-state notice;
+- if you need richer interaction or layout control, keep that in external frontend systems.
+
+### Bridging Stream Events To Frontend Messages
+
+If your external service is a WebSocket or SSE gateway, keep the raw payload parsing out of your business code and use:
+
+- `akquant.is_indicator_stream_event(event)`
+- `akquant.to_indicator_message(event)`
+- `akquant.to_indicator_messages(events)`
+
+Example:
+
+```python
+def on_event(event):
+    if not aq.is_indicator_stream_event(event):
+        return
+    message = aq.to_indicator_message(event)
+    if message is not None:
+        websocket.broadcast_json(message)
+```
+
+These helpers are meant to:
+
+- bridge only `indicator_point` and `indicator_snapshot`
+- coerce numeric fields into frontend-friendly values
+- unpack `meta_json` and `items_json`
+- preserve the outer stream semantics such as `run_id`, `seq`, and `ts`
+
+The bridged `snapshot` payload now also includes a few shortcut fields so frontend
+code does not have to rescan `items` on every update:
+
+- `indicator_keys`
+- `panes`
+- `render_types`
+- `value_by_key`
+- `items_by_key`
+- `warmup_count`
+- `has_warmup`
+
+The bridge helper also normalizes `_unknown` or empty `symbol` values into `None`,
+and accepts already-decoded `dict/list` values for `meta_json` and `items_json`,
+which makes gateway-side wrapping easier.
+
+This is not a new transport layer. It is just a normalization layer that turns AKQuant stream events into steadier frontend message objects.
+
+### Zero-Dependency Browser Live Preview
+
+If you want a browser-based demo that product or frontend teammates can open
+immediately, but you do not want to introduce `fastapi`, `uvicorn`, or
+`websockets` yet, use `examples/64_indicator_live_web.py`.
+
+This example does three things:
+
+- consumes stream events with `run_backtest(..., on_event=...)`
+- normalizes them with `aq.to_indicator_message(event)`
+- serves a tiny `/state` JSON endpoint via built-in `http.server`, then lets the browser poll and draw the `close_echo` line
+
+It now supports two polling modes:
+
+- request `/state` for the recent full snapshot window
+- request `/state?since_seq=123` for incremental messages with `seq > 123`, while still returning total counts and the latest cursor
+
+The payload shape now separates common metadata from message bodies:
+
+- shared fields live under `cursor`, `counts`, and `latest_indicator_values`
+- full snapshot mode returns message windows under `window.point_messages` and `window.snapshot_messages`
+- incremental mode returns only new messages under `delta.point_messages` and `delta.snapshot_messages`
+
+Run it with:
+
+```bash
+UV_INDEX_URL=https://pypi.org/simple uv run python examples/64_indicator_live_web.py --open
+```
+
+For a quick smoke check, keep the server alive for a shorter window:
+
+```bash
+UV_INDEX_URL=https://pypi.org/simple uv run python examples/64_indicator_live_web.py --keep-seconds 1
+```
+
+The goal is not to become a full frontend product. The goal is to help you:
+
+- verify that indicator stream data is leaving the backtest correctly
+- give frontend code a stable `/state` JSON shape to consume first
+- demonstrate live indicator rendering without adding new dependencies
+
+### Current output shape
+
+The first implementation exposes three structured layers:
+
+- indicator definitions, such as `display_name`, `pane`, and `render_type`
+- indicator instances grouped by `strategy/symbol/indicator/meta`
+- indicator points as the actual time series values
+
+This keeps AKQuant focused on producing stable indicator data instead of coupling the framework to a specific charting library.
+
+### Recommended boundary
+
+Suggested split of responsibilities:
+
+- `AKQuant` owns:
+  - indicator calculation
+  - indicator recording
+  - indicator query
+  - indicator export
+- external systems own:
+  - persistence
+  - APIs
+  - websocket delivery
+  - frontend applications
+
+In short, AKQuant should act as the indicator producer, not the full enterprise frontend platform.
+
+### Recommended examples
+
+- [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)
+- [61_indicator_visualization_export_demo.py](https://github.com/akfamily/akquant/blob/main/examples/61_indicator_visualization_export_demo.py)
+- [62_indicator_streaming_demo.py](https://github.com/akfamily/akquant/blob/main/examples/62_indicator_streaming_demo.py)
+- [63_indicator_ws_bridge_demo.py](https://github.com/akfamily/akquant/blob/main/examples/63_indicator_ws_bridge_demo.py)
+- [64_indicator_live_web.py](https://github.com/akfamily/akquant/blob/main/examples/64_indicator_live_web.py)
+
 ## Common Pitfalls
 
 - Pitfall 1: every custom indicator must inherit from `Indicator`

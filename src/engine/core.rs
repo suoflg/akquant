@@ -834,6 +834,21 @@ impl Engine {
         }
     }
 
+    pub(crate) fn emit_stream_event_owned(
+        &mut self,
+        py: Python<'_>,
+        event_type: &str,
+        symbol: Option<String>,
+        level: &str,
+        payload: HashMap<String, String>,
+    ) {
+        let payload_ref: HashMap<&str, String> = payload
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+        self.emit_stream_event(py, event_type, symbol.as_deref(), level, payload_ref);
+    }
+
     pub(crate) fn flush_stream_events(&mut self, py: Python<'_>) {
         let (Some(callback_ref), Some(run_id_ref)) = (&self.stream_callback, &self.stream_run_id)
         else {

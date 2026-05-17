@@ -15,6 +15,7 @@ from .analysis import (
     plot_yearly_returns,
 )
 from .dashboard import plot_dashboard
+from .indicator import plot_indicators
 from .strategy import plot_strategy
 from .utils import check_plotly
 
@@ -401,6 +402,8 @@ HTML_TEMPLATE = """
         <div class="chart-container">
             {dashboard_html}
         </div>
+
+        {indicator_section_html}
 
         <div class="section-title">收益分析 (Return Analysis)</div>
         <div class="row">
@@ -1118,6 +1121,10 @@ def _build_chart_html_sections(
     market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
     plot_symbol: Optional[str] = None,
     include_trade_kline: bool = True,
+    include_indicators: bool = False,
+    indicator_name: Optional[str] = None,
+    indicator_symbol: Optional[str] = None,
+    indicator_include_warmup: bool = True,
     benchmark: Optional[Union[str, pd.Series]] = None,
     curve_freq: str = "raw",
 ) -> dict[str, str]:
@@ -1139,6 +1146,103 @@ def _build_chart_html_sections(
         if fig_dashboard
         else "<div>暂无数据</div>"
     )
+    indicator_section_html = ""
+    if include_indicators:
+        indicator_df = result.indicator_df(name=indicator_name, symbol=indicator_symbol)
+        if not indicator_include_warmup and not indicator_df.empty:
+            indicator_df = indicator_df.loc[~indicator_df["warmup"]]
+        indicator_defs = result.indicator_definitions.copy()
+        if indicator_name is not None and not indicator_defs.empty:
+            indicator_defs = indicator_defs.loc[
+                indicator_defs["indicator_key"] == str(indicator_name)
+            ]
+        indicator_symbol_count = (
+            indicator_df["symbol"].dropna().astype(str).nunique()
+            if not indicator_df.empty
+            else 0
+        )
+        overview_html = (
+            '<div class="analysis-overview-grid">'
+            f'<div class="analysis-card"><div class="analysis-card-label">'
+            "指标定义数 (Indicator Definitions)</div>"
+            f'<div class="analysis-card-value">{len(indicator_defs)}</div></div>'
+            f'<div class="analysis-card"><div class="analysis-card-label">'
+            "指标点位数 (Indicator Points)</div>"
+            f'<div class="analysis-card-value">{len(indicator_df)}</div></div>'
+            f'<div class="analysis-card"><div class="analysis-card-label">'
+            "标的数 (Symbols)</div>"
+            f'<div class="analysis-card-value">'
+            f"{indicator_symbol_count}"
+            "</div></div>"
+            "</div>"
+        )
+        filter_parts: list[str] = []
+        if indicator_name is not None:
+            filter_parts.append(f"指标={indicator_name}")
+        if indicator_symbol is not None:
+            filter_parts.append(f"标的={indicator_symbol}")
+        if not indicator_include_warmup:
+            filter_parts.append("已排除预热点")
+        filter_text = " | ".join(filter_parts)
+        filter_hint = (
+            '<div class="empty-panel" style="margin-bottom: 16px;">'
+            f"过滤条件: {filter_text}</div>"
+            if filter_parts
+            else ""
+        )
+        if indicator_df.empty:
+            indicator_chart_html = "<div class='empty-panel'>暂无指标数据</div>"
+        else:
+            fig_indicator = plot_indicators(
+                result=result,
+                name=indicator_name,
+                symbol=indicator_symbol,
+                include_warmup=indicator_include_warmup,
+                show=False,
+                title="报告内指标预览 (Indicator Preview)",
+                theme="light",
+            )
+            indicator_chart_html = (
+                fig_indicator.to_html(
+                    full_html=False,
+                    include_plotlyjs=False,
+                    config=config,
+                )
+                if fig_indicator
+                else "<div class='empty-panel'>暂无指标图表</div>"
+            )
+        if indicator_defs.empty:
+            indicator_defs_html = "<div>暂无指标定义数据</div>"
+        else:
+            indicator_defs_view = _rename_table_columns(
+                indicator_defs,
+                {
+                    "indicator_key": "指标键 (Indicator Key)",
+                    "display_name": "展示名 (Display Name)",
+                    "pane": "面板 (Pane)",
+                    "render_type": "绘制方式 (Render Type)",
+                    "unit": "单位 (Unit)",
+                    "precision": "精度 (Precision)",
+                    "color": "颜色 (Color)",
+                },
+            )
+            indicator_defs_html = _format_table(
+                indicator_defs_view,
+                max_rows=20,
+                compact_currency=False,
+            )
+        indicator_section_html = (
+            '<div class="section-title">自定义指标 (Custom Indicators)</div>'
+            f"{filter_hint}"
+            f"{overview_html}"
+            '<div class="chart-container">'
+            f"{indicator_chart_html}"
+            "</div>"
+            '<details class="details-block" style="margin-top: 20px;">'
+            "<summary>指标定义明细 (Indicator Definitions)</summary>"
+            f'<div class="details-content">{indicator_defs_html}</div>'
+            "</details>"
+        )
 
     returns_series = _build_daily_returns_from_equity(equity_curve)
     fig_rolling = plot_rolling_metrics(returns_series, theme="light")
@@ -1636,6 +1740,7 @@ def _build_chart_html_sections(
 
     return {
         "dashboard_html": dashboard_html,
+        "indicator_section_html": indicator_section_html,
         "yearly_returns_html": yearly_returns_html,
         "returns_dist_html": returns_dist_html,
         "rolling_metrics_html": rolling_metrics_html,
@@ -1985,6 +2090,10 @@ def plot_report(
     market_data: Optional[Union[pd.DataFrame, dict[str, pd.DataFrame]]] = None,
     plot_symbol: Optional[str] = None,
     include_trade_kline: bool = True,
+    include_indicators: bool = False,
+    indicator_name: Optional[str] = None,
+    indicator_symbol: Optional[str] = None,
+    indicator_include_warmup: bool = True,
     benchmark: Optional[Union[str, pd.Series]] = None,
     curve_freq: str = "raw",
 ) -> None:
@@ -1997,6 +2106,10 @@ def plot_report(
     3. 交易分布与持仓时间分析 (Trade Analysis)
 
     :param compact_currency: 是否将金额列按 K/M/B 紧凑显示
+    :param include_indicators: 是否在报告中包含自定义指标预览区块
+    :param indicator_name: 可选指标键过滤，仅展示指定指标
+    :param indicator_symbol: 可选标的过滤，仅展示指定标的指标
+    :param indicator_include_warmup: 是否在指标报告区块中保留预热点
     :param benchmark: 基准收益序列 (pd.Series) 或基准标识字符串
     :param curve_freq: 曲线频率，"raw" 为原始频率，"D" 为日频末值
     """
@@ -2015,6 +2128,10 @@ def plot_report(
         market_data=market_data,
         plot_symbol=plot_symbol,
         include_trade_kline=include_trade_kline,
+        include_indicators=include_indicators,
+        indicator_name=indicator_name,
+        indicator_symbol=indicator_symbol,
+        indicator_include_warmup=indicator_include_warmup,
         benchmark=benchmark,
         curve_freq=normalized_curve_freq,
     )
@@ -2035,6 +2152,7 @@ def plot_report(
         final_equity=summary_context["final_equity"],
         metrics_html=metrics_html,
         dashboard_html=chart_sections["dashboard_html"],
+        indicator_section_html=chart_sections["indicator_section_html"],
         yearly_returns_html=chart_sections["yearly_returns_html"],
         returns_dist_html=chart_sections["returns_dist_html"],
         rolling_metrics_html=chart_sections["rolling_metrics_html"],

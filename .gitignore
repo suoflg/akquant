@@ -31,3 +31,4 @@ build/
 # Local cargo config
 .cargo/config.toml
 /data_catalog/
+plans/
